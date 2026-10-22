@@ -550,4 +550,6 @@ type createTaskReq struct {
 	// ModeDoc 不给时按模式默认值解析并快照；运行中不再变更。
 	Mode    string          `json:"mode,omitempty"`
 	ModeDoc json.RawMessage `json:"mode_doc,omitempty"`
+	// SrcProgramID 绑定一个 SRC 平台项目（P3）：规则会被编译进本任务的模式与策略快照。
+	SrcProgramID *int64 `json:"src_program_id,omitempty"`
 }

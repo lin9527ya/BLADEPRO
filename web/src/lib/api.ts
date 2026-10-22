@@ -104,6 +104,9 @@ import type {
   SkillItem,
   SrcCell,
   SrcPrepareResult,
+  SrcProgram,
+  SrcProgramInput,
+  SrcStats,
   SrcSubmission,
   SrcTaskState,
   SSProject,
@@ -305,6 +308,8 @@ export const api = {
     // SRC 挖掘模式：创建时定死（""=普通渗透）。modeDoc 是模式配置快照，省略=后端默认。
     mode?: TaskMode;
     modeDoc?: unknown;
+    /** P3：绑定的 SRC 平台项目；省略 = 不绑定。 */
+    srcProgramID?: number;
     interceptRules?: AssetInterceptRuleInput[];
     // P20：任务级探索策略覆盖层；省略 = 完全继承当时的全局默认（服务端解析成快照落库）。
     explorationPolicy?: ExplorationPolicyOverride;
@@ -323,6 +328,7 @@ export const api = {
       coverage_enabled: input.coverageEnabled ?? true, // 默认开;false=关闭资产覆盖度功能
       mode: input.mode || undefined, // 只发 "src"；普通渗透不带该键，老行为不变
       mode_doc: input.modeDoc, // 省略时后端按 SRC 默认快照解析
+      src_program_id: input.srcProgramID || undefined, // 只发绑定的项目；不绑定不带该键
       intercept_rules: input.interceptRules ?? [], // 任务级资产拦截规则
       exploration_policy: input.explorationPolicy ?? null, // P20 探索策略覆盖层(null=继承全局默认)
     }),
@@ -474,6 +480,14 @@ export const api = {
   // 重复定案：dedupeOf=0 表示「不是同一个洞」，解除标记。
   setSrcDedupe: (findingID: number, dedupeOf: number) =>
     patch<{ finding_id: number }>(`/findings/${findingID}/src-dedupe`, { dedupe_of: dedupeOf }),
+  // ---- SRC 平台项目（P3）----
+  // 项目 = 一个平台的规则集（禁用手段/写操作、限速、时间窗、等级映射、必做面）。
+  srcPrograms: () => get<{ programs: SrcProgram[]; total: number }>("/src/programs"),
+  createSrcProgram: (input: SrcProgramInput) => post<SrcProgram>("/src/programs", input),
+  updateSrcProgram: (id: number, input: SrcProgramInput) => patch<SrcProgram>(`/src/programs/${id}`, input),
+  deleteSrcProgram: (id: number) => del<{ deleted: boolean; id: number }>(`/src/programs/${id}`),
+  // 全局 SRC 看板聚合数字（台账按状态/等级、任务数、中危+发现、报告齐备）。
+  srcStats: () => get<SrcStats>("/src/stats"),
   // 全局 llm_usage 聚合（仪表盘新版 token 视图）：按 profile 总量 + 按天分桶。
   usageStats: (days = 365) => get<UsageStats>(`/tokens/usage?days=${days}`),
   // ---- 目标管理（总览）----

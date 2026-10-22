@@ -168,6 +168,9 @@ type SrcSubmissionInput struct {
 	Status      string // "" = draft
 	ReportReady bool
 	Compliance  json.RawMessage
+	// P3：绑定的平台项目 + 该项目等级映射后的平台等级（没有映射时为空）。
+	ProgramID     int64
+	PlatformLevel string
 }
 
 // PrepareSrcSubmission 写（或更新）一条台账 + 它的元数据，并把报告是否齐备记到
@@ -198,24 +201,30 @@ func (s *SrcStore) PrepareSrcSubmission(ctx context.Context, in SrcSubmissionInp
 	defer tx.Rollback()
 
 	var rowID int64
+	var programID any
+	if in.ProgramID > 0 {
+		programID = in.ProgramID
+	}
 	err = tx.QueryRowContext(ctx, `
 INSERT INTO src_submissions(task_id, finding_id, platform, title, severity, status, fingerprint,
-                            description, impact, fix, report_md)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+                            description, impact, fix, report_md, program_id, platform_level)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 ON CONFLICT (finding_id, platform) DO UPDATE SET
-    title       = EXCLUDED.title,
-    severity    = EXCLUDED.severity,
-    fingerprint = EXCLUDED.fingerprint,
-    description = EXCLUDED.description,
-    impact      = EXCLUDED.impact,
-    fix         = EXCLUDED.fix,
-    report_md   = EXCLUDED.report_md,
+    title          = EXCLUDED.title,
+    severity       = EXCLUDED.severity,
+    fingerprint    = EXCLUDED.fingerprint,
+    description    = EXCLUDED.description,
+    impact         = EXCLUDED.impact,
+    fix            = EXCLUDED.fix,
+    report_md      = EXCLUDED.report_md,
+    program_id     = COALESCE(EXCLUDED.program_id, src_submissions.program_id),
+    platform_level = COALESCE(NULLIF(EXCLUDED.platform_level,''), src_submissions.platform_level),
     -- 已交出去的行保持它自己的状态：重写正文不该把它拉回 draft。
-    status      = CASE WHEN src_submissions.status IN ('submitted','accepted','duplicate','rejected','paid','withdrawn')
-                       THEN src_submissions.status ELSE EXCLUDED.status END
+    status         = CASE WHEN src_submissions.status IN ('submitted','accepted','duplicate','rejected','paid','withdrawn')
+                          THEN src_submissions.status ELSE EXCLUDED.status END
 RETURNING id`,
 		in.TaskID, in.FindingID, platform, in.Title, in.Severity, status, in.Fingerprint,
-		in.Description, in.Impact, in.Fix, in.ReportMD).Scan(&rowID)
+		in.Description, in.Impact, in.Fix, in.ReportMD, programID, in.PlatformLevel).Scan(&rowID)
 	if err != nil {
 		return nil, nil, err
 	}

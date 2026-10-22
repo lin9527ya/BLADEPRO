@@ -72,6 +72,8 @@ type TaskDTO struct {
 	SrcGaps int    `json:"src_gaps,omitempty"`
 	SrcCells int   `json:"src_cells,omitempty"`
 	SrcDone int    `json:"src_done,omitempty"`
+	// SrcProgramID 是本任务绑定的 SRC 平台项目（P3）。
+	SrcProgramID *int64 `json:"src_program_id,omitempty"`
 }
 
 // FindingSeverityDTO 是任务列表里按严重度分档的漏洞计数（严重/高/中/低）。
@@ -156,6 +158,7 @@ func taskDTO(t *Task, status string) TaskDTO {
 		PolicyCustom:       polCustom,
 		PolicyMaxIntents:   polMax,
 		Mode:               t.Mode,
+		SrcProgramID:       t.SrcProgramID,
 	}
 }
 

@@ -74,6 +74,8 @@ export const sidebarItems: NavGroup[] = [
       { id: "dashboard", title: "仪表盘", url: "/dashboard", icon: LayoutDashboard },
       { id: "chat", title: "对话", url: "/chat", icon: MessageSquare },
       { id: "tasks", title: "任务", url: "/function/tasks", icon: Target },
+      // SRC 工作台：全局对账（提交台账 + 平台项目），紧跟任务入口。
+      { id: "src", title: "SRC 工作台", url: "/function/src", icon: Bug },
       { id: "campaigns", title: "战役", url: "/function/campaigns", icon: FolderKanban },
       { id: "findings", title: "发现", url: "/function/findings", icon: Bug },
       { id: "playbooks", title: "打法库", url: "/function/playbooks", icon: BookOpen },

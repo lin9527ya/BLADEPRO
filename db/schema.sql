@@ -1773,3 +1773,39 @@ CREATE INDEX IF NOT EXISTS idx_src_submissions_task        ON src_submissions(ta
 DROP TRIGGER IF EXISTS trg_src_submissions_upd ON src_submissions;
 CREATE TRIGGER trg_src_submissions_upd BEFORE UPDATE ON src_submissions
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- =====================================================================
+-- SRC 平台面（P3）：SRC 平台/项目与其规则
+--
+-- 一个 program 就是"某个平台上的某个项目"：范围说明、平台规则（禁用手法/写操作/
+-- 命令级限额）、限速与作业时间窗、等级映射。任务创建时选一个 program，就把它的
+-- 规则编译进本任务的 mode_doc 与探索策略，并把 program_id 记在任务上——
+-- 之后台账、看板、报告备注都能回答"这条发现是哪个项目的"。
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS src_programs (
+    id           BIGSERIAL PRIMARY KEY,
+    company_id   BIGINT REFERENCES companies(id) ON DELETE SET NULL,
+    name         TEXT NOT NULL,
+    platform     TEXT NOT NULL DEFAULT '',
+    scope_note   TEXT NOT NULL DEFAULT '',
+    -- rules: ProgramRules（禁用手法/写操作、额度、命令级规则、必做面覆盖…）
+    rules        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    -- rate_limit: 每秒请求上限（0=不限）。编译成"禁洪水命令"的硬规则 + 提示词约束。
+    rate_limit   INT NOT NULL DEFAULT 0 CHECK (rate_limit >= 0),
+    -- time_window: "09:00-18:00" 或 "09:00-12:00,13:00-18:00"（空=不限）。
+    time_window  TEXT NOT NULL DEFAULT '',
+    -- severity_map: 内部等级 → 平台等级，例如 {"high":"critical","medium":"high"}。
+    severity_map JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_src_programs_name ON src_programs(lower(name));
+CREATE INDEX IF NOT EXISTS idx_src_programs_platform ON src_programs(platform, name);
+DROP TRIGGER IF EXISTS trg_src_programs_upd ON src_programs;
+CREATE TRIGGER trg_src_programs_upd BEFORE UPDATE ON src_programs
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS src_program_id BIGINT REFERENCES src_programs(id) ON DELETE SET NULL;
+ALTER TABLE src_submissions ADD COLUMN IF NOT EXISTS program_id BIGINT REFERENCES src_programs(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_tasks_src_program ON tasks(src_program_id) WHERE src_program_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_src_submissions_program ON src_submissions(program_id) WHERE program_id IS NOT NULL;

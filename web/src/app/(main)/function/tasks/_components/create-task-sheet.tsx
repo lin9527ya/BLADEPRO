@@ -38,6 +38,7 @@ import {
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
@@ -47,6 +48,7 @@ import type {
   CustomRule,
   ExplorationPolicyDefault,
   LLMProfile,
+  SrcProgram,
   Task,
   TaskCategory,
   TaskMode,
@@ -146,6 +148,9 @@ export function CreateTaskSheet({
   const [categoryID, setCategoryID] = React.useState<number | undefined>(undefined);
   // 任务模式:''=普通渗透(默认,老行为不变),'src'=按「站点 × 风险面」补格收尾。
   const [mode, setMode] = React.useState<TaskMode>("");
+  // P3 平台项目:仅 SRC 模式下可选,绑定的项目规则(禁用手段/写操作/限速/必做面)编译进本任务。
+  const [srcPrograms, setSrcPrograms] = React.useState<SrcProgram[]>([]);
+  const [srcProgramID, setSrcProgramID] = React.useState<number | undefined>(undefined);
   const [description, setDescription] = React.useState("");
   const [goal, setGoal] = React.useState("");
   const [selectedTemplateID, setSelectedTemplateID] = React.useState<number | null>(null);
@@ -226,6 +231,21 @@ export function CreateTaskSheet({
     };
   }, [open]);
 
+  // 打开抽屉时拉一次平台项目列表(只在 SRC 模式下用到);失败静默——选不到项目不该挡住建任务。
+  React.useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    void api
+      .srcPrograms()
+      .then((r) => {
+        if (alive) setSrcPrograms(r.programs ?? []);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [open]);
+
   async function createTask() {
     if (!description.trim() || !goal.trim()) {
       toast.error("请填写描述与目标");
@@ -252,6 +272,7 @@ export function CreateTaskSheet({
         planHeartbeatSeconds: heartbeatSec,
         coverageEnabled,
         mode,
+        srcProgramID,
         interceptRules: interceptRules
           .map((r) => ({ ...r, pattern: r.pattern.trim() }))
           .filter((r) => r.pattern !== ""),
@@ -271,6 +292,7 @@ export function CreateTaskSheet({
       setDescription("");
       setGoal("");
       setMode("");
+      setSrcProgramID(undefined);
       setSelectedTemplateID(null);
       setSourceTaskIDs([]);
       setCompanyIDs([]);
@@ -360,7 +382,11 @@ export function CreateTaskSheet({
                     type="button"
                     aria-label={`任务模式：${opt.label}`}
                     aria-pressed={mode === opt.value}
-                    onClick={() => setMode(opt.value)}
+                    onClick={() => {
+                      setMode(opt.value);
+                      // 切回普通渗透时清掉项目绑定(普通渗透不吃项目规则,留着会误发)。
+                      if (opt.value !== "src") setSrcProgramID(undefined);
+                    }}
                     className={`rounded px-2.5 py-1 text-xs transition-colors ${
                       mode === opt.value
                         ? "bg-primary text-primary-foreground"
@@ -377,6 +403,32 @@ export function CreateTaskSheet({
                 </p>
               )}
             </Field>
+            {mode === "src" && (
+              <Field>
+                <FieldLabel htmlFor="src-program">平台项目（可选）</FieldLabel>
+                <Select
+                  value={srcProgramID ? String(srcProgramID) : "none"}
+                  onValueChange={(v) => setSrcProgramID(v === "none" ? undefined : Number(v))}
+                >
+                  <SelectTrigger id="src-program" className="w-full">
+                    <SelectValue placeholder="不绑定" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="none">不绑定</SelectItem>
+                      {srcPrograms.map((p) => (
+                        <SelectItem key={p.id} value={String(p.id)}>
+                          {p.platform ? `${p.name} · ${p.platform}` : p.name}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <FieldDescription>
+                  绑定项目后，项目的禁用手段/写操作、限速与必做面会编译进本任务；项目规则改动不影响已建任务。
+                </FieldDescription>
+              </Field>
+            )}
             <div className="grid gap-2">
               <Label htmlFor="description">描述</Label>
               <Textarea

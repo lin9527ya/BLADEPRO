@@ -33,6 +33,9 @@ type ModeDoc struct {
 	// Platform / Program 只是提交台账与报告备注用的标签（P2 起真正使用）。
 	Platform string `json:"platform,omitempty"`
 	Program  string `json:"program,omitempty"`
+	// ProgramNote 是创建任务时按平台项目生成的一行规则说明（P3）：平台、限额、
+	// 时间窗、范围说明。它进提示词，让 agent 从一开始就知道这套边界。
+	ProgramNote string `json:"program_note,omitempty"`
 	// RequiredAreas 覆盖"资产类型 → 必做风险面"的默认映射；只允许收窄/新增已知类型。
 	RequiredAreas map[string][]string `json:"required_areas,omitempty"`
 	// AllowBudgetStop=true 时 budget_stop 也算终态（放行收尾），但报告备注必须写明缺口。

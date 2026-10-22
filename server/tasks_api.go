@@ -424,7 +424,48 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "任务级拦截规则无效："+err.Error())
 		return
 	}
-	policyDoc, err := s.newTaskPolicy(req.ExplorationPolicy)
+	// SRC 平台项目（P3）：选了项目就把它的规则编译进这个任务——模式、必做面、额度、
+	// 禁用手段/写操作、命令级限额，全部在创建时落成快照，之后改项目不影响在跑的任务。
+	var program *srcmode.Program
+	if req.SrcProgramID != nil && *req.SrcProgramID > 0 {
+		row, err := s.m.PG().Src().GetSrcProgram(r.Context(), *req.SrcProgramID)
+		if err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		if row == nil {
+			writeErr(w, 400, "SRC 平台项目不存在")
+			return
+		}
+		program, err = srcProgramFromRow(row)
+		if err != nil {
+			writeErr(w, 400, "该项目的规则配置损坏："+err.Error())
+			return
+		}
+		if err := program.Validate(); err != nil {
+			writeErr(w, 400, "该项目的规则不合法："+err.Error())
+			return
+		}
+		// 选了平台项目就是 SRC 任务：不显式给 mode 时按 src 处理。
+		if strings.TrimSpace(req.Mode) == "" {
+			req.Mode = srcmode.ModeSrc
+		}
+		// 项目绑了企业就自动带上该企业的资产范围（"选项目自动灌范围"）。
+		// 去重交给 CreateTaskWithOptions 的 NormalizeTaskCompanyIDs。
+		if program.CompanyID != nil && *program.CompanyID > 0 {
+			exists := false
+			for _, id := range req.CompanyIDs {
+				if id == *program.CompanyID {
+					exists = true
+					break
+				}
+			}
+			if !exists {
+				req.CompanyIDs = append(req.CompanyIDs, *program.CompanyID)
+			}
+		}
+	}
+	policyDoc, err := s.newTaskPolicy(programPolicyFloor(req.ExplorationPolicy, program))
 	if err != nil {
 		writeErr(w, 400, err.Error())
 		return
@@ -435,6 +476,17 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
+	if program != nil {
+		srcDoc = program.ApplyToModeDoc(srcDoc)
+		if note := program.Describe(); note != "" {
+			srcDoc.ProgramNote = note
+		}
+		modeDoc, err = json.Marshal(srcDoc)
+		if err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
 	t, err := s.m.CreateTaskWithOptions(req.Description, req.Goal, db.TaskCreateOptions{
 		Name: strings.TrimSpace(req.Name), CategoryID: req.CategoryID,
 		SourceTaskIDs: sourceIDs, CompanyIDs: req.CompanyIDs, LLMProfileIDs: req.LLMProfileIDs,
@@ -444,6 +496,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		ExplorationPolicy: policyDoc,
 		Mode:              srcDoc.Mode,
 		ModeDoc:           modeDoc,
+		SrcProgramID:      req.SrcProgramID,
 	})
 	if err != nil {
 		if errors.Is(err, db.ErrTaskCategoryInvalid) || errors.Is(err, db.ErrTaskCategoryNotFound) {

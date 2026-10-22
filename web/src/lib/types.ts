@@ -46,6 +46,8 @@ export interface Task {
   src_gaps?: number; // 收尾门剩余缺口；普通渗透任务后端不返回
   src_cells?: number;
   src_done?: number;
+  /** P3：本任务绑定的 SRC 平台项目；未绑定则不返回。 */
+  src_program_id?: number;
   // P20 探索策略限制摘要（列表角标用）；明细走 GET /api/tasks/{id}/policy。
   policy_techniques?: string[] | null;
   policy_writes?: string[] | null;
@@ -1117,6 +1119,67 @@ export interface SrcTaskState {
     platform?: string;
     program?: string;
   };
+}
+
+// ---- SRC 平台项目（P3）：一份项目 = 一个平台的规则集，建任务时编译进提示词。 ----
+
+/** 命令级规则：label|pattern，或只给 pattern（非正则关键字）。 */
+export interface SrcProgramRule {
+  label?: string;
+  pattern: string;
+  regex?: boolean;
+}
+
+/** 项目规则：禁用的手段/写操作 + 额度 + 命令级规则 + 必做面。 */
+export interface SrcProgramRules {
+  forbidden_techniques?: string[];
+  forbidden_writes?: string[];
+  max_intents_total?: number;
+  max_intents_per_round?: number;
+  max_open_intents?: number;
+  command_rules?: SrcProgramRule[];
+  allow_budget_stop?: boolean;
+  skip_report_gate?: boolean;
+  max_attempts_per_cell?: number;
+  max_intents_per_asset?: number;
+  required_areas?: Record<string, string[]>;
+}
+
+export interface SrcProgram {
+  id: number;
+  company_id?: number;
+  name: string;
+  platform: string;
+  scope_note: string;
+  rules: SrcProgramRules;
+  rate_limit: number;
+  time_window: string;
+  severity_map: Record<string, string>;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/** 新建/更新项目的请求体（id/时间戳由服务端给）。 */
+export interface SrcProgramInput {
+  company_id?: number;
+  name: string;
+  platform: string;
+  scope_note: string;
+  rules: SrcProgramRules;
+  rate_limit: number;
+  time_window: string;
+  severity_map: Record<string, string>;
+}
+
+/** 全局 SRC 看板的聚合数字（服务端一次查完，UI 不算）。 */
+export interface SrcStats {
+  tasks: number;
+  programs: number;
+  submissions: Record<string, number>;
+  by_severity: Record<string, number>;
+  findings_medium_plus: number;
+  findings_report_ready: number;
+  submissions_total: number;
 }
 
 /** P18 约束编译：一条候选拦截规则 + 它在最近真实调用里的命中预览。 */

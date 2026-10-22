@@ -118,11 +118,26 @@ func (s *Server) prepareSrcSubmission(ctx context.Context, req agent.SrcPrepareR
 	in.Fix = fix
 	markdown := report.SrcMarkdown(in)
 
+	// P3：绑定平台项目时，提交台账同时记 program 与"平台等级"（severity_map 映射）。
+	var program *srcmode.Program
+	if row, err := store.SrcProgramForTask(ctx, req.TaskID); err == nil && row != nil {
+		if p, perr := srcProgramFromRow(row); perr == nil {
+			program = p
+		}
+	}
+	platformLevel := ""
+	programID := int64(0)
+	if program != nil {
+		programID = program.ID
+		platformLevel = program.PlatformLevel(f.Severity)
+	}
+
 	sub, meta, err := store.PrepareSrcSubmission(ctx, db.SrcSubmissionInput{
 		TaskID: req.TaskID, FindingID: f.ID, Platform: req.Platform,
 		Title: title, Severity: f.Severity, Fingerprint: fingerprint,
 		Description: description, Impact: impact, Fix: fix, ReportMD: markdown,
 		Status: status, ReportReady: ready, Compliance: complianceJSON,
+		ProgramID: programID, PlatformLevel: platformLevel,
 	})
 	if err != nil {
 		return nil, err

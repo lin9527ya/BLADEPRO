@@ -418,6 +418,8 @@ func (s *Server) registerRoutes(mux routeRegistrar) {
 	s.registerPlaybookRoutes(mux)
 	// SRC 交付面（P2）：提交台账 + 交付准备 + 重复定案。
 	s.registerSrcDelivery(mux)
+	// SRC 平台面（P3）：平台项目 CRUD + 看板统计。
+	s.registerSrcPrograms(mux)
 }
 
 // --- handlers ---

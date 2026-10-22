@@ -64,6 +64,7 @@ type Task struct {
 	// Mode 是任务模式（""=普通渗透，"src"=SRC 挖掘），创建时定死；ModeDoc 是其快照。
 	Mode              string                 `json:"mode,omitempty"`
 	ModeDoc           json.RawMessage        `json:"mode_doc,omitempty"`
+	SrcProgramID      *int64                 `json:"src_program_id,omitempty"` // SRC 平台项目（P3）
 	FirstRunAt        int64                  `json:"first_run_at,omitempty"`
 	DeadlineAt        int64                  `json:"deadline_at,omitempty"`
 	Store             *pgdb.ExplorationStore `json:"-"`
@@ -1019,6 +1020,7 @@ func taskFromPG(pt *pgdb.Task, store *pgdb.ExplorationStore, ic *intercept.Inter
 		ExplorationPolicy: append(json.RawMessage(nil), pt.ExplorationPolicy...),
 		Mode:              pt.Mode,
 		ModeDoc:           append(json.RawMessage(nil), pt.ModeDoc...),
+		SrcProgramID:      cloneInt64Ptr(pt.SrcProgramID),
 		FirstRunAt:        unixOrZero(pt.FirstRunAt), DeadlineAt: unixOrZero(pt.DeadlineAt),
 		Store: store, Guard: guard.NewWithInterceptor(ic, pt.ID), notify: make(chan struct{}, 1),
 	}

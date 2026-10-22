@@ -132,7 +132,7 @@ report_finding → 绑 proof/verification 流量 → src_prepare_submission（�
 
 ### 设计文档
 
-完整方案（P0–P3、DDL、收尾门伪代码、风险与取舍）见 [docs/SRC挖掘agent改造方案.md](docs/SRC挖掘agent改造方案.md)；本仓已实现 P0（模式骨架）、P1（覆盖矩阵与收尾门）、P2（交付台账/证据合规/跨任务去重）、P3（平台项目与看板）。
+完整方案（P0–P3、DDL、收尾门伪代码、风险与取舍）见 [docs/SRC挖掘agent改造方案.md](docs/SRC挖掘agent改造方案.md)；本仓已实现 P0（模式骨架）、P1（覆盖矩阵与收尾门）、P2（交付台账/证据合规/跨任务去重）、P3（平台项目与看板）。怎么衡量 SRC 模式值不值得用、回归要盯哪些数，见 [docs/SRC评测口径.md](docs/SRC评测口径.md)。
 
 ---
 

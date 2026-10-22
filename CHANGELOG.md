@@ -4,6 +4,43 @@
 
 ## [Unreleased]
 
+### SRC 交付闭环（P2）：台账 + 证据合规 + 跨任务去重
+
+P1 让任务"测完"，P2 让任务"交得出去"：每条中危以上的发现都要有齐备的可提交件，收尾门
+一并判定。
+
+#### 新增的功能
+
+- **提交台账 `src_submissions`**：粒度为「一条发现 × 一个平台」。状态机
+  `draft → ready → submitted → accepted | duplicate | rejected`、`accepted → paid`、
+  任意 → `withdrawn`；`submitted` 必须有 `external_id`，`duplicate` 必须先登记 `dedupe_of`。
+  已交出去的行不会被"重新准备"打回 draft。
+- **发现元数据 `src_finding_meta`**：取证指纹、合规结果（JSONB）、`report_ready`、`dedupe_of`。
+- **证据合规 `srcmode.CheckCompliance`**：中危以上必须有 proof/verification 绑定；
+  `Content-Length` 不得大于实际正文字节数（chunked/gzip 跳过）；`x-request-id` 等标识头
+  不得跨步骤重复；请求主机必须在任务范围内（判定不了的 scope 不诬告越界）；响应不得全空。
+- **正文门 `srcmode.ValidateReportText`**：描述/危害/修复必须写全，出现「待补/TODO/占位」
+  直接拒绝并说明缺哪一段。
+- **跨任务去重**：指纹 = 漏洞类型 + 归一化端点（复用 `report.Fingerprint`）。命中会写
+  `dedupe_of` 并把 `delivery/duplicate` 顶到收尾门，必须定案（台账标 duplicate 或
+  `src_dedupe clear`）才放行。
+- **收尾门扩展**：`CheckFinish` 增加交付面缺口 `report_missing` / `duplicate`（`mode_doc`
+  可用 `skip_report_gate` 关掉）；`Report` 增加 `findings_medium_plus` / `reports_ready`。
+- **agent 工具**：`src_prepare_submission`（正文 + 合规 + 查重 + 落台账，判定实现在宿主，
+  与 HTTP 面同一份）、`src_dedupe`（check/mark/clear）。
+- **HTTP**：`POST /api/findings/{id}/src-submission`、`PATCH /api/findings/{id}/src-dedupe`、
+  `GET /api/src/submissions`、`PATCH /api/src/submissions/{id}`。
+- **导出面**：`buildSrcInput` 优先读台账里写好的标题/描述/危害/修复（没有台账时保持原行为）。
+- **批量包**：`提交说明.md` 增加「提交台账」一节，`submissions.json` 进 zip。
+- **前端**：SRC 页签增加交付统计（中危+ 发现 / 报告齐备 / 待交付）、提交台账表格、
+  「准备交付件」与「改状态」两个对话框。
+
+#### 说明
+
+- 没有绑定流量的中危发现会一直卡在交付门：没证据的发现不叫可提交件。补绑证据、推翻它，
+  或人工放行——三条路都在界面上。
+- P3（SRC 平台规则/项目/看板）仍是路线图。
+
 ### 项目改名 BLADEPRO：从「全链渗透」到「SRC 挖掘」
 
 本仓是 [BLADE](https://github.com/lin9527ya/BLADE) 的 SRC 分支：引擎同源，任务模式不同。

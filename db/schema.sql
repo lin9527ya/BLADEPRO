@@ -1719,3 +1719,57 @@ CREATE INDEX IF NOT EXISTS idx_src_cells_state ON src_cells(task_id, state);
 DROP TRIGGER IF EXISTS trg_src_cells_upd ON src_cells;
 CREATE TRIGGER trg_src_cells_upd BEFORE UPDATE ON src_cells
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- =====================================================================
+-- SRC 交付面（P2）：发现元数据 + 提交台账
+--
+-- src_finding_meta 记"这条发现能不能交付"：取证指纹（跨任务去重）、证据合规结果、
+-- 报告是否齐备。src_submissions 是提交台账：交了哪个平台、平台编号、状态、回报。
+-- 两者都按 finding 级挂载——台账的粒度是"一条可提交件"，不是"一个任务"。
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS src_finding_meta (
+    finding_id   BIGINT PRIMARY KEY REFERENCES findings(id) ON DELETE CASCADE,
+    task_id      BIGINT REFERENCES tasks(id) ON DELETE CASCADE,
+    fingerprint  TEXT NOT NULL DEFAULT '',
+    -- compliance: {ok: bool, issues: [{code, detail, binding_id}]}，由 srcmode.CheckCompliance 产出。
+    compliance   JSONB NOT NULL DEFAULT '{}'::jsonb,
+    report_ready BOOLEAN NOT NULL DEFAULT false,
+    -- dedupe_of 指向"被认为是同一个洞"的旧发现；非空即需人工确认后才能提交。
+    dedupe_of    BIGINT REFERENCES findings(id) ON DELETE SET NULL,
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_src_finding_meta_fp   ON src_finding_meta(fingerprint) WHERE fingerprint <> '';
+CREATE INDEX IF NOT EXISTS idx_src_finding_meta_task ON src_finding_meta(task_id);
+
+CREATE TABLE IF NOT EXISTS src_submissions (
+    id             BIGSERIAL PRIMARY KEY,
+    task_id        BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    finding_id     BIGINT NOT NULL REFERENCES findings(id) ON DELETE CASCADE,
+    platform       TEXT NOT NULL DEFAULT '',
+    external_id    TEXT NOT NULL DEFAULT '',
+    title          TEXT NOT NULL DEFAULT '',
+    severity       TEXT NOT NULL DEFAULT '',
+    platform_level TEXT NOT NULL DEFAULT '',
+    status         TEXT NOT NULL DEFAULT 'draft'
+                     CHECK (status IN ('draft','ready','submitted','accepted','duplicate','rejected','paid','withdrawn')),
+    fingerprint    TEXT NOT NULL DEFAULT '',
+    description    TEXT NOT NULL DEFAULT '',
+    impact         TEXT NOT NULL DEFAULT '',
+    fix            TEXT NOT NULL DEFAULT '',
+    report_md      TEXT NOT NULL DEFAULT '',
+    submitted_at   TIMESTAMPTZ,
+    verdict_at     TIMESTAMPTZ,
+    reward         TEXT NOT NULL DEFAULT '',
+    note           TEXT NOT NULL DEFAULT '',
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- 一条发现对一个平台只有一份台账（同一洞重复投同一平台是纯粹的重复劳动）。
+CREATE UNIQUE INDEX IF NOT EXISTS uq_src_submission_finding_platform
+    ON src_submissions(finding_id, platform);
+CREATE INDEX IF NOT EXISTS idx_src_submissions_status      ON src_submissions(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_src_submissions_fingerprint ON src_submissions(fingerprint) WHERE fingerprint <> '';
+CREATE INDEX IF NOT EXISTS idx_src_submissions_task        ON src_submissions(task_id);
+DROP TRIGGER IF EXISTS trg_src_submissions_upd ON src_submissions;
+CREATE TRIGGER trg_src_submissions_upd BEFORE UPDATE ON src_submissions
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();

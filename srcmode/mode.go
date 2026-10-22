@@ -43,6 +43,9 @@ type ModeDoc struct {
 	MaxIntentsPerAsset int `json:"max_intents_per_asset"`
 	// HardItems 是"必须逐个点亮"的细分项（如 paths/enum-200）；不写则每个面只需 '*'。
 	HardItems []string `json:"hard_items,omitempty"`
+	// SkipReportGate 关掉"medium+ 发现必须齐备可提交件"这条收尾门（默认**要求**）。
+	// 只给"先跑覆盖、交付另开任务"的用法留出口：关掉后任务可以在报告没写好时收尾。
+	SkipReportGate bool `json:"skip_report_gate,omitempty"`
 }
 
 // DefaultDoc 返回 SRC 模式的默认快照。

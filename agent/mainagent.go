@@ -23,6 +23,8 @@ import (
 // autonomous intent-generation loop (that is the planner's job).
 type MainAgent struct {
 	findingRecorder FindingRecorder
+	// srcPreparer 是宿主注入的 SRC 交付准备实现（nil = src_prepare_submission 报未接线）。
+	srcPreparer     SrcPreparer
 	prov            llm.Provider
 	model           string
 	tx              *transcript.Store                      // raw LLM conversation persistence (nil = off)
@@ -179,6 +181,7 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 		if src := as.Src(); src != nil {
 			if mode, raw, err := src.TaskMode(ctx, taskID); err == nil && mode == srcmode.ModeSrc {
 				tsx.SetSrcMode(srcmode.Parse(raw), src)
+				tsx.SetSrcPreparer(m.srcPreparer)
 			}
 		}
 	}

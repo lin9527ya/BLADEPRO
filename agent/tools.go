@@ -77,6 +77,8 @@ type ToolSet struct {
 	srcMode  bool
 	srcDoc   srcmode.ModeDoc
 	srcStore *db.SrcStore
+	// srcPreparer 由宿主注入（server）：交付准备要读证据原文与任务范围，判定逻辑在那一侧。
+	srcPreparer SrcPreparer
 	// intentsRound 计本 ToolSet 生命周期内成功创建的意图数 —— planner 每轮新建一个
 	// ToolSet，所以它天然是"本轮已用额度"。
 	intentsRound int
@@ -235,12 +237,13 @@ func (t *ToolSet) AppendSrcTools(tools []actool.CoreTool, role string) []actool.
 	}
 	switch role {
 	case "planner":
-		return append(tools, t.srcState(), t.srcFinishCheck(), t.srcMarkCell())
+		return append(tools, t.srcState(), t.srcFinishCheck(), t.srcMarkCell(),
+			t.srcPrepareSubmission(), t.srcDedupe())
 	case "worker":
-		return append(tools, t.srcMarkCell(), t.srcState())
+		return append(tools, t.srcMarkCell(), t.srcState(), t.srcPrepareSubmission(), t.srcDedupe())
 	case "main":
-		// 主 agent 只读 + 可改提交状态；点格仍归 planner/worker，避免绕过覆盖判定。
-		return append(tools, t.srcState())
+		// 主 agent 只读 + 可交付/定案；点格仍归 planner/worker，避免绕过覆盖判定。
+		return append(tools, t.srcState(), t.srcPrepareSubmission(), t.srcDedupe())
 	default:
 		return tools
 	}

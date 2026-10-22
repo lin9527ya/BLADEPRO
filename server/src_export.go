@@ -67,6 +67,22 @@ func (s *Server) buildSrcInput(ctx context.Context, f *db.DBFinding) (report.Src
 	} else if rep := strings.TrimSpace(f.Report); rep != "" {
 		in.Description = rep
 	}
+	// P2：台账里写好的三段优先于发现的原始摘要/报告——那是为交付写的正文，不是探索
+	// 过程的记录。没有台账时保持原行为（否则导出会缺正文）。
+	if sub, err := s.m.PG().Src().GetSrcSubmissionByFinding(ctx, f.ID, ""); err == nil && sub != nil {
+		if t := strings.TrimSpace(sub.Title); t != "" {
+			in.Title = t
+		}
+		if d := strings.TrimSpace(sub.Description); d != "" {
+			in.Description = d
+		}
+		if d := strings.TrimSpace(sub.Impact); d != "" {
+			in.Impact = d
+		}
+		if d := strings.TrimSpace(sub.Fix); d != "" {
+			in.Fix = d
+		}
+	}
 
 	// 目标 URL：优先锚定资产的展示标签，其次绑定流量里的 URL。
 	assets := s.resolveAssetIDs(f.AssetIDs)

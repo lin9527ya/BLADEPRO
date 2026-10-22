@@ -103,6 +103,8 @@ import type {
   SkillCall,
   SkillItem,
   SrcCell,
+  SrcPrepareResult,
+  SrcSubmission,
   SrcTaskState,
   SSProject,
   SSTask,
@@ -448,6 +450,30 @@ export const api = {
   // 人工放行收尾：必须写理由（进审计），只替 engine 做判定，不改覆盖格。
   forceFinishSrc: (id: string, reason: string) =>
     post<{ ok: boolean; status: string; gaps_total: number }>(`/tasks/${id}/src/force-finish`, { reason }),
+  // ---- SRC 交付台账（P2）----
+  // 准备交付件：正文校验 + 证据合规 + 指纹查重都在服务端，issues 非空 = 还不能交。
+  prepareSrcSubmission: (
+    findingID: number,
+    input: { platform?: string; title?: string; description?: string; impact?: string; fix?: string },
+  ) => post<SrcPrepareResult>(`/findings/${findingID}/src-submission`, input),
+  // 台账列表（全局，可按任务过滤）；列表不回正文，只看状态。
+  srcSubmissions: (taskId?: string, status?: string) => {
+    const q = new URLSearchParams();
+    if (taskId) q.set("task_id", taskId);
+    if (status) q.set("status", status);
+    const suffix = q.toString();
+    return get<{ submissions: SrcSubmission[]; total: number }>(
+      `/src/submissions${suffix ? `?${suffix}` : ""}`,
+    );
+  },
+  // 推进台账状态机（submitted 必须带 external_id；duplicate 必须先登记 dedupe_of）。
+  patchSrcSubmission: (
+    id: number,
+    body: Partial<Pick<SrcSubmission, "status" | "external_id" | "platform_level" | "reward" | "note">>,
+  ) => patch<SrcSubmission>(`/src/submissions/${id}`, body),
+  // 重复定案：dedupeOf=0 表示「不是同一个洞」，解除标记。
+  setSrcDedupe: (findingID: number, dedupeOf: number) =>
+    patch<{ finding_id: number }>(`/findings/${findingID}/src-dedupe`, { dedupe_of: dedupeOf }),
   // 全局 llm_usage 聚合（仪表盘新版 token 视图）：按 profile 总量 + 按天分桶。
   usageStats: (days = 365) => get<UsageStats>(`/tokens/usage?days=${days}`),
   // ---- 目标管理（总览）----

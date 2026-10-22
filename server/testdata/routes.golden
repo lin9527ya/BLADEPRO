@@ -122,6 +122,7 @@ GET /api/skills/missing	server.(*Server).fsMissingSkills-fm
 GET /api/skills/{name}/files	server.(*Server).fsListFiles-fm
 GET /api/skills/{name}/files/{file...}	server.(*Server).fsReadFile-fm
 GET /api/skills/{name}/usage	server.(*Server).fsSkillUsage-fm
+GET /api/src/submissions	server.(*Server).listSrcSubmissions-fm
 GET /api/stats	server.(*Server).stats-fm
 GET /api/storage/report	server.(*Server).getStorageReport-fm
 GET /api/sync/scopesentry/projects	server.(*Server).syncSSProjects-fm
@@ -176,8 +177,10 @@ PATCH /api/conversations/{id}	server.(*Server).pgRenameConversation-fm
 PATCH /api/conversations/{id}/profile	server.(*Server).pgUpdateConversation-fm
 PATCH /api/exploration/findings/{id}	server.(*Server).patchFinding-fm
 PATCH /api/exploration/findings/{id}/traffic/{binding_id}	server.(*Server).editFindingTraffic-fm
+PATCH /api/findings/{id}/src-dedupe	server.(*Server).patchFindingSrcDedupe-fm
 PATCH /api/notify/channels/{id}	server.(*Server).notifyUpdateChannel-fm
 PATCH /api/playbooks/{id}	server.(*Server).patchPlaybook-fm
+PATCH /api/src/submissions/{id}	server.(*Server).patchSrcSubmission-fm
 PATCH /api/task-categories/{id}	server.(*Server).pgRenameTaskCategory-fm
 PATCH /api/task-schedules/{id}	server.(*Server).patchTaskSchedule-fm
 PATCH /api/task-templates/{id}	server.(*Server).pgUpdateTaskTemplate-fm
@@ -223,6 +226,7 @@ POST /api/exploration/findings/{id}/retests	server.(*Server).startFindingRetest-
 POST /api/exploration/findings/{id}/traffic	server.(*Server).bindFindingTraffic-fm
 POST /api/exploration/main-session/new	server.(*Server).newMainSession-fm
 POST /api/findings/{id}/promote-knowledge	server.(*Server).promoteFindingKnowledge-fm
+POST /api/findings/{id}/src-submission	server.(*Server).postFindingSrcSubmission-fm
 POST /api/gc	server.(*Server).gc-fm
 POST /api/intel/search	server.(*Server).searchIntelAssets-fm
 POST /api/intercept/pending/{id}/decide	server.(*Server).interceptDecide-fm

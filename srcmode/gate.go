@@ -20,6 +20,8 @@ type Gap struct {
 	Item      string `json:"item"`
 	Kind      string `json:"kind"`
 	State     string `json:"state,omitempty"`
+	// FindingID 只对交付类缺口（report_missing/duplicate）有意义：缺的是"这条发现"的件。
+	FindingID int64  `json:"finding_id,omitempty"`
 	Reason    string `json:"reason,omitempty"` // 缺口说明（为什么不算过）
 	Attempts  int    `json:"attempts"`
 	Priority  int    `json:"priority"` // 越大越该先补
@@ -33,6 +35,8 @@ const (
 	GapMissingFinding    = "missing_finding"    // tested_found 没挂 finding
 	GapBudgetStopBlocked = "budget_stop"        // budget_stop 而本次不允许它放行
 	GapUnknownAssetType  = "unknown_asset_type" // 资产类型没有必做面定义（配置漏了）
+	GapReportMissing     = "report_missing"     // medium+ 发现没有齐备的可提交件
+	GapDuplicate         = "duplicate"          // 疑似重复未处理（dedupe_of 挂着但没定案）
 )
 
 // Report 是一次收尾门判定的完整结果，同时供 agent 的 src_state 与 UI 使用。
@@ -43,8 +47,11 @@ type Report struct {
 	// CellsTerminal 是有终态的格数；CellsMeasured 只算 tested_*（真测过的）。
 	CellsTerminal int `json:"cells_terminal"`
 	CellsMeasured int `json:"cells_measured"`
-	GapsTotal     int `json:"gaps_total"`
-	GapsByArea    map[string]int `json:"gaps_by_area"`
+	// 交付面：medium+ 发现数 / 其中报告已齐备的条数（SkipReportGate 时不统计）。
+	FindingsMediumPlus int `json:"findings_medium_plus"`
+	ReportsReady       int `json:"reports_ready"`
+	GapsTotal          int `json:"gaps_total"`
+	GapsByArea         map[string]int `json:"gaps_by_area"`
 	// Gaps 按优先级降序，最多 50 条（完整清单走 UI 的矩阵）。
 	Gaps []Gap `json:"gaps"`
 	// Waived 是 allow_budget_stop=true 时被放行的 budget_stop 格（要在报告备注里写明）。
@@ -143,6 +150,13 @@ func CheckFinish(ctx context.Context, store *db.SrcStore, taskID int64, doc Mode
 		}
 		return gaps[i].Item < gaps[j].Item
 	})
+	// 交付面：格清零只是"测完了"，可提交件齐备才算"能交"。两件事分开算、分开报，
+	// 因为处理它们的人（planner 派意图 / reporter 写报告）不是同一个人。
+	if !doc.SkipReportGate {
+		deliveryGaps, mediumPlus, ready := deliveryGapsFor(ctx, store, taskID)
+		rep.FindingsMediumPlus, rep.ReportsReady = mediumPlus, ready
+		gaps = append(gaps, deliveryGaps...)
+	}
 	for _, g := range gaps {
 		rep.GapsByArea[g.Area]++
 	}

@@ -572,6 +572,7 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	window := workerRuntime.CompactionWindow()
 	wk := agent.NewWorker(workerRuntime, "task-router", s.m.dir, tx, window, s.agentMaxTurns("worker"))
 	wk.SetFindingRecorder(s.evidenceStore())
+	wk.SetSrcPreparer(s.prepareSrcSubmission) // SRC 交付准备（与 HTTP 面同一实现）
 	wk.SetCompactionWindowResolver(workerRuntime.CompactionWindow)
 	wk.SetNonStreaming(workerRuntime.nonStreaming) // 按任务当前激活 profile 的流式开关(每轮读)
 	wk.SetMaxTokens(workerRuntime.maxTokens)       // 同上,输出上限也跟随当前激活 profile
@@ -584,6 +585,7 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	wk.SetPolicyResolver(s.policyResolver(tidOfTask(t))) // P20 探索策略(每 run 现读;改策略下一轮生效)
 	pl := agent.NewPlanner(plannerRuntime, "task-router", s.m.dir, tx, plannerRuntime.CompactionWindow(), s.agentMaxTurns("planner"))
 	pl.SetFindingRecorder(s.evidenceStore())
+	pl.SetSrcPreparer(s.prepareSrcSubmission) // SRC 交付准备：覆盖格清完后把中危以上发现收口成可提交件
 	pl.SetCompactionWindowResolver(plannerRuntime.CompactionWindow)
 	pl.SetNonStreaming(plannerRuntime.nonStreaming)
 	pl.SetMaxTokens(plannerRuntime.maxTokens)
@@ -601,6 +603,7 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	pl.SetCompactor(agent.NewCompactor(plannerRuntime, "task-router"))
 	main := agent.NewMainAgent(mainRuntime, "task-router", s.m.dir, tx, mainRuntime.CompactionWindow(), s.agentMaxTurns("mainagent"))
 	main.SetFindingRecorder(s.evidenceStore())
+	main.SetSrcPreparer(s.prepareSrcSubmission) // 人机对话里也能替一条发现准备交付件
 	// 任务内的人在环路也要过拦截面：它同样带 Bash/WebFetch，而且这里拿得到任务的真实 id，
 	// 所以拦截规则、LLM 兜底裁判、RoE 授权范围门都该生效（此前漏挂——guard 是任务自带的，
 	// 却没有接到 mainagent 的 run 上，等于这条路径三样门都没有）。

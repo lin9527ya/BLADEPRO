@@ -416,6 +416,8 @@ func (s *Server) registerRoutes(mux routeRegistrar) {
 	s.registerChatRoutes(mux)
 	s.registerAgentRoutes(mux)
 	s.registerPlaybookRoutes(mux)
+	// SRC 交付面（P2）：提交台账 + 交付准备 + 重复定案。
+	s.registerSrcDelivery(mux)
 }
 
 // --- handlers ---

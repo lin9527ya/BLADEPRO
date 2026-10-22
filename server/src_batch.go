@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -51,6 +52,8 @@ type srcBatchPlan struct {
 	Warnings    []string        `json:"warnings"`
 	Included    int             `json:"included"`
 	Skipped     int             `json:"skipped"`
+	// Submissions 是本任务的提交台账（P2）：包里要带一份，人打开包就知道交到哪一步。
+	Submissions []db.SrcSubmission `json:"submissions,omitempty"`
 }
 
 // buildSrcBatch 组装交付计划：一次查完所有发现的绑定端点，据此算指纹与分组。
@@ -146,6 +149,13 @@ func (s *Server) buildSrcBatch(ctx context.Context, t *Task) (*srcBatchPlan, err
 		for _, w := range e.Warnings {
 			plan.Warnings = append(plan.Warnings, fmt.Sprintf("#%d %s：%s", e.ID, e.Title, w))
 		}
+	}
+	// 台账随包一起走：预览与 zip 共用这份计划，所以两边不会各说各话。
+	if subs, err := s.m.PG().Src().ListSrcSubmissions(ctx, db.SrcSubmissionFilter{TaskID: tidOfTask(t)}); err == nil {
+		for i := range subs {
+			subs[i].ReportMD = "" // 正文太长，台账快照只带三段与状态
+		}
+		plan.Submissions = subs
 	}
 	return plan, nil
 }
@@ -245,6 +255,14 @@ func (s *Server) buildSrcZip(ctx context.Context, t *Task, plan *srcBatchPlan) (
 	}
 	if err := add("提交说明.md", []byte(srcBatchReadme(t, plan))); err != nil {
 		return nil, err
+	}
+	// P2：台账快照进包——"哪些交了、交到哪一步"是交付物的一部分，不该只活在库里。
+	if len(plan.Submissions) > 0 {
+		if blob, err := json.MarshalIndent(plan.Submissions, "", "  "); err == nil {
+			if err := add("submissions.json", blob); err != nil {
+				return nil, err
+			}
+		}
 	}
 	for _, e := range plan.Entries {
 		if !e.Included {
@@ -384,6 +402,19 @@ func srcBatchReadme(t *Task, plan *srcBatchPlan) string {
 			}
 			fmt.Fprintf(&b, "- #%d「%s」：状态 %s，不进包（撤回的发现不要提交）\n", e.ID, e.Title, e.Status)
 		}
+	}
+
+	// P2：提交台账进包，包的封面也要能回答"这些交到哪一步了"。整包是交付物，
+	// 台账是交付的账——两者分开存，但一起给人看。
+	if len(plan.Submissions) > 0 {
+		b.WriteString("\n## 五、提交台账\n\n")
+		b.WriteString("| 发现 | 平台 | 状态 | 平台编号 | 回报 |\n|---|---|---|---|---|\n")
+		for _, sub := range plan.Submissions {
+			fmt.Fprintf(&b, "| #%d %s | %s | %s | %s | %s |\n",
+				sub.FindingID, oneLine(sub.Title), firstNonEmpty(sub.Platform, "—"),
+				sub.Status, firstNonEmpty(sub.ExternalID, "—"), firstNonEmpty(sub.Reward, "—"))
+		}
+		b.WriteString("\n完整台账（含三位正文）见 submissions.json。\n")
 	}
 	return b.String()
 }

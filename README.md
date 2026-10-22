@@ -38,7 +38,7 @@
    - `tested_clear` 必须给证据节点或写清说明；
    - `na` / `budget_stop` 必须写原因；
    - 同一格尝试次数超上限只能用 `budget_stop` 收口。
-3. **交付层**（P2 起）：报告正文、证据合规、跨任务去重、提交台账。本版已落 P0+P1。
+3. **交付层**：显式提交台账（`src_submissions`）+ 证据合规 + 报告正文门 + 跨任务指纹去重，收尾门一并要求"能交付"。
 
 ### 风险面（area）与必做面
 
@@ -58,25 +58,58 @@
 
 | 工具 | 角色 | 作用 |
 |---|---|---|
-| `src_state` | planner / main | 读完整矩阵、缺口、终态格 |
+| `src_state` | planner / main | 读完整矩阵、缺口、终态格、提交台账 |
 | `src_mark_cell` | worker / planner | 点亮一格，终态语义与证据当场校验 |
 | `src_finish_check` | planner | 收尾门只读预检（`finishable`） |
+| `src_prepare_submission` | planner / worker / main | 把一条发现准备成可提交件：正文校验 + 证据合规 + 指纹查重 + 落台账 |
+| `src_dedupe` | planner / worker / main | 按指纹跨任务查重；`mark`/`clear` 给重复定案 |
 
 它们**不进 tools 表**：`wireTools` 会把 DB 里绑定的工具重新注入，一旦 seed 就会泄漏到非 SRC 任务。
+
+### 交付闭环（P2）
+
+一条发现要走完这条路才算"能交"，缺一环收尾门就会把缺口报出来：
+
+```
+report_finding → 绑 proof/verification 流量 → src_prepare_submission（写正文 + 过合规 + 查重）
+   → 台账 draft（有问题）/ ready（可提交）→ 人工或 agent 推进 submitted → accepted → paid
+```
+
+**证据合规**（`srcmode.CheckCompliance`，结果存 `src_finding_meta.compliance`）：
+
+- 中危及以上必须有 `proof` / `verification` 角色的绑定流量；
+- 请求/响应头声明的 `Content-Length` 不得大于实际正文字节数（跳过 chunked / gzip）；
+- `x-request-id` / `x-trace-id` / `x-b3-traceid` / `traceparent` 等标识头不得跨步骤重复（同一个请求被贴了两次）；
+- 请求主机必须在任务范围内（`root_domain` 支持子域后缀、`ip/cidr` 走网段包含；判定不了的 scope 不诬告越界）；
+- 响应不能全空（状态行 + 头 + 体至少一项）。
+
+**正文门**：描述/危害/修复必须写全，出现「待补」「TODO」这类占位符直接拒绝——SRC 平台退稿的头号原因就是正文没写完。
+
+**去重**：指纹 = 漏洞类型 + 归一化端点集合（`report.Fingerprint`），只在有绑定流量时才有值。跨任务命中会写 `dedupe_of` 并把 `delivery/duplicate` 顶到收尾门上，必须有人定案（台账标 `duplicate` 或 `src_dedupe clear`）才放行。
+
+**台账状态机**：`draft → ready → submitted → accepted | duplicate | rejected`，`accepted → paid`，任意 → `withdrawn`。`submitted` 必须带 `external_id`（平台编号或提交凭证）；`duplicate` 必须已登记 `dedupe_of`。
+
+> 没有绑定流量的中危发现会一直卡在交付门。这是刻意的：没证据的发现不叫可提交件。要么补绑证据，要么把它推翻（误报/已撤回），要么人工放行收尾。
+
+交付包（`GET /api/tasks/{id}/src-report.zip`）里除每条发现的 md/docx，还带 `提交说明.md`（清单 + 证据门 + 疑似重复 + 台账摘要）与 `submissions.json`（台账快照）。
 
 ### HTTP 面
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `GET` | `/api/tasks/{id}/src` | `{enabled, summary, gaps, cells, assets(矩阵), doc}` |
+| `GET` | `/api/tasks/{id}/src` | `{enabled, summary, gaps, cells, assets(矩阵), submissions, doc}` |
 | `POST` | `/api/tasks/{id}/src/cells` | 人工点格/改格（同一套终态校验，人也不能绕过证据要求） |
 | `POST` | `/api/tasks/{id}/src/force-finish` | 人工放行收尾，必填 `reason`，落审计 |
+| `POST` | `/api/findings/{id}/src-submission` | 准备交付件（与 agent 工具同一实现） |
+| `PATCH` | `/api/findings/{id}/src-dedupe` | 重复定案（`dedupe_of: 0` 解除） |
+| `GET` | `/api/src/submissions` | 台账列表：`?task_id=&status=&platform=&limit=` |
+| `PATCH` | `/api/src/submissions/{id}` | 推进状态机 / 写平台编号、回报、备注 |
 
 非 SRC 任务访问 `/src` 返回 `{enabled:false}`，任务详情页的 SRC tab 据此显示提示而不是空矩阵。
 
 ### 设计文档
 
-完整方案（P0–P3、DDL、收尾门伪代码、风险与取舍）见 [docs/SRC挖掘agent改造方案.md](docs/SRC挖掘agent改造方案.md)；本仓已实现 P0（模式骨架）+ P1（覆盖矩阵与收尾门）。
+完整方案（P0–P3、DDL、收尾门伪代码、风险与取舍）见 [docs/SRC挖掘agent改造方案.md](docs/SRC挖掘agent改造方案.md)；本仓已实现 P0（模式骨架）+ P1（覆盖矩阵与收尾门）+ P2（交付台账、证据合规、跨任务去重）。P3（平台规则与看板）仍是路线图。
 
 ---
 

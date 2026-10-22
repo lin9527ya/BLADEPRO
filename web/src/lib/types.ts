@@ -1041,6 +1041,57 @@ export interface SrcSummary {
   gaps_by_area: Record<string, number>;
   finishable: boolean;
   blocked_reason?: string;
+  /** 交付面（P2）：中危及以上发现数 / 其中报告已齐备的条数。 */
+  findings_medium_plus?: number;
+  reports_ready?: number;
+}
+
+/** SRC 提交台账的一行（一条发现 × 一个平台）。 */
+export interface SrcSubmission {
+  id: number;
+  task_id: number;
+  finding_id: number;
+  platform: string;
+  external_id: string;
+  title: string;
+  severity: string;
+  platform_level?: string;
+  status: string;
+  fingerprint?: string;
+  description?: string;
+  impact?: string;
+  fix?: string;
+  reward: string;
+  note: string;
+  submitted_at?: string;
+  verdict_at?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/** 准备交付件的结果：issues 非空 = 还不能交（台账落 draft）。 */
+export interface SrcPrepareResult {
+  submission_id: number;
+  status: string;
+  fingerprint: string;
+  report_ready: boolean;
+  issues?: string[];
+  duplicates?: Array<{
+    task_id: number;
+    task_name?: string;
+    finding_id: number;
+    title: string;
+    severity: string;
+    status: string;
+    platform?: string;
+    external_id?: string;
+    submission_status?: string;
+  }>;
+  dedupe_of?: number;
+  markdown?: string;
+  gaps_total: number;
+  finishable: boolean;
+  note?: string;
 }
 
 export interface SrcTaskState {
@@ -1055,6 +1106,8 @@ export interface SrcTaskState {
   assets?: SrcMatrixAsset[];
   finishable?: boolean;
   legend?: string;
+  /** 本任务的提交台账（P2）。 */
+  submissions?: SrcSubmission[];
   doc?: {
     allow_budget_stop?: boolean;
     max_attempts_per_cell?: number;

@@ -97,7 +97,33 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 			"program":               t.srcDoc.Program,
 		},
 		"legend": srcmode.AreaLegend(),
+		// 交付面（P2）：台账随快照一起给，agent 与 UI 看的是同一份"交到哪一步"。
+		"submissions": t.srcSubmissionBriefs(ctx),
 	}, nil
+}
+
+// srcSubmissionBriefs 是台账的精简视图（去掉正文字段：正文只在导出与详情里取）。
+func (t *ToolSet) srcSubmissionBriefs(ctx context.Context) []map[string]any {
+	if t.srcStore == nil || t.taskID <= 0 {
+		return nil
+	}
+	subs, err := t.srcStore.ListSrcSubmissions(ctx, db.SrcSubmissionFilter{TaskID: t.taskID, Limit: 100})
+	if err != nil || len(subs) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(subs))
+	for _, s := range subs {
+		m := map[string]any{
+			"id": s.ID, "finding_id": s.FindingID, "title": s.Title, "severity": s.Severity,
+			"status": s.Status, "platform": s.Platform, "external_id": s.ExternalID,
+			"reward": s.Reward,
+		}
+		if s.Fingerprint != "" {
+			m["fingerprint"] = s.Fingerprint
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 // srcOverviewBlock 是 graph_overview 里的 src 摘要块（只放计数 + 前 10 条缺口）。

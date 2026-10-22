@@ -2,7 +2,7 @@
 
 import * as React from "react";
 
-import { CheckCircle2Icon, RefreshCwIcon, ShieldAlertIcon } from "lucide-react";
+import { CheckCircle2Icon, FilePlus2Icon, RefreshCwIcon, ShieldAlertIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -26,7 +26,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
-import type { SrcCell, SrcMatrixAsset, SrcMatrixCell, SrcTaskState } from "@/lib/types";
+import type { SrcCell, SrcMatrixAsset, SrcMatrixCell, SrcSubmission, SrcTaskState } from "@/lib/types";
 
 // 风险面短名 → 中文。后端 cell.title / gap.area_title 有值时优先用后端的，
 // 这里只兜底（矩阵里老数据可能没带 title）。
@@ -44,7 +44,53 @@ const AREA_TITLES: Record<string, string> = {
   logic: "业务逻辑",
   host: "主机暴露",
   takeover: "子域接管",
+  // P2 交付面：不是站点风险面，而是"这条发现还没准备好可提交件"。
+  delivery: "交付",
 };
+
+// 台账状态 → 中文 + 下一步合法流转（与服务端状态机一致；UI 只是少给错选项，
+// 真正的判定在服务端——两边口径以服务端为准）。
+const SUBMISSION_STATUS_LABELS: Record<string, string> = {
+  draft: "草稿",
+  ready: "可提交",
+  submitted: "已提交",
+  accepted: "已受理",
+  duplicate: "重复",
+  rejected: "已驳回",
+  paid: "已到账",
+  withdrawn: "已撤回",
+};
+
+const SUBMISSION_NEXT: Record<string, string[]> = {
+  draft: ["ready", "withdrawn"],
+  ready: ["submitted", "draft", "withdrawn"],
+  submitted: ["accepted", "duplicate", "rejected", "withdrawn"],
+  accepted: ["paid", "withdrawn"],
+  duplicate: ["withdrawn"],
+  rejected: ["withdrawn"],
+  paid: [],
+  withdrawn: [],
+};
+
+function submissionTone(status: string): string {
+  switch (status) {
+    case "ready":
+      return "border-sky-500/40 bg-sky-500/15 text-sky-600 dark:text-sky-400";
+    case "submitted":
+      return "border-amber-500/40 bg-amber-500/15 text-amber-600 dark:text-amber-400";
+    case "accepted":
+      return "border-emerald-500/40 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400";
+    case "paid":
+      return "border-emerald-600/50 bg-emerald-600/20 text-emerald-700 dark:text-emerald-300";
+    case "duplicate":
+    case "rejected":
+      return "border-border bg-muted text-muted-foreground";
+    case "withdrawn":
+      return "border-dashed border-border text-muted-foreground";
+    default:
+      return "border-border text-muted-foreground";
+  }
+}
 
 function areaTitle(area: string): string {
   return AREA_TITLES[area] ?? area;
@@ -135,6 +181,24 @@ export function SrcTab({ taskId }: { taskId: string }) {
   const [forceError, setForceError] = React.useState("");
   const [forcing, setForcing] = React.useState(false);
 
+  // P2 交付台账：改状态 + 准备交付件。
+  const [ledgerTarget, setLedgerTarget] = React.useState<SrcSubmission | null>(null);
+  const [ledgerStatus, setLedgerStatus] = React.useState("");
+  const [ledgerExternalID, setLedgerExternalID] = React.useState("");
+  const [ledgerReward, setLedgerReward] = React.useState("");
+  const [ledgerError, setLedgerError] = React.useState("");
+  const [ledgerSaving, setLedgerSaving] = React.useState(false);
+
+  const [prepareOpen, setPrepareOpen] = React.useState(false);
+  const [prepFindingID, setPrepFindingID] = React.useState("");
+  const [prepDescription, setPrepDescription] = React.useState("");
+  const [prepImpact, setPrepImpact] = React.useState("");
+  const [prepFix, setPrepFix] = React.useState("");
+  const [prepIssues, setPrepIssues] = React.useState<string[]>([]);
+  const [prepNote, setPrepNote] = React.useState("");
+  const [prepError, setPrepError] = React.useState("");
+  const [prepSaving, setPrepSaving] = React.useState(false);
+
   const load = React.useCallback(async () => {
     setLoading(true);
     try {
@@ -214,6 +278,64 @@ export function SrcTab({ taskId }: { taskId: string }) {
     }
   };
 
+  // ---- P2 交付台账 ----
+  const openLedger = (sub: SrcSubmission) => {
+    setLedgerTarget(sub);
+    setLedgerStatus(sub.status);
+    setLedgerExternalID(sub.external_id ?? "");
+    setLedgerReward(sub.reward ?? "");
+    setLedgerError("");
+  };
+
+  const submitLedger = async () => {
+    if (!ledgerTarget) return;
+    setLedgerSaving(true);
+    setLedgerError("");
+    try {
+      await api.patchSrcSubmission(ledgerTarget.id, {
+        status: ledgerStatus || undefined,
+        external_id: ledgerExternalID.trim(),
+        reward: ledgerReward.trim(),
+      });
+      setLedgerTarget(null);
+      toast.success("台账已更新");
+      await load();
+    } catch (e) {
+      setLedgerError(String((e as Error).message || e));
+    } finally {
+      setLedgerSaving(false);
+    }
+  };
+
+  const submitPrepare = async () => {
+    const findingID = Number(prepFindingID);
+    if (!Number.isFinite(findingID) || findingID <= 0) {
+      setPrepError("请填正确的发现 id");
+      return;
+    }
+    setPrepSaving(true);
+    setPrepError("");
+    setPrepIssues([]);
+    setPrepNote("");
+    try {
+      const result = await api.prepareSrcSubmission(findingID, {
+        description: prepDescription.trim() || undefined,
+        impact: prepImpact.trim() || undefined,
+        fix: prepFix.trim() || undefined,
+      });
+      setPrepIssues(result.issues ?? []);
+      setPrepNote(result.note ?? "");
+      if (result.report_ready) {
+        toast.success("可提交件已齐备（status=ready）");
+      }
+      await load();
+    } catch (e) {
+      setPrepError(String((e as Error).message || e));
+    } finally {
+      setPrepSaving(false);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -236,6 +358,20 @@ export function SrcTab({ taskId }: { taskId: string }) {
           ) : null}
         </div>
         <div className="flex items-center gap-2">
+          {enabled ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setPrepareOpen(true);
+                setPrepIssues([]);
+                setPrepNote("");
+                setPrepError("");
+              }}
+            >
+              <FilePlus2Icon /> 准备交付件
+            </Button>
+          ) : null}
           {enabled && !finishable ? (
             <Button size="sm" variant="outline" disabled={loading} onClick={() => setForceOpen(true)}>
               <ShieldAlertIcon /> 人工放行
@@ -289,6 +425,20 @@ export function SrcTab({ taskId }: { taskId: string }) {
             <Stat label="已终态" value={summary?.cells_terminal ?? 0} />
             <Stat label="已实测" value={summary?.cells_measured ?? 0} />
             <Stat label="资产" value={summary?.assets ?? 0} />
+          </div>
+
+          {/* 交付面：格清零 ≠ 能交，中危以上每条都要有齐备的可提交件。 */}
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <Stat label="中危+ 发现" value={summary?.findings_medium_plus ?? 0} />
+            <Stat label="报告齐备" value={summary?.reports_ready ?? 0} />
+            <Stat label="台账" value={(data.submissions ?? []).length} />
+            <Stat
+              label="待交付"
+              value={Math.max(
+                0,
+                (summary?.findings_medium_plus ?? 0) - (summary?.reports_ready ?? 0),
+              )}
+            />
           </div>
 
           {Object.keys(gapsByArea).length > 0 ? (
@@ -419,6 +569,76 @@ export function SrcTab({ taskId }: { taskId: string }) {
               </div>
             ) : null}
           </Card>
+
+          {/* P2 提交台账：交付物不只是报告，还有"交到哪一步"的账。 */}
+          <Card className="gap-0 overflow-hidden py-0">
+            <CardHeader className="border-b py-3">
+              <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+                提交台账
+                <span className="text-muted-foreground text-xs font-normal">
+                  一条发现 × 一个平台；标记「已提交」必须带平台编号
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>发现</TableHead>
+                    <TableHead>等级</TableHead>
+                    <TableHead>平台</TableHead>
+                    <TableHead>状态</TableHead>
+                    <TableHead>平台编号</TableHead>
+                    <TableHead>回报</TableHead>
+                    <TableHead className="text-right">操作</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(data.submissions ?? []).map((sub) => (
+                    <TableRow key={sub.id}>
+                      <TableCell className="max-w-72">
+                        <div className="flex min-w-0 flex-col gap-0.5">
+                          <span className="truncate text-xs" title={sub.title}>
+                            #{sub.finding_id} {sub.title}
+                          </span>
+                          {sub.fingerprint ? (
+                            <code className="text-muted-foreground font-mono text-[10px]">
+                              {sub.fingerprint}
+                            </code>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-xs">{sub.severity || "—"}</TableCell>
+                      <TableCell className="text-xs">{sub.platform || "本任务"}</TableCell>
+                      <TableCell>
+                        <span
+                          className={`inline-flex rounded-full border px-2 py-0.5 text-xs ${submissionTone(
+                            sub.status,
+                          )}`}
+                        >
+                          {SUBMISSION_STATUS_LABELS[sub.status] ?? sub.status}
+                        </span>
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">{sub.external_id || "—"}</TableCell>
+                      <TableCell className="text-xs">{sub.reward || "—"}</TableCell>
+                      <TableCell className="text-right">
+                        <Button size="sm" variant="ghost" onClick={() => openLedger(sub)}>
+                          改状态
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {(data.submissions ?? []).length === 0 ? (
+                    <TableRow>
+                      <TableCell className="text-muted-foreground py-8 text-center text-sm" colSpan={7}>
+                        还没有台账。先「准备交付件」，把中危以上发现的描述/危害/修复写全并过证据合规。
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
         </>
       ) : null}
 
@@ -534,6 +754,153 @@ export function SrcTab({ taskId }: { taskId: string }) {
             <Button disabled={forcing || !forceReason.trim()} onClick={() => void submitForce()}>
               {forcing && <Spinner data-icon="inline-start" />}
               确认放行
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={ledgerTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setLedgerTarget(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>更新提交台账</DialogTitle>
+            <DialogDescription>
+              {ledgerTarget ? `#${ledgerTarget.finding_id} ${ledgerTarget.title}` : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="src-ledger-status">状态</Label>
+              <Select value={ledgerStatus} onValueChange={setLedgerStatus}>
+                <SelectTrigger id="src-ledger-status" className="w-full">
+                  <SelectValue placeholder="选择状态" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {ledgerTarget ? (
+                      <SelectItem value={ledgerTarget.status}>
+                        {SUBMISSION_STATUS_LABELS[ledgerTarget.status] ?? ledgerTarget.status}（不变）
+                      </SelectItem>
+                    ) : null}
+                    {(SUBMISSION_NEXT[ledgerTarget?.status ?? ""] ?? []).map((next) => (
+                      <SelectItem key={next} value={next}>
+                        {SUBMISSION_STATUS_LABELS[next] ?? next}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="src-ledger-external">平台编号 / 提交凭证</Label>
+              <Input
+                id="src-ledger-external"
+                value={ledgerExternalID}
+                placeholder="标记为已提交时必填，例如 SRC-2026-0001"
+                onChange={(e) => setLedgerExternalID(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="src-ledger-reward">回报</Label>
+              <Input
+                id="src-ledger-reward"
+                value={ledgerReward}
+                placeholder="例如 200 积分 / 500 元"
+                onChange={(e) => setLedgerReward(e.target.value)}
+              />
+            </div>
+            {ledgerError ? (
+              <p className="text-destructive text-xs [overflow-wrap:anywhere]">{ledgerError}</p>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLedgerTarget(null)}>
+              取消
+            </Button>
+            <Button disabled={ledgerSaving} onClick={() => void submitLedger()}>
+              {ledgerSaving && <Spinner data-icon="inline-start" />}
+              保存
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={prepareOpen} onOpenChange={setPrepareOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>准备交付件</DialogTitle>
+            <DialogDescription>
+              服务端会当场校验：正文齐备（不许占位符）+ 证据合规（proof 绑定、包长、请求 id、授权范围）
+              + 跨任务指纹查重。issues 非空时台账落 draft。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="src-prep-finding">发现 ID</Label>
+              <Input
+                id="src-prep-finding"
+                type="number"
+                min={1}
+                value={prepFindingID}
+                placeholder="report_finding / list_findings 返回的 id"
+                onChange={(e) => setPrepFindingID(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="src-prep-desc">漏洞描述</Label>
+              <Textarea
+                id="src-prep-desc"
+                className="min-h-20"
+                value={prepDescription}
+                placeholder="第一人称讲做成了什么（留空则用该发现的报告/摘要）"
+                onChange={(e) => setPrepDescription(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <Label htmlFor="src-prep-impact">漏洞危害</Label>
+                <Textarea
+                  id="src-prep-impact"
+                  className="min-h-20"
+                  value={prepImpact}
+                  placeholder="每种伤害单独一行，写最终伤害"
+                  onChange={(e) => setPrepImpact(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="src-prep-fix">修复建议</Label>
+                <Textarea
+                  id="src-prep-fix"
+                  className="min-h-20"
+                  value={prepFix}
+                  placeholder="贴合本漏洞、可落地"
+                  onChange={(e) => setPrepFix(e.target.value)}
+                />
+              </div>
+            </div>
+            {prepIssues.length > 0 ? (
+              <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
+                <p className="mb-1 text-xs font-medium">还不能交（{prepIssues.length} 项）：</p>
+                <ul className="text-muted-foreground list-disc space-y-0.5 pl-4 text-xs [overflow-wrap:anywhere]">
+                  {prepIssues.map((issue) => (
+                    <li key={issue}>{issue}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {prepNote ? <p className="text-muted-foreground text-xs [overflow-wrap:anywhere]">{prepNote}</p> : null}
+            {prepError ? <p className="text-destructive text-xs [overflow-wrap:anywhere]">{prepError}</p> : null}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPrepareOpen(false)}>
+              关闭
+            </Button>
+            <Button disabled={prepSaving || !prepFindingID.trim()} onClick={() => void submitPrepare()}>
+              {prepSaving && <Spinner data-icon="inline-start" />}
+              准备 / 重新校验
             </Button>
           </DialogFooter>
         </DialogContent>

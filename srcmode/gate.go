@@ -48,9 +48,9 @@ type Report struct {
 	CellsTerminal int `json:"cells_terminal"`
 	CellsMeasured int `json:"cells_measured"`
 	// 交付面：medium+ 发现数 / 其中报告已齐备的条数（SkipReportGate 时不统计）。
-	FindingsMediumPlus int `json:"findings_medium_plus"`
-	ReportsReady       int `json:"reports_ready"`
-	GapsTotal          int `json:"gaps_total"`
+	FindingsMediumPlus int            `json:"findings_medium_plus"`
+	ReportsReady       int            `json:"reports_ready"`
+	GapsTotal          int            `json:"gaps_total"`
 	GapsByArea         map[string]int `json:"gaps_by_area"`
 	// Gaps 按优先级降序，最多 50 条（完整清单走 UI 的矩阵）。
 	Gaps []Gap `json:"gaps"`
@@ -317,4 +317,3 @@ func ValidateCell(ctx context.Context, store *db.SrcStore, taskID int64, doc Mod
 	}
 	return nil
 }
-

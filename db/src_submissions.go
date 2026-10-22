@@ -290,10 +290,10 @@ func (s *SrcStore) GetSrcSubmissionByFinding(ctx context.Context, findingID int6
 
 // SrcSubmissionFilter selects ledger rows (all fields optional).
 type SrcSubmissionFilter struct {
-	TaskID   int64 `json:"task_id,omitempty"`
+	TaskID   int64  `json:"task_id,omitempty"`
 	Status   string `json:"status,omitempty"`
 	Platform string `json:"platform,omitempty"`
-	Limit    int   `json:"limit,omitempty"`
+	Limit    int    `json:"limit,omitempty"`
 }
 
 // ListSrcSubmissions lists ledger rows, newest first, bounded by Limit (default 200).

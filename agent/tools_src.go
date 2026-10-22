@@ -10,7 +10,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 
 	actool "github.com/lin9527ya/Norma/tool"
 	"github.com/lin9527ya/bladepro/db"
@@ -81,14 +80,14 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 		})
 	}
 	return map[string]any{
-		"mode":        srcmode.ModeSrc,
-		"summary":     rep,
-		"gaps":        rep.Gaps,
-		"gaps_total":  rep.GapsTotal,
+		"mode":         srcmode.ModeSrc,
+		"summary":      rep,
+		"gaps":         rep.Gaps,
+		"gaps_total":   rep.GapsTotal,
 		"gaps_by_area": rep.GapsByArea,
-		"cells":       cells,
-		"assets":      matrix,
-		"finishable":  rep.Finishable,
+		"cells":        cells,
+		"assets":       matrix,
+		"finishable":   rep.Finishable,
 		"doc": map[string]any{
 			"allow_budget_stop":     t.srcDoc.AllowBudgetStop,
 			"max_attempts_per_cell": t.srcDoc.MaxAttemptsPerCell,
@@ -152,7 +151,7 @@ func (t *ToolSet) srcOverviewBlock(ctx context.Context) (map[string]any, error) 
 		"blocked_reason":        rep.BlockedReason,
 		"allow_budget_stop":     t.srcDoc.AllowBudgetStop,
 		"max_attempts_per_cell": t.srcDoc.MaxAttemptsPerCell,
-		"note": "SRC 模式：本轮只派能点亮空格、或把 tested_clear 变 tested_found 的意图；gaps_total>0 时不要 prove_goal。",
+		"note":                  "SRC 模式：本轮只派能点亮空格、或把 tested_clear 变 tested_found 的意图；gaps_total>0 时不要 prove_goal。",
 	}, nil
 }
 
@@ -311,26 +310,4 @@ func (t *ToolSet) srcMarkCell() actool.CoreTool {
 				"finishable":   rep.Finishable,
 			})
 		})
-}
-
-// srcGapAreas 按缺口数给出面积摘要（供日志/诊断用，保持稳定顺序）。
-func srcGapAreas(gapsByArea map[string]int) string {
-	areas := make([]string, 0, len(gapsByArea))
-	for a := range gapsByArea {
-		areas = append(areas, a)
-	}
-	sort.SliceStable(areas, func(i, j int) bool {
-		if gapsByArea[areas[i]] != gapsByArea[areas[j]] {
-			return gapsByArea[areas[i]] > gapsByArea[areas[j]]
-		}
-		return areas[i] < areas[j]
-	})
-	out := ""
-	for i, a := range areas {
-		if i > 0 {
-			out += "、"
-		}
-		out += fmt.Sprintf("%s×%d", a, gapsByArea[a])
-	}
-	return out
 }

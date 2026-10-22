@@ -2,7 +2,7 @@ package db
 
 import (
 	"context"
-		"testing"
+	"testing"
 )
 
 // TestSrcSubmissionStateMachine 钉住台账状态机的合法边：台账是审计记录，不能随便回退。
@@ -227,4 +227,3 @@ func TestSrcHostInScope(t *testing.T) {
 		t.Fatalf("没有可判定的 scope 时应返回不可判定：in=%v decidable=%v err=%v", in, decidable, err)
 	}
 }
-

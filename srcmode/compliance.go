@@ -81,7 +81,7 @@ func CheckCompliance(severity string, steps []EvidenceStep) []ComplianceIssue {
 		})
 	}
 
-	seenID := map[string]int64{} // 标识头值 -> 首次出现的 binding
+	seenID := map[string]int64{}  // 标识头值 -> 首次出现的 binding
 	seenReq := map[string]int64{} // 请求哈希 -> 首次出现的 binding
 	for _, st := range steps {
 		label := strings.TrimSpace(st.Method + " " + st.URL)

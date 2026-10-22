@@ -140,7 +140,7 @@ func (s *Server) listSrcPrograms(w http.ResponseWriter, r *http.Request) {
 	for i := range rows {
 		p, err := srcProgramFromRow(&rows[i])
 		if err != nil {
-			writeErr(w, 500, "项目 #" + strconv.FormatInt(rows[i].ID, 10) + " 的规则 JSON 坏了：" + err.Error())
+			writeErr(w, 500, "项目 #"+strconv.FormatInt(rows[i].ID, 10)+" 的规则 JSON 坏了："+err.Error())
 			return
 		}
 		out = append(out, p)
@@ -149,14 +149,14 @@ func (s *Server) listSrcPrograms(w http.ResponseWriter, r *http.Request) {
 }
 
 type srcProgramReq struct {
-	CompanyID   *int64                  `json:"company_id,omitempty"`
-	Name        string                  `json:"name"`
-	Platform    string                  `json:"platform"`
-	ScopeNote   string                  `json:"scope_note"`
-	Rules       srcmode.ProgramRules    `json:"rules"`
-	RateLimit   int                     `json:"rate_limit"`
-	TimeWindow  string                  `json:"time_window"`
-	SeverityMap map[string]string       `json:"severity_map"`
+	CompanyID   *int64               `json:"company_id,omitempty"`
+	Name        string               `json:"name"`
+	Platform    string               `json:"platform"`
+	ScopeNote   string               `json:"scope_note"`
+	Rules       srcmode.ProgramRules `json:"rules"`
+	RateLimit   int                  `json:"rate_limit"`
+	TimeWindow  string               `json:"time_window"`
+	SeverityMap map[string]string    `json:"severity_map"`
 }
 
 func (req srcProgramReq) toProgram() (*srcmode.Program, []byte, []byte, error) {
@@ -282,25 +282,3 @@ func (s *Server) getSrcStats(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, stats)
 }
-
-// srcTaskProgram 读出任务绑定的项目（nil = 没绑）。看板与界面上的"哪个项目"都用它。
-func (s *Server) srcTaskProgram(r *http.Request, taskID int64) *srcmode.Program {
-	row, err := s.m.PG().Src().SrcProgramForTask(r.Context(), taskID)
-	if err != nil {
-		return nil
-	}
-	p, err := srcProgramFromRow(row)
-	if err != nil {
-		return nil
-	}
-	return p
-}
-
-// programBoardLine 给提示词加一句"这个任务是哪个平台的哪个项目、规则是什么"。
-func programBoardLine(p *srcmode.Program) string {
-	if p == nil {
-		return ""
-	}
-	return p.Describe()
-}
-

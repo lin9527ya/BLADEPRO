@@ -16,7 +16,6 @@ import (
 	actool "github.com/lin9527ya/Norma/tool"
 	"github.com/lin9527ya/bladepro/db"
 	"github.com/lin9527ya/bladepro/report"
-	"github.com/lin9527ya/bladepro/srcmode"
 )
 
 // SrcPrepareRequest 是"把一条发现准备成可提交件"的输入。
@@ -241,12 +240,4 @@ func toSrcDuplicateRefs(in []db.SrcDuplicate) []SrcDuplicateRef {
 		})
 	}
 	return out
-}
-
-// srcDeliverySummary 是给 src_state 用的一句话交付摘要（缺口按面聚合时用得上）。
-func srcDeliverySummary(rep srcmode.Report) string {
-	if rep.FindingsMediumPlus == 0 {
-		return "目前没有中危及以上的发现"
-	}
-	return fmt.Sprintf("medium+ 发现 %d 条，报告齐备 %d 条", rep.FindingsMediumPlus, rep.ReportsReady)
 }

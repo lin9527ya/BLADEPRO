@@ -187,10 +187,10 @@ WHERE id = (SELECT src_program_id FROM tasks WHERE id=$1)`, taskID))
 
 // SrcStats 是 SRC 看板的聚合数字（一次查询一组，避免 N 次往返）。
 type SrcStats struct {
-	Tasks            int            `json:"tasks"`         // mode='src' 的任务数
-	Programs         int            `json:"programs"`      // 平台项目数
-	Submissions      map[string]int `json:"submissions"`   // 台账按状态
-	BySeverity       map[string]int `json:"by_severity"`   // 台账按内部等级
+	Tasks            int            `json:"tasks"`       // mode='src' 的任务数
+	Programs         int            `json:"programs"`    // 平台项目数
+	Submissions      map[string]int `json:"submissions"` // 台账按状态
+	BySeverity       map[string]int `json:"by_severity"` // 台账按内部等级
 	FindingsMedium   int            `json:"findings_medium_plus"`
 	FindingsReady    int            `json:"findings_report_ready"`
 	SubmissionsTotal int            `json:"submissions_total"`

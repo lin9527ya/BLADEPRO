@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-// ModeSrc 是 SRC 挖掘的模式标识；tasks.mode='' 表示普通渗透（行为与改造前一致）。
+// ModeSrc 是 SRC 挖掘的模式标识；tasks.mode=” 表示普通渗透（行为与改造前一致）。
 const ModeSrc = "src"
 
 // 预算默认值与硬上限。上限存在的意义是防止一条 mode_doc 把任务变成无限循环。

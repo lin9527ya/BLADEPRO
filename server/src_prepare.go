@@ -175,10 +175,12 @@ func (s *Server) prepareSrcSubmission(ctx context.Context, req agent.SrcPrepareR
 	return res, nil
 }
 
-// srcDocForTask 读出任务的 SRC 模式快照（非 SRC 任务返回零值）。
+// srcDocForTask 读出任务的 SRC 模式快照（非 SRC 任务返回零值——注意不能只 Parse：
+// mode_doc 为空的普通渗透任务会被 Parse 退化成"默认 SRC 文档"，那会让收尾门
+// 在一个根本没开 SRC 的任务上跑一遍）。
 func (s *Server) srcDocForTask(taskID int64) srcmode.ModeDoc {
 	t, ok := s.m.Task(strconv.FormatInt(taskID, 10))
-	if !ok {
+	if !ok || t.Mode != srcmode.ModeSrc {
 		return srcmode.ModeDoc{}
 	}
 	return srcmode.Parse(t.ModeDoc)

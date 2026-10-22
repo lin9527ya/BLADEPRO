@@ -24,22 +24,22 @@ import (
 type MainAgent struct {
 	findingRecorder FindingRecorder
 	// srcPreparer 是宿主注入的 SRC 交付准备实现（nil = src_prepare_submission 报未接线）。
-	srcPreparer     SrcPreparer
-	prov            llm.Provider
-	model           string
-	tx              *transcript.Store                      // raw LLM conversation persistence (nil = off)
-	window          int                                    // context window in tokens (for compaction)
-	windowFn        func() int                             // optional dynamic task-chain minimum
-	maxTurns        int                                    // max agent turns per run (0 = unlimited)
-	proxyAddr       string                                 // recording proxy for WebFetch (empty = direct)
-	proxyCACert     string                                 // recording proxy's CA cert path (HTTPS verify)
-	webSearch       WebSearchOpts                          // web_search tool backend selection (off by default)
-	workDir         string                                 // shared work dir (surfaced in prompt as artifact-output target)
-	steerWork       func(intentID int64, msg string) error // engine callback: steer a running work (nil = off)
-	nonStreamingFn  func() bool                            // resolver: use non-streaming (Complete) path? (nil = streaming)
-	noaEnabledFn    func() bool                            // resolver: use experimental noa compaction? (nil = off)
-	maxTokensFn     func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
-	policyFn        func() *policy.Effective               // resolver: task exploration policy (P20; nil = none)
+	srcPreparer    SrcPreparer
+	prov           llm.Provider
+	model          string
+	tx             *transcript.Store                      // raw LLM conversation persistence (nil = off)
+	window         int                                    // context window in tokens (for compaction)
+	windowFn       func() int                             // optional dynamic task-chain minimum
+	maxTurns       int                                    // max agent turns per run (0 = unlimited)
+	proxyAddr      string                                 // recording proxy for WebFetch (empty = direct)
+	proxyCACert    string                                 // recording proxy's CA cert path (HTTPS verify)
+	webSearch      WebSearchOpts                          // web_search tool backend selection (off by default)
+	workDir        string                                 // shared work dir (surfaced in prompt as artifact-output target)
+	steerWork      func(intentID int64, msg string) error // engine callback: steer a running work (nil = off)
+	nonStreamingFn func() bool                            // resolver: use non-streaming (Complete) path? (nil = streaming)
+	noaEnabledFn   func() bool                            // resolver: use experimental noa compaction? (nil = off)
+	maxTokensFn    func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
+	policyFn       func() *policy.Effective               // resolver: task exploration policy (P20; nil = none)
 	// guard（可选）把拦截规则、LLM 兜底裁判与 RoE 授权范围门挂到本 agent 的每一次 run 上。
 	// nil = 不挂、无任何拦截。接线方式与 ChatAgent 一致——任务内的人在环路同样能执行命令，
 	// 而且这里拿得到任务的**真实 id**，所以范围门本就该生效（此前漏挂，见下）。

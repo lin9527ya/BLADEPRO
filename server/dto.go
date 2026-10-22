@@ -68,10 +68,10 @@ type TaskDTO struct {
 	PolicyCustom     int      `json:"policy_custom,omitempty"`
 	PolicyMaxIntents int      `json:"policy_max_intents,omitempty"`
 	// SRC 挖掘模式：mode 为 "" 时以下字段全部省略（普通渗透任务的 DTO 一个字节都不变）。
-	Mode    string `json:"mode,omitempty"`
-	SrcGaps int    `json:"src_gaps,omitempty"`
-	SrcCells int   `json:"src_cells,omitempty"`
-	SrcDone int    `json:"src_done,omitempty"`
+	Mode     string `json:"mode,omitempty"`
+	SrcGaps  int    `json:"src_gaps,omitempty"`
+	SrcCells int    `json:"src_cells,omitempty"`
+	SrcDone  int    `json:"src_done,omitempty"`
 	// SrcProgramID 是本任务绑定的 SRC 平台项目（P3）。
 	SrcProgramID *int64 `json:"src_program_id,omitempty"`
 }

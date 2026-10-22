@@ -64,17 +64,17 @@ type WebSearchOpts struct {
 type Worker struct {
 	findingRecorder FindingRecorder
 	// srcPreparer 是宿主注入的 SRC 交付准备实现（nil = src_prepare_submission 报未接线）。
-	srcPreparer     SrcPreparer
-	prov            llm.Provider
-	model           string
-	workDir         string
-	proxyAddr       string
-	proxyCACert     string            // recording proxy's CA cert path (for WebFetch HTTPS verify)
-	webSearch       WebSearchOpts     // web_search tool backend selection (off by default)
-	tx              *transcript.Store // raw LLM conversation persistence (nil = off)
-	window          int               // context window in tokens (for compaction)
-	windowFn        func() int        // optional dynamic task-chain minimum
-	maxTurns        int               // max agent turns per run (0 = unlimited)
+	srcPreparer SrcPreparer
+	prov        llm.Provider
+	model       string
+	workDir     string
+	proxyAddr   string
+	proxyCACert string            // recording proxy's CA cert path (for WebFetch HTTPS verify)
+	webSearch   WebSearchOpts     // web_search tool backend selection (off by default)
+	tx          *transcript.Store // raw LLM conversation persistence (nil = off)
+	window      int               // context window in tokens (for compaction)
+	windowFn    func() int        // optional dynamic task-chain minimum
+	maxTurns    int               // max agent turns per run (0 = unlimited)
 	// runTimeout is the wall-clock budget for the main exploration of one intent
 	// (0 = unlimited). When it fires, the run is cut and a settlement round is
 	// forced so already-identified facts get written back instead of being lost.

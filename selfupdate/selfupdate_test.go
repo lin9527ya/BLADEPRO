@@ -328,7 +328,7 @@ func TestExtractBinaryFindsNestedEntry(t *testing.T) {
 	for name, body := range map[string]string{
 		"bladepro-0.3.8-linux-amd64/README.md":           "readme",
 		"bladepro-0.3.8-linux-amd64/skills/a.md":         "skill",
-		"bladepro-0.3.8-linux-amd64/bladepro":               "#!/bin/sh\nexit 0\n",
+		"bladepro-0.3.8-linux-amd64/bladepro":            "#!/bin/sh\nexit 0\n",
 		"bladepro-0.3.8-linux-amd64/config.example.json": "{}",
 	} {
 		w, err := zw.Create(name)
@@ -381,7 +381,7 @@ func TestExtractBinaryMissingEntry(t *testing.T) {
 func TestCheckURLRejectsNonGitHub(t *testing.T) {
 	bad := []string{
 		"http://github.com/x",           // 非 HTTPS
-		"https://evil.com/bladepro.zip",    // 域名不在白名单
+		"https://evil.com/bladepro.zip", // 域名不在白名单
 		"https://github.com.evil.com/x", // 后缀伪装
 		"https://raw.githubusercontent.com.evil.com/x",
 	}

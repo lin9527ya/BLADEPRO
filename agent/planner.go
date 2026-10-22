@@ -23,7 +23,7 @@ import (
 // assets, judges whether the task goal is met, and emits 0..N exploration intents
 // into the frontier. It is the sole intent generator.
 type Planner struct {
-	findingRecorder   FindingRecorder
+	findingRecorder FindingRecorder
 	// srcPreparer 是宿主注入的 SRC 交付准备实现（nil = src_prepare_submission 报未接线）。
 	srcPreparer       SrcPreparer
 	prov              llm.Provider

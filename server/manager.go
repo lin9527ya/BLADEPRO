@@ -60,18 +60,18 @@ type Task struct {
 	CoverageEnabled      bool `json:"coverage_enabled"`       // 资产覆盖度功能开关(创建时定,默认开)
 	// ExplorationPolicy 是任务级探索策略文档（P20，JSONB 快照）。nil/空 = 无策略。
 	// 由 /policy 接口写入并同步到这里，供 DTO 与 UI 展示；执行点走 DB 现读（policyResolver）。
-	ExplorationPolicy json.RawMessage        `json:"exploration_policy,omitempty"`
+	ExplorationPolicy json.RawMessage `json:"exploration_policy,omitempty"`
 	// Mode 是任务模式（""=普通渗透，"src"=SRC 挖掘），创建时定死；ModeDoc 是其快照。
-	Mode              string                 `json:"mode,omitempty"`
-	ModeDoc           json.RawMessage        `json:"mode_doc,omitempty"`
-	SrcProgramID      *int64                 `json:"src_program_id,omitempty"` // SRC 平台项目（P3）
-	FirstRunAt        int64                  `json:"first_run_at,omitempty"`
-	DeadlineAt        int64                  `json:"deadline_at,omitempty"`
-	Store             *pgdb.ExplorationStore `json:"-"`
-	Guard             *guard.Guard           `json:"-"`
-	notify            chan struct{}
-	lifecycleMu       sync.RWMutex
-	llmMu             sync.RWMutex
+	Mode         string                 `json:"mode,omitempty"`
+	ModeDoc      json.RawMessage        `json:"mode_doc,omitempty"`
+	SrcProgramID *int64                 `json:"src_program_id,omitempty"` // SRC 平台项目（P3）
+	FirstRunAt   int64                  `json:"first_run_at,omitempty"`
+	DeadlineAt   int64                  `json:"deadline_at,omitempty"`
+	Store        *pgdb.ExplorationStore `json:"-"`
+	Guard        *guard.Guard           `json:"-"`
+	notify       chan struct{}
+	lifecycleMu  sync.RWMutex
+	llmMu        sync.RWMutex
 
 	// pendingTriggers accumulates the concrete changes (worker done / finding) that
 	// fired planning rounds since the last one consumed them. The debounce coalesces

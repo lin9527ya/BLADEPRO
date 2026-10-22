@@ -143,6 +143,8 @@ const GAP_KIND_LABELS: Record<string, string> = {
   missing_finding: "缺 finding",
   budget_stop: "未测完",
   unknown_asset_type: "未配置必做面",
+  report_missing: "缺可提交件",
+  duplicate: "疑似重复",
 };
 
 function gapKindLabel(kind: string): string {
@@ -532,7 +534,7 @@ export function SrcTab({ taskId }: { taskId: string }) {
                 </TableHeader>
                 <TableBody>
                   {gaps.map((gap) => (
-                    <TableRow key={`${gap.asset_id}-${gap.area}-${gap.item}-${gap.kind}`}>
+                    <TableRow key={`${gap.asset_id}-${gap.finding_id ?? 0}-${gap.area}-${gap.item}-${gap.kind}`}>
                       <TableCell className="max-w-64">
                         <div className="flex min-w-0 flex-col gap-0.5">
                           <code className="truncate font-mono text-xs" title={gap.asset}>

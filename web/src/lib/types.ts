@@ -985,11 +985,13 @@ export interface SrcGap {
   area: string;
   area_title?: string;
   item: string;
-  kind: "blank" | "missing_reason" | "missing_evidence" | "missing_finding" | "budget_stop" | "unknown_asset_type" | string;
+  kind: "blank" | "missing_reason" | "missing_evidence" | "missing_finding" | "budget_stop" | "unknown_asset_type" | "report_missing" | "duplicate" | string;
   state?: string;
   reason?: string;
   attempts?: number;
   priority?: number;
+  /** 交付类缺口（report_missing/duplicate）指向的发现 id；站点面缺口为空。 */
+  finding_id?: number;
 }
 
 /** SRC 挖掘：一个覆盖格的终态行（资产 × 风险面 × 细分项）。 */

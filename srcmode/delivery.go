@@ -57,7 +57,7 @@ func deliveryGapsFor(ctx context.Context, store *db.SrcStore, taskID int64) (gap
 			ready++
 		} else {
 			gaps = append(gaps, Gap{
-				Asset: f.Title, Area: DeliveryArea, AreaTitle: "交付",
+				Asset: f.Title, AssetType: "finding", Area: DeliveryArea, AreaTitle: "交付",
 				Item: "report", Kind: GapReportMissing, FindingID: f.FindingID,
 				State: f.SubmissionStatus,
 				Reason: fmt.Sprintf("发现 #%d（%s）还没有齐备的可提交件：调 src_prepare_submission 写全描述/危害/修复并过证据合规",
@@ -71,7 +71,7 @@ func deliveryGapsFor(ctx context.Context, store *db.SrcStore, taskID int64) (gap
 				// 已定案：重复的不交，撤回的不交。
 			default:
 				gaps = append(gaps, Gap{
-					Asset: f.Title, Area: DeliveryArea, AreaTitle: "交付",
+					Asset: f.Title, AssetType: "finding", Area: DeliveryArea, AreaTitle: "交付",
 					Item: "duplicate", Kind: GapDuplicate, FindingID: f.FindingID,
 					Reason: fmt.Sprintf("发现 #%d 疑似与 #%d 是同一个洞：确认重复就把台账标 duplicate，不是同一个就解除 dedupe_of",
 						f.FindingID, f.DedupeOf),

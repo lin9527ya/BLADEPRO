@@ -138,6 +138,15 @@ func CheckFinish(ctx context.Context, store *db.SrcStore, taskID int64, doc Mode
 		}
 	}
 
+	// 交付面：格清零只是"测完了"，可提交件齐备才算"能交"。两件事分开算、分开报，
+	// 因为处理它们的人（planner 派意图 / reporter 写报告）不是同一个人。
+	// 注意顺序：交付缺口必须在排序**之前**并入，否则会被 50 条上限挤出去——那等于
+	// "看不见的缺口"，比没有这道门更糟。
+	if !doc.SkipReportGate {
+		deliveryGaps, mediumPlus, ready := deliveryGapsFor(ctx, store, taskID)
+		rep.FindingsMediumPlus, rep.ReportsReady = mediumPlus, ready
+		gaps = append(gaps, deliveryGaps...)
+	}
 	sort.SliceStable(gaps, func(i, j int) bool {
 		if gaps[i].Priority != gaps[j].Priority {
 			return gaps[i].Priority > gaps[j].Priority
@@ -150,13 +159,6 @@ func CheckFinish(ctx context.Context, store *db.SrcStore, taskID int64, doc Mode
 		}
 		return gaps[i].Item < gaps[j].Item
 	})
-	// 交付面：格清零只是"测完了"，可提交件齐备才算"能交"。两件事分开算、分开报，
-	// 因为处理它们的人（planner 派意图 / reporter 写报告）不是同一个人。
-	if !doc.SkipReportGate {
-		deliveryGaps, mediumPlus, ready := deliveryGapsFor(ctx, store, taskID)
-		rep.FindingsMediumPlus, rep.ReportsReady = mediumPlus, ready
-		gaps = append(gaps, deliveryGaps...)
-	}
 	for _, g := range gaps {
 		rep.GapsByArea[g.Area]++
 	}

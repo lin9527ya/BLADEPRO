@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BLADE 安装脚本：① 全部 Docker  ② 本地编译运行
+# BLADEPRO 安装脚本：① 全部 Docker  ② 本地编译运行
 set -euo pipefail
 cd "$(cd "$(dirname "$0")" && pwd)"
 
@@ -49,7 +49,7 @@ install_docker(){
   docker compose pull || true
   docker compose up -d
   ok "启动完成 → http://localhost:8787"
-  info "查看日志：docker compose logs -f blade"
+  info "查看日志：docker compose logs -f bladepro"
 }
 
 # ── ② 本地编译运行 ──────────────────────────────
@@ -62,16 +62,16 @@ install_local(){
       ensure_docker
       local pw; pw="$(ask 'Postgres 密码（回车随机）' "$(rand)")"
       # 只绑 loopback（P42）：数据库端口是全网扫描前几名，不需要对外。
-      docker run -d --name blade-pg -p 127.0.0.1:5432:5432 \
-        -e POSTGRES_USER=blade -e POSTGRES_PASSWORD="$pw" -e POSTGRES_DB=blade \
-        -v blade-pg:/var/lib/postgresql/data postgres:16-alpine
-      DB_HOST=127.0.0.1 DB_PORT=5432 DB_USER=blade DB_PASS="$pw" DB_NAME=blade DB_SSL=disable ;;
+      docker run -d --name bladepro-pg -p 127.0.0.1:5432:5432 \
+        -e POSTGRES_USER=bladepro -e POSTGRES_PASSWORD="$pw" -e POSTGRES_DB=bladepro \
+        -v bladepro-pg:/var/lib/postgresql/data postgres:16-alpine
+      DB_HOST=127.0.0.1 DB_PORT=5432 DB_USER=bladepro DB_PASS="$pw" DB_NAME=bladepro DB_SSL=disable ;;
     *)
       DB_HOST="$(ask '数据库地址' 127.0.0.1)"
       DB_PORT="$(ask '端口' 5432)"
-      DB_USER="$(ask '账号' blade)"
+      DB_USER="$(ask '账号' bladepro)"
       DB_PASS="$(ask '密码' '')"
-      DB_NAME="$(ask '数据库名' blade)"
+      DB_NAME="$(ask '数据库名' bladepro)"
       DB_SSL="$(ask 'sslmode (disable/require)' disable)" ;;
   esac
 
@@ -101,19 +101,19 @@ JSON
     ( cd web && npm ci && npm run build:static )
     rm -rf server/webui/dist && cp -r web/out server/webui/dist
     info "编译内嵌单二进制…"
-    CGO_ENABLED=0 go build -tags embedui -trimpath -o blade ./cmd/blade
+    CGO_ENABLED=0 go build -tags embedui -trimpath -o bladepro ./cmd/bladepro
   else
     warn "未检测到 npm：将编译**不内嵌前端**的后端（前端需另跑 npm run dev）"
-    CGO_ENABLED=0 go build -o blade ./cmd/blade
+    CGO_ENABLED=0 go build -o bladepro ./cmd/bladepro
   fi
-  ok "编译完成 → ./blade"
+  ok "编译完成 → ./bladepro"
 
   info "启动…（Ctrl-C 退出）"
-  ./blade
+  ./bladepro
 }
 
 echo "=============================="
-echo "  BLADE 安装"
+echo "  BLADEPRO 安装"
 echo "  1) 全部 Docker 安装"
 echo "  2) 本地运行（go 编译）"
 echo "=============================="

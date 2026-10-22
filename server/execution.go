@@ -15,8 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lin9527ya/blade/agent"
-	"github.com/lin9527ya/blade/db"
+	"github.com/lin9527ya/bladepro/agent"
+	"github.com/lin9527ya/bladepro/db"
 )
 
 // P13 执行服务：把长任务（扫描、目录爆破、批量枚举、字典跑批）从 agent run 里摘出来
@@ -147,7 +147,7 @@ func (s *ExecutionService) Submit(ctx context.Context, taskID string, intentID i
 	if envFor != nil {
 		cmd.Env = append(os.Environ(), envFor()...)
 	}
-	// 与 agent Bash 同一套隔离：降权到 BLADE_AGENT_USER + 清洗疑似凭据的环境变量
+	// 与 agent Bash 同一套隔离：降权到 BLADEPRO_AGENT_USER + 清洗疑似凭据的环境变量
 	// （未启用时 no-op）。放在 env 拼好之后，清洗看到的就是子进程最终会拿到的那份。
 	hardenAgentCmd(cmd)
 	run := &execRun{id: id, taskID: taskID, intentID: intentID, cmd: cmd, logFile: logFile,

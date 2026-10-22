@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/report"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/report"
 )
 
 // P19 批量交付：一次交付一个任务的全部发现。

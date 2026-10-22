@@ -10,8 +10,9 @@ import (
 
 	acperm "github.com/lin9527ya/Norma/permission"
 	actool "github.com/lin9527ya/Norma/tool"
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/policy"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/policy"
+	"github.com/lin9527ya/bladepro/srcmode"
 )
 
 // compactIntents distills intents to {id, summary, state, asset_ids, parents,
@@ -71,6 +72,11 @@ type ToolSet struct {
 	// pol（P20）是本任务的探索策略：意图层硬门（add_intent）按它判定。
 	// nil / 零策略 = 不做任何策略判定（行为与从前完全一致）。
 	pol *policy.Effective
+	// srcMode / srcDoc / srcStore 是 SRC 挖掘模式（tasks.mode='src'）的运行时状态。
+	// 零值 = 普通渗透：不挂 src_* 工具、态势里不注入 src 块、行为与改造前完全一致。
+	srcMode  bool
+	srcDoc   srcmode.ModeDoc
+	srcStore *db.SrcStore
 	// intentsRound 计本 ToolSet 生命周期内成功创建的意图数 —— planner 每轮新建一个
 	// ToolSet，所以它天然是"本轮已用额度"。
 	intentsRound int
@@ -190,8 +196,7 @@ func NewToolSet(ts *db.ExplorationStore, worker string) *ToolSet {
 // dual-write to the standalone findings table (which survives task deletion).
 func (t *ToolSet) SetTaskID(id int64) { t.taskID = id }
 
-// SetCoverageEnabled records whether this task has the asset-coverage feature on
-// (default enabled). Passing false makes graphOverviewData omit the coverage block
+// SetCoverageEnabled records whether this task has the asset-coverage feature on// (default enabled). Passing false makes graphOverviewData omit the coverage block
 // and DropCoverageTools filter the two coverage-only tools out of the agent's tool
 // list. It does NOT stop scope accumulation: insertAssets' auto-scope hook runs
 // either way, because task_scope is the task's range boundary (the filter basis for
@@ -200,6 +205,46 @@ func (t *ToolSet) SetCoverageEnabled(enabled bool) { t.coverageDisabled = !enabl
 
 // CoverageDisabled reports whether the coverage feature is off for this task.
 func (t *ToolSet) CoverageDisabled() bool { return t.coverageDisabled }
+
+// SetSrcMode turns on the SRC mining overlay (tasks.mode='src') for this toolset:
+// it adds the src_* coverage tools, injects the src situation block into
+// graph_overview, and makes the收尾门 answerable from inside the task. Zero doc
+// (or a non-src doc) is a no-op, so普通渗透 tasks keep the exact same tool face.
+func (t *ToolSet) SetSrcMode(doc srcmode.ModeDoc, store *db.SrcStore) {
+	t.srcDoc = doc
+	t.srcStore = store
+	t.srcMode = doc.IsSrc()
+}
+
+// SrcMode reports whether this run is in SRC mining mode.
+func (t *ToolSet) SrcMode() bool { return t.srcMode }
+
+// SrcDoc returns the task's mode snapshot (zero value outside SRC mode).
+func (t *ToolSet) SrcDoc() srcmode.ModeDoc { return t.srcDoc }
+
+// srcReady reports whether the src_* tools can actually run (mode on + store wired).
+func (t *ToolSet) srcReady() bool { return t.srcMode && t.srcStore != nil && t.taskID > 0 }
+
+// AppendSrcTools appends the SRC-mode-only tools for the given role. They are
+// deliberately NOT in the tools table / BuiltinToolSeeds: wireTools re-injects
+// DB-bound tools, so seeding them would leak src_* into every agent of every task
+// (docs/SRC挖掘agent改造方案.md §8.1).
+func (t *ToolSet) AppendSrcTools(tools []actool.CoreTool, role string) []actool.CoreTool {
+	if !t.srcMode {
+		return tools
+	}
+	switch role {
+	case "planner":
+		return append(tools, t.srcState(), t.srcFinishCheck(), t.srcMarkCell())
+	case "worker":
+		return append(tools, t.srcMarkCell(), t.srcState())
+	case "main":
+		// 主 agent 只读 + 可改提交状态；点格仍归 planner/worker，避免绕过覆盖判定。
+		return append(tools, t.srcState())
+	default:
+		return tools
+	}
+}
 
 // coverageOnlyTools are the LLM tools that only make sense when asset coverage is
 // on. When the feature is off they are filtered out of the agent's tool list so
@@ -790,6 +835,13 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 			if len(m) > 0 {
 				out["coverage"] = m
 			}
+		}
+	}
+	// src：SRC 挖掘模式（tasks.mode='src'）独有的"补格"态势。只在 SRC 任务里出现，
+	// 只放摘要（缺口计数 + 优先级最高的几条），完整矩阵走 src_state 工具。
+	if t.srcMode && t.srcStore != nil && t.taskID > 0 {
+		if block, err := t.srcOverviewBlock(context.Background()); err == nil && len(block) > 0 {
+			out["src"] = block
 		}
 	}
 	return out
@@ -3071,7 +3123,7 @@ func (t *ToolSet) listWorkerTraces() actool.CoreTool {
 
 // PlannerTools is the read + intent-generation + goal-judgement tool set.
 func (t *ToolSet) PlannerTools() []actool.CoreTool {
-	return []actool.CoreTool{
+	return t.AppendSrcTools([]actool.CoreTool{
 		t.graphOverview(), t.listFindings(), t.listFacts(), t.nodeDetail(),
 		// cold-digest §6.1: restore folded cold nodes (digest body → members → detail).
 		t.expandDigest(),
@@ -3101,5 +3153,5 @@ func (t *ToolSet) PlannerTools() []actool.CoreTool {
 		// 指纹打法库：规划时按资产/指纹查"同类目标以前怎么打穿的"，并把规划层确认的打法
 		// 手动沉淀/回填反馈（自动沉淀由 playbook agent 在 report_foothold 时完成）。
 		t.lookupPlaybooks(), t.recordPlaybook(), t.recordPlaybookFeedback(),
-	}
+	}, "planner")
 }

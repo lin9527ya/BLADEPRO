@@ -13,9 +13,9 @@ import (
 	"unicode/utf8"
 
 	actool "github.com/lin9527ya/Norma/tool"
-	"github.com/lin9527ya/blade/agent"
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/intercept"
+	"github.com/lin9527ya/bladepro/agent"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/intercept"
 )
 
 func (s *Server) listActiveFindingRetests(w http.ResponseWriter, r *http.Request) {

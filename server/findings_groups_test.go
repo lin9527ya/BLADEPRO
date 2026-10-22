@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lin9527ya/blade/db"
+	"github.com/lin9527ya/bladepro/db"
 )
 
 func TestFindingPaginationParam(t *testing.T) {

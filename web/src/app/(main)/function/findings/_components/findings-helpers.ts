@@ -8,7 +8,7 @@ import { UNASSIGNED_TASK } from "./findings-table";
 
 // 发现页的类型与常量：视图档位、平铺/分组/资产树三种状态、空值哨兵。
 
-export const FINDING_LIST_PREFERENCE_KEY = "blade_finding_list_preferences";
+export const FINDING_LIST_PREFERENCE_KEY = "bladepro_finding_list_preferences";
 
 // 列表视图:flat = 跨任务平铺大表(默认);grouped = 按任务分组折叠;
 // asset = 左侧资产树 + 右侧该子树下的发现。

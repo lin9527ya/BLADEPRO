@@ -51,6 +51,7 @@ import { OverviewTab } from "./_tabs/overview-tab";
 import { ReportTab } from "./_tabs/report-tab";
 import { RetestsTab } from "./_tabs/retests-tab";
 import { SessionsTab } from "./_tabs/sessions-tab";
+import { SrcTab } from "./_tabs/src-tab";
 import { TimelineTab } from "./_tabs/timeline-tab";
 
 // GraphTab 经 exploration-graph.tsx 静态引入 @xyflow/react（实测 196KB 进首屏），
@@ -71,6 +72,7 @@ const TABS = [
   { value: "ad", label: "攻击路径（域内/云上）" },
   { value: "intercept", label: "拦截审批" },
   { value: "report", label: "报告" },
+  { value: "src", label: "SRC" },
 ];
 
 function taskProfileIDs(task: Task): string[] {
@@ -412,7 +414,8 @@ function TaskDetailInner() {
         {/* Tabs */}
         <div className="no-scrollbar min-w-0 overflow-x-auto">
           <TabsList variant="default" className="min-w-max">
-            {TABS.map((t) => (
+            {/* 普通渗透任务不挂 SRC 页签；页签本身也能兜住"非 SRC"提示。 */}
+            {TABS.filter((t) => t.value !== "src" || task.mode === "src").map((t) => (
               <TabsTrigger key={t.value} value={t.value}>
                 {t.label}
                 {t.value === "intercept" && interceptPendingCount > 0 && (
@@ -463,6 +466,9 @@ function TaskDetailInner() {
         </TabsContent>
         <TabsContent value="report" className="mt-0">
           <ReportTab taskId={id} />
+        </TabsContent>
+        <TabsContent value="src" className="mt-0">
+          <SrcTab taskId={id} />
         </TabsContent>
       </div>
     </Tabs>

@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lin9527ya/blade/agent"
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/traffic"
+	"github.com/lin9527ya/bladepro/agent"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/traffic"
 )
 
 func trafficEvidenceServer(t *testing.T) (*Server, *db.RecordedFinding, func(string, string, string) *httptest.ResponseRecorder) {

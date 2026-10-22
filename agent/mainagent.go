@@ -10,10 +10,11 @@ import (
 	"github.com/lin9527ya/Norma/permission"
 	actool "github.com/lin9527ya/Norma/tool"
 	"github.com/lin9527ya/Norma/transcript"
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/guard"
-	"github.com/lin9527ya/blade/intercept"
-	"github.com/lin9527ya/blade/policy"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/guard"
+	"github.com/lin9527ya/bladepro/intercept"
+	"github.com/lin9527ya/bladepro/policy"
+	"github.com/lin9527ya/bladepro/srcmode"
 )
 
 // MainAgent is the thin human-interface orchestrator (docs §4.2 / §7). The human
@@ -172,6 +173,15 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 	}
 	tsx.SetTaskID(taskID)
 	tsx.SetCoverageEnabled(as == nil || as.CoverageEnabled(taskID))
+	// SRC 模式下主 agent 也能读覆盖态势（src_state 只读）：人问"还差哪些格"时，
+	// 它得能给出账面答案，而不是靠猜。点格仍归 planner/worker，避免绕过收尾判定。
+	if as != nil {
+		if src := as.Src(); src != nil {
+			if mode, raw, err := src.TaskMode(ctx, taskID); err == nil && mode == srcmode.ModeSrc {
+				tsx.SetSrcMode(srcmode.Parse(raw), src)
+			}
+		}
+	}
 	tsx.SetNotify(notify)         // 通用唤醒（无专用回调的写操作走它，debounced）
 	tsx.SetResumeTask(resume)     // set_goals 新增目标 → 把已完成/暂停的任务拉回 running
 	tsx.SetNotifyGoal(notifyGoal) // set_goals 新增目标 → 给 planner 记一条「人新增了目标：…」触发

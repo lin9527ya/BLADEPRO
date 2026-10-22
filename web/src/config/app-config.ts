@@ -15,12 +15,12 @@ const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? "dev";
 const currentYear = new Date().getFullYear();
 
 export const APP_CONFIG = {
-  name: "BLADE",
+  name: "BLADEPRO",
   version: APP_VERSION,
-  copyright: `© ${currentYear}, BLADE.`,
+  copyright: `© ${currentYear}, BLADEPRO.`,
   meta: {
     // 不带用途描述：扫描器抓到 <title> 时看不出这是什么。
-    title: "BLADE",
-    description: "BLADE console",
+    title: "BLADEPRO",
+    description: "BLADEPRO console",
   },
 };

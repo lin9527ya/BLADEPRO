@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/lin9527ya/Norma/llm"
 	"github.com/lin9527ya/Norma/transcript"
-	"github.com/lin9527ya/blade/db"
+	"github.com/lin9527ya/bladepro/db"
 )
 
 type completeProvider struct{}
@@ -84,9 +84,9 @@ func (meteredStreamProvider) Stream(context.Context, llm.CompletionRequest) iter
 }
 
 func TestSideUsageRecordedOnceOnConsumerCancellation(t *testing.T) {
-	dsn := os.Getenv("BLADE_PG_DSN")
+	dsn := os.Getenv("BLADEPRO_PG_DSN")
 	if dsn == "" {
-		t.Skip("requires isolated BLADE_PG_DSN")
+		t.Skip("requires isolated BLADEPRO_PG_DSN")
 	}
 	pg, err := db.Open(dsn)
 	if err != nil {

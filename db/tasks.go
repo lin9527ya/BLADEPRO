@@ -56,6 +56,11 @@ type Task struct {
 	// effective 快照，绝不回头读全局设置——这样"改全局默认"与"运行中的任务"
 	// 之间不存在竞态。
 	ExplorationPolicy json.RawMessage `json:"exploration_policy,omitempty"`
+	// Mode 是创建时定死的运行模式：""=普通渗透（默认，与改造前完全一致），
+	// "src"=SRC 漏洞挖掘。模式不可中途切换——要换就复制任务。
+	Mode string `json:"mode,omitempty"`
+	// ModeDoc 是模式快照（JSONB，创建时解析，运行中只读）。mode="" 时为空。
+	ModeDoc json.RawMessage `json:"mode_doc,omitempty"`
 }
 
 // TaskDeleteResult reports optional related-data cleanup performed in the same
@@ -174,6 +179,10 @@ type TaskCreateOptions struct {
 	// ExplorationPolicy 是任务级探索策略文档（P20）；nil/空 = 无策略（= 与从前一致）。
 	// 由服务端在创建时把「全局默认 + 任务覆盖」解析成 effective 后落库（快照语义）。
 	ExplorationPolicy json.RawMessage
+	// Mode 是任务模式（""=普通渗透，"src"=SRC 挖掘）。由服务端校验并解析出
+	// ModeDoc 快照后一起落库；运行中不再变更。
+	Mode    string
+	ModeDoc json.RawMessage
 }
 
 // CreateTaskWithOptions creates an exploration, task, direct source relations,
@@ -249,10 +258,16 @@ VALUES ($1, 'fact', $2, 0, 'origin', 'system')`, expID, string(originPayload)); 
 	if len(opts.ExplorationPolicy) > 0 {
 		policyRaw = string(opts.ExplorationPolicy)
 	}
+	var modeDocRaw any
+	if len(opts.ModeDoc) > 0 {
+		modeDocRaw = string(opts.ModeDoc)
+	}
+	t.Mode = opts.Mode
+	t.ModeDoc = append(json.RawMessage(nil), opts.ModeDoc...)
 	if err := tx.QueryRow(`
-INSERT INTO tasks(name, category_id, description, goal, exploration_id, llm_profile_id, active_llm_profile_id, timeout_seconds, plan_heartbeat_seconds, coverage_enabled, exploration_policy)
-VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10)
-RETURNING id, status, paused, created_at`, opts.Name, opts.CategoryID, description, goal, expID, active, opts.TimeoutSeconds, opts.PlanHeartbeatSeconds, coverageEnabled, policyRaw).Scan(&t.ID, &t.Status, &t.Paused, &t.CreatedAt); err != nil {
+INSERT INTO tasks(name, category_id, description, goal, exploration_id, llm_profile_id, active_llm_profile_id, timeout_seconds, plan_heartbeat_seconds, coverage_enabled, exploration_policy, mode, mode_doc)
+VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10,$11,COALESCE($12,'{}'::jsonb))
+RETURNING id, status, paused, created_at`, opts.Name, opts.CategoryID, description, goal, expID, active, opts.TimeoutSeconds, opts.PlanHeartbeatSeconds, coverageEnabled, policyRaw, opts.Mode, modeDocRaw).Scan(&t.ID, &t.Status, &t.Paused, &t.CreatedAt); err != nil {
 		return nil, err
 	}
 	t.ExplorationPolicy = append(json.RawMessage(nil), opts.ExplorationPolicy...)
@@ -369,11 +384,11 @@ func insertTaskLLMProfiles(tx *sql.Tx, taskID int64, profileIDs []int64) error {
 
 const taskCols = `id, COALESCE(name,''), category_id,
 COALESCE((SELECT category.name FROM task_categories category WHERE category.id=tasks.category_id),''),
-description, goal, exploration_id, status, paused, queued, queued_at, COALESCE(queue_mode,''), llm_profile_id, active_llm_profile_id, COALESCE(parent_ref,''), pinned_at, created_at, completed_at, COALESCE(timeout_seconds,0), COALESCE(plan_heartbeat_seconds,300), COALESCE(coverage_enabled,true), first_run_at, deadline_at, COALESCE(exploration_policy,'{}'::jsonb)`
+description, goal, exploration_id, status, paused, queued, queued_at, COALESCE(queue_mode,''), llm_profile_id, active_llm_profile_id, COALESCE(parent_ref,''), pinned_at, created_at, completed_at, COALESCE(timeout_seconds,0), COALESCE(plan_heartbeat_seconds,300), COALESCE(coverage_enabled,true), first_run_at, deadline_at, COALESCE(exploration_policy,'{}'::jsonb), COALESCE(mode,''), COALESCE(mode_doc,'{}'::jsonb)`
 
 func scanTask(sc interface{ Scan(...any) error }) (*Task, error) {
 	var t Task
-	if err := sc.Scan(&t.ID, &t.Name, &t.CategoryID, &t.CategoryName, &t.Description, &t.Goal, &t.ExplorationID, &t.Status, &t.Paused, &t.Queued, &t.QueuedAt, &t.QueueMode, &t.LLMProfileID, &t.ActiveLLMProfileID, &t.ParentRef, &t.PinnedAt, &t.CreatedAt, &t.CompletedAt, &t.TimeoutSeconds, &t.PlanHeartbeatSeconds, &t.CoverageEnabled, &t.FirstRunAt, &t.DeadlineAt, &t.ExplorationPolicy); err != nil {
+	if err := sc.Scan(&t.ID, &t.Name, &t.CategoryID, &t.CategoryName, &t.Description, &t.Goal, &t.ExplorationID, &t.Status, &t.Paused, &t.Queued, &t.QueuedAt, &t.QueueMode, &t.LLMProfileID, &t.ActiveLLMProfileID, &t.ParentRef, &t.PinnedAt, &t.CreatedAt, &t.CompletedAt, &t.TimeoutSeconds, &t.PlanHeartbeatSeconds, &t.CoverageEnabled, &t.FirstRunAt, &t.DeadlineAt, &t.ExplorationPolicy, &t.Mode, &t.ModeDoc); err != nil {
 		return nil, err
 	}
 	t.Pinned = t.PinnedAt != nil

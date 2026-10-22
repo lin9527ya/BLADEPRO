@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"github.com/lin9527ya/blade/db"
+	"github.com/lin9527ya/bladepro/db"
 )
 
 // ---------- P3 agent triggers (仅自定义 agent) ----------

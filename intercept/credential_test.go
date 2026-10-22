@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lin9527ya/blade/opsec"
+	"github.com/lin9527ya/bladepro/opsec"
 )
 
 // 预算判定的端到端验证在 server/acceptance_test.go（需要真库计数）。

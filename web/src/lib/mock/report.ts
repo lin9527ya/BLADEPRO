@@ -3,7 +3,7 @@
 // 只有 MOCK=1 时才会被动态 import 到。
 
 export function mockReport(_task?: string): string {
-  return `# BLADE 渗透测试报告 — Acme Corp
+  return `# BLADEPRO 渗透测试报告 — Acme Corp
 
 ## 概览
 - 范围：acme.com（含 www / admin / api / shop / vpn 子域）

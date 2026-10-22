@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/lin9527ya/blade/db"
+	"github.com/lin9527ya/bladepro/db"
 )
 
 // TestFindingConfirmedRules 钉住"能不能写报告"的真值表。判据是三类硬证据

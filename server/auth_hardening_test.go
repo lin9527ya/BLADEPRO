@@ -155,7 +155,7 @@ func TestAuthLoginRejectsOversizedBody(t *testing.T) {
 	defer m.Close()
 	s := &Server{m: m}
 
-	body := fmt.Sprintf(`{"username":"BLADE","password":"%s"}`, strings.Repeat("a", maxAuthBodyBytes*2))
+	body := fmt.Sprintf(`{"username":"BLADEPRO","password":"%s"}`, strings.Repeat("a", maxAuthBodyBytes*2))
 	r := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	s.authLogin(w, r)

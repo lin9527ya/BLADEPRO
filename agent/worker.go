@@ -16,9 +16,10 @@ import (
 	"github.com/lin9527ya/Norma/permission"
 	actool "github.com/lin9527ya/Norma/tool"
 	"github.com/lin9527ya/Norma/transcript"
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/intercept"
-	"github.com/lin9527ya/blade/policy"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/intercept"
+	"github.com/lin9527ya/bladepro/policy"
+	"github.com/lin9527ya/bladepro/srcmode"
 )
 
 // Worker is an LLM work agent (docs §4.4): it claims ONE intent, completes it
@@ -108,7 +109,7 @@ func WorkerSessionID(explorationID, intentID int64) string {
 	return fmt.Sprintf("exp%d-worker-i%d", explorationID, intentID)
 }
 
-const workerChatMarkerPrefix = "<!-- BLADE_WORKER_CHAT:"
+const workerChatMarkerPrefix = "<!-- BLADEPRO_WORKER_CHAT:"
 
 func workerChatMarker(requestID string) string {
 	return workerChatMarkerPrefix + requestID + " -->"
@@ -442,6 +443,14 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	tsx.SetTaskID(taskID)
 	coverageEnabled := as == nil || as.CoverageEnabled(taskID)
 	tsx.SetCoverageEnabled(coverageEnabled)
+	// SRC 挖掘模式（tasks.mode='src'）：挂上点格工具，并把"这一格由你落账"写进 system。
+	if as != nil {
+		if src := as.Src(); src != nil {
+			if mode, raw, err := src.TaskMode(ctx, taskID); err == nil && mode == srcmode.ModeSrc {
+				tsx.SetSrcMode(srcmode.Parse(raw), src)
+			}
+		}
+	}
 	if as != nil {
 		tsx.SetAssetStore(as, as.Companies())
 	}
@@ -481,6 +490,10 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// P20：探索策略段（不受开关控制）——worker 是"探测"的执行者，禁用手段与只读声明
 	// 在这里必须与 planner 看到的一致，否则它会照着被禁的方向硬干、直到命令层拦下。
 	sysBody += policyBlock(pol)
+	// SRC 模式：worker 是点格的人，纪律段必须与 planner 的"补格"目标一致。
+	if tsx.SrcMode() {
+		sysBody += srcmode.WorkerOverlay(tsx.SrcDoc())
+	}
 	// 意图块 → 意图锚定资产块 → 启动指令，依次追加到 system 尾部（与 constraintBlock 同一套追加法）。
 	sysBody += renderIntentTask(intent)
 	if as != nil {

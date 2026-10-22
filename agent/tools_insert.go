@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	actool "github.com/lin9527ya/Norma/tool"
-	"github.com/lin9527ya/blade/db"
+	"github.com/lin9527ya/bladepro/db"
 )
 
 // assetInterceptCandidates 提取一条待插入资产输入项的 域名/IP/URL 候选串，用于资产拦截匹配。
@@ -664,7 +664,7 @@ func splitLines(s string) []string {
 
 // WorkerTools returns the tool set for a work agent.
 func (t *ToolSet) WorkerTools() []actool.CoreTool {
-	return []actool.CoreTool{
+	return t.AppendSrcTools([]actool.CoreTool{
 		// list_findings 保留：报漏洞前先查本任务已确认漏洞，避免重复上报同一漏洞。
 		t.listFindings(),
 		t.addFinding(), t.closeCandidate(), t.recordFact(),
@@ -703,12 +703,12 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 		t.runExecution(), t.waitExecution(), t.getExecution(), t.cancelExecution(),
 		// 以下工具仍【不给】worker，只留给 planner/main（读上下文、跨 work 复盘是规划职责，
 		// worker 只做单条意图的执行与写回）：list_facts / list_companies / list_worker_traces。
-	}
+	}, "worker")
 }
 
 // MainAgentTools returns the human-interface tool set.
 func (t *ToolSet) MainAgentTools() []actool.CoreTool {
-	return []actool.CoreTool{
+	return t.AppendSrcTools([]actool.CoreTool{
 		t.graphOverview(), t.listFindings(), t.listFacts(), t.nodeDetail(),
 		t.expandDigest(), // cold-digest §6.1
 		t.getWorkerOutput(), t.getWorkerTrace(), t.searchAllWorkerTraces(), t.addHint(), t.addIntent(),
@@ -742,7 +742,7 @@ func (t *ToolSet) MainAgentTools() []actool.CoreTool {
 		t.adPaths(),
 		// opsec_notes（P38）：人机对话里问"这一手会留下什么"是常见需求（事前；实测走 report_detection_check）。
 		t.opsecNotes(),
-	}
+	}, "main")
 }
 
 // AllDomainTools returns the union of all domain tools across all agent types,

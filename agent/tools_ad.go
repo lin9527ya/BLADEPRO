@@ -6,7 +6,7 @@ import (
 
 	actool "github.com/lin9527ya/Norma/tool"
 
-	"github.com/lin9527ya/blade/db"
+	"github.com/lin9527ya/bladepro/db"
 )
 
 // ad_paths（P32）：读域内攻击路径。

@@ -299,13 +299,9 @@ func (s *AssetStore) CoverageEnabled(taskID int64) bool {
 	return enabled
 }
 
-// task_scope→assets match predicate, reused by the count / by-type / untested queries. $1=taskID.
-const covTargetCTE = `
-target AS (
-  SELECT DISTINCT a.id, a.type,
-         COALESCE(a.url, a.domain, a.ip, a.app_name, a.root_domain, '') AS label
-  FROM assets a
-  JOIN task_scope ts ON ts.task_id = $1 AND (
+// scopeJoinPredicate 是 task_scope → assets 的匹配谓词（$1=taskID，别名 ts/a）。
+// 覆盖统计与 SRC 覆盖格共用它，避免两处口径漂移。
+const scopeJoinPredicate = `(
        (ts.kind='company'     AND a.company_id = ts.company_id)
     OR (ts.kind='root_domain' AND a.root_domain = ts.domain)
     OR (ts.kind='subdomain'   AND a.domain = ts.domain)
@@ -314,13 +310,30 @@ target AS (
          lower(regexp_replace(COALESCE(a.icp,''), '[[:space:]]+', '', 'g')) = ts.value
          OR lower(regexp_replace(COALESCE(a.app_icp,''), '[[:space:]]+', '', 'g')) = ts.value
        ))
-  )
+  )`
+
+// scopeTargetSelect 是"范围内资产"的那半段（id/type/label），供两套 CTE 复用。
+const scopeTargetSelect = `
+  SELECT DISTINCT a.id, a.type,
+         COALESCE(a.url, a.domain, a.ip, a.app_name, a.root_domain, '') AS label
+  FROM assets a
+  JOIN task_scope ts ON ts.task_id = $1 AND ` + scopeJoinPredicate
+
+// task_scope→assets match predicate, reused by the count / by-type / untested queries. $1=taskID.
+const covTargetCTE = `
+target AS (` + scopeTargetSelect + `
 ),
 tested AS (
   SELECT DISTINCT ea.asset_id
   FROM exploration_anchors ea
   JOIN exploration_nodes en ON en.id = ea.node_id
   WHERE en.exploration_id = $2 AND en.kind = 'fact'
+)`
+
+// srcTargetCTE 只有 target 一半：SRC 收尾门只认显式 src_cells，不用意图推导的
+// tested（见 src_cells.go）。同一套匹配谓词，保证"范围内"的口径只有一处定义。
+const srcTargetCTE = `
+target AS (` + scopeTargetSelect + `
 )`
 
 // CoverageMatrixCell is one (in-scope asset × risk area) cell of the coverage matrix.

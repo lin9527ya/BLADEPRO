@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	actool "github.com/lin9527ya/Norma/tool"
-	"github.com/lin9527ya/blade/db"
+	"github.com/lin9527ya/bladepro/db"
 )
 
 // 指纹打法库（agent 侧）：打穿目标后沉淀「目标指纹 → 攻击手法」，后来人按指纹命中后

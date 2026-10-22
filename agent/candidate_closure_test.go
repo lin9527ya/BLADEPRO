@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lin9527ya/blade/db"
+	"github.com/lin9527ya/bladepro/db"
 )
 
 // TestCloseCandidateValidation pins the three-state discipline at the tool

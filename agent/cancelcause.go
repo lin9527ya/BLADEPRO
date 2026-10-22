@@ -39,6 +39,9 @@ var (
 		"规划者判定任务目标已达成并将任务置为 done，随后取消仍在运行的 Worker；这些意图会标记为 stopped，而不是失败")
 	AbortSettleDrainTimeout = cause("settle_drain_timeout", "任务超时收尾的等待时间已用尽",
 		"任务到达 timeout 后等待正在运行的 Worker 优雅收尾，但 90 秒 drain 宽限仍不足，因此执行硬取消；意图会标记为 exhausted，收尾阶段已经写入的事实和资产会保留")
+	// SRC 挖掘模式：收尾门连续拒绝 planner 的"目标达成"判定后转人工，不能让它无限转圈。
+	AbortSrcGateBlocked = cause("src_gate_blocked", "SRC 收尾门连续拒绝，任务转人工处理",
+		"SRC 模式下覆盖矩阵仍有缺口，planner 反复判定目标达成、被 engine 的收尾门连续拒绝。任务已转 policy_blocked 交人工：补齐缺口格、把缺口标为 na/budget_stop，或由人在任务详情页「强制收尾」放行")
 
 	// Per-work context.
 	AbortKilledByPlanner = cause("killed_by_planner", "规划者终止了这条意图",

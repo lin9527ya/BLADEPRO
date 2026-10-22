@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lin9527ya/blade/notify"
+	"github.com/lin9527ya/bladepro/notify"
 )
 
 var (

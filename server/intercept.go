@@ -12,10 +12,10 @@ import (
 	"strings"
 
 	"github.com/lin9527ya/Norma/llm"
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/guard"
-	"github.com/lin9527ya/blade/intercept"
-	"github.com/lin9527ya/blade/llmrec"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/guard"
+	"github.com/lin9527ya/bladepro/intercept"
+	"github.com/lin9527ya/bladepro/llmrec"
 )
 
 // judgeWorkerLane is the usage-ledger "worker" label for intercept fallback-judge

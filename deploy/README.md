@@ -32,7 +32,7 @@ FOFA / Shodan / ZoomEye / Censys 都是全 IPv4 扫描 + 协议指纹。所以�
 > 只解决"应用不可见"，**不解决"这台机器不可见"**。要把 SSH 也藏起来：让它只监听 tailnet
 > （`tailscale up --ssh --shields-up`）或只对 WireGuard 内网开放，公网 22 一律关闭。
 
-**BLADE 平台侧已经默认按最安全的一档做**（见下面第五节）：不显式写地址就只绑 loopback。
+**BLADEPRO 平台侧已经默认按最安全的一档做**（见下面第五节）：不显式写地址就只绑 loopback。
 
 ---
 
@@ -43,9 +43,9 @@ FOFA / Shodan / ZoomEye / Censys 都是全 IPv4 扫描 + 协议指纹。所以�
 ```bash
 # VPS 上
 cloudflared tunnel login
-cloudflared tunnel create blade
+cloudflared tunnel create bladepro
 cp deploy/cloudflared.yml /etc/cloudflared/config.yml   # 填上 tunnel id 与凭据路径
-cloudflared tunnel route dns blade console.example.com
+cloudflared tunnel route dns bladepro console.example.com
 cloudflared tunnel ingress validate
 sudo cloudflared service install
 ```
@@ -61,7 +61,7 @@ ssh -N -L 8787:127.0.0.1:8787 you@your-vps
 # 浏览器打开 http://127.0.0.1:8787
 ```
 
-VPS 上什么都不用改（BLADE 默认就绑 loopback）。想更省心就用 Tailscale/WireGuard，把它当内网机器用。
+VPS 上什么都不用改（BLADEPRO 默认就绑 loopback）。想更省心就用 Tailscale/WireGuard，把它当内网机器用。
 
 ---
 
@@ -76,7 +76,7 @@ VPS 上什么都不用改（BLADE 默认就绑 loopback）。想更省心就用 
 2. **源站证书用 Cloudflare Origin Certificate**（15 年、**不进 CT 日志**）。
    **不要**用 Let's Encrypt——那会把域名送进 CT 日志。
 3. **反代按 `deploy/nginx-cloudflare.conf` 配**：`set_real_ip_from` + `CF-Connecting-IP`，
-   并把 `proxy_buffering off`（BLADE 的活动流是 SSE，开着缓冲会"跑一会儿就断"）。
+   并把 `proxy_buffering off`（BLADEPRO 的活动流是 SSE，开着缓冲会"跑一会儿就断"）。
 
 > 域名本身别带业务含义（`pentest.`、`attack.`、公司名都别用）：域名是公开的。
 
@@ -84,13 +84,13 @@ VPS 上什么都不用改（BLADE 默认就绑 loopback）。想更省心就用 
 
 ## 四、进程守护（systemd）
 
-仓库里的 `start.sh` 只做一件事：把 blade 跑起来、按退出码决定要不要再拉起。注册成服务用
-`deploy/blade.service`：
+仓库里的 `start.sh` 只做一件事：把 bladepro 跑起来、按退出码决定要不要再拉起。注册成服务用
+`deploy/bladepro.service`：
 
 ```bash
-sudo cp deploy/blade.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now blade
-journalctl -u blade -f
+sudo cp deploy/bladepro.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now bladepro
+journalctl -u bladepro -f
 ```
 
 它与 `start.sh` 的退出码约定是配套的：`0` = 停（不重启）、`75` = "换新版本再跑"（自更新用）。
@@ -160,7 +160,7 @@ dig +short console.example.com
 
 ## 七、还值得加（运维层，平台不管）
 
-- **fail2ban**：BLADE 自身有登录节流（**按来源 IP** 指数退避：5 次失败起锁 1 分钟、每次翻倍
+- **fail2ban**：BLADEPRO 自身有登录节流（**按来源 IP** 指数退避：5 次失败起锁 1 分钟、每次翻倍
   到 30 分钟；30 分钟无失败自动清零；另有全局失败预算 10 分钟 60 次兜住换 IP 的分布式爆破；
   内存态、重启清零）。真实来源取自 `CF-Connecting-IP` / `X-Real-IP` / `X-Forwarded-For`，
   **只在直连方是 loopback（即确有本机反代）时才信这些头**——直连暴露 8787 时按 TCP 来源计数。
@@ -201,40 +201,40 @@ sudo deploy/vps-hardening.sh --hostname srv-01
 - **云厂商的安全组 / 安全列表**：也要配（ufw 是机器内，云侧是网络层；两层都要）。
 - **IPv6**：多数 VPS 默认带公网 v6。脚本已让 ufw 管 v6；想更彻底就 `--disable-ipv6`。
 - **rDNS / PTR**：在 VPS 控制台设成中性值（或保持厂商默认）。**不要**设成 console 域名——那等于把两者绑在一起。
-- **主机名**：中性（`srv-01` 这类），别写 blade / pentest。
+- **主机名**：中性（`srv-01` 这类），别写 bladepro / pentest。
 - **SSH 端口**：改端口只减少噪音，全端口扫描一样能找到；真正的解法是第 3 步"22 也不开公网"。
 
-### 2. 装 BLADE（发布包 + 容器化 Postgres，VPS 上不需要 Go/Node）
+### 2. 装 BLADEPRO（发布包 + 容器化 Postgres，VPS 上不需要 Go/Node）
 
 ```bash
 # ① 发布包（Releases 里选 linux-amd64；下载是 HTTPS 出站，不暴露任何端口）
-#    资产名形如 blade-<ver>-linux-amd64.zip，<ver> 换成发布号（如 0.5.0）
-curl -fL -o /tmp/blade.zip \
-  https://github.com/lin9527ya/BLADE/releases/download/v<ver>/blade-<ver>-linux-amd64.zip
+#    资产名形如 bladepro-<ver>-linux-amd64.zip，<ver> 换成发布号（如 0.5.0）
+curl -fL -o /tmp/bladepro.zip \
+  https://github.com/lin9527ya/BLADEPRO/releases/download/v<ver>/bladepro-<ver>-linux-amd64.zip
 sudo apt-get install -y unzip
-unzip -q /tmp/blade.zip -d /opt && sudo mv /opt/blade-<ver>-linux-amd64 /opt/blade
-sudo useradd --system --home /opt/blade --shell /usr/sbin/nologin blade || true
-sudo chown -R blade:blade /opt/blade
+unzip -q /tmp/bladepro.zip -d /opt && sudo mv /opt/bladepro-<ver>-linux-amd64 /opt/bladepro
+sudo useradd --system --home /opt/bladepro --shell /usr/sbin/nologin bladepro || true
+sudo chown -R bladepro:bladepro /opt/bladepro
 
 # ② Postgres 只在 loopback（数据库端口是全网扫描前几名）
 sudo apt-get install -y docker.io     # 或跑仓库里的 install.sh 让它装
 PW="$(openssl rand -hex 24)"
-docker run -d --name blade-pg -p 127.0.0.1:5432:5432 \
-  -e POSTGRES_USER=blade -e POSTGRES_PASSWORD="$PW" -e POSTGRES_DB=blade \
-  -v blade-pg:/var/lib/postgresql/data --restart unless-stopped postgres:16-alpine
+docker run -d --name bladepro-pg -p 127.0.0.1:5432:5432 \
+  -e POSTGRES_USER=bladepro -e POSTGRES_PASSWORD="$PW" -e POSTGRES_DB=bladepro \
+  -v bladepro-pg:/var/lib/postgresql/data --restart unless-stopped postgres:16-alpine
 
 # ③ config.json（600）——密码就是上面的 $PW，别写进 shell history 以外的任何公开处
-sudo tee /opt/blade/config.json >/dev/null <<JSON
-{ "database": { "host": "127.0.0.1", "port": 5432, "user": "blade", "password": "$PW", "dbname": "blade", "sslmode": "disable" } }
+sudo tee /opt/bladepro/config.json >/dev/null <<JSON
+{ "database": { "host": "127.0.0.1", "port": 5432, "user": "bladepro", "password": "$PW", "dbname": "bladepro", "sslmode": "disable" } }
 JSON
-sudo chmod 600 /opt/blade/config.json && sudo chown blade:blade /opt/blade/config.json
+sudo chmod 600 /opt/bladepro/config.json && sudo chown bladepro:bladepro /opt/bladepro/config.json
 
-# ④ systemd（单元里 User=blade，与上面一致）
+# ④ systemd（单元里 User=bladepro，与上面一致）
 #    发布包**不含 deploy/**，单元从仓库取：
-sudo curl -fsSL -o /etc/systemd/system/blade.service \
-  https://raw.githubusercontent.com/lin9527ya/BLADE/main/deploy/blade.service
-sudo systemctl daemon-reload && sudo systemctl enable --now blade
-journalctl -u blade -f
+sudo curl -fsSL -o /etc/systemd/system/bladepro.service \
+  https://raw.githubusercontent.com/lin9527ya/BLADEPRO/main/deploy/bladepro.service
+sudo systemctl daemon-reload && sudo systemctl enable --now bladepro
+journalctl -u bladepro -f
 ```
 
 先别急着开隧道：在 VPS 上 `curl -s 127.0.0.1:8787/api/health` 应回 `{"ok":true}`。
@@ -250,8 +250,8 @@ journalctl -u blade -f
 > （返回的 token 可以丢掉，浏览器里再登录一次即可。）
 > 至少要保证 **Access 策略先于第一次公网访问生效**。
 
-> 想跑自己编的版本：本机 `./build.sh`，把 `dist/blade-linux-amd64/blade`、`start.sh`、`skills/`、
-> `config.example.json` scp 到 `/opt/blade/`。小 VPS 上现编 Next 前端很慢，不推荐。
+> 想跑自己编的版本：本机 `./build.sh`，把 `dist/bladepro-linux-amd64/bladepro`、`start.sh`、`skills/`、
+> `config.example.json` scp 到 `/opt/bladepro/`。小 VPS 上现编 Next 前端很慢，不推荐。
 
 ### 3. 访问层：零入站
 
@@ -289,14 +289,14 @@ WireGuard 同理；不想依赖第三方协调服务器可以自建 Headscale。
 - 域名/URL 不外发；Access 常开；这个域名不要复用到别的项目（`crt.sh` 会把子域全列出来）。
 - **出站提醒**：平台的扫描流量从这台机器的 IP 出去，目标侧看到的就是它。需要与 console 解耦时，
   用平台的全局代理设置换出口，或把"扫描执行"与"console"分机器。
-- 更新：页面一键更新（`start.sh` 的 75 退出码），或 `systemctl restart blade`——重启后顺手看一眼
+- 更新：页面一键更新（`start.sh` 的 75 退出码），或 `systemctl restart bladepro`——重启后顺手看一眼
   `ss -tlnp`，确认没有多出来的监听。
 
 ---
 
-## 九、信任模型：默认同权，可选降权（`BLADE_AGENT_USER`）
+## 九、信任模型：默认同权，可选降权（`BLADEPRO_AGENT_USER`）
 
-**默认（不设置 `BLADE_AGENT_USER`）**：agent 的 Bash 与文件工具都在服务进程内、以**同一个
+**默认（不设置 `BLADEPRO_AGENT_USER`）**：agent 的 Bash 与文件工具都在服务进程内、以**同一个
 OS 用户**执行。所以一条被提示注入的 worker 命令，能做管理员能做的任何事：
 
 - 读 `jwt.key`（HS256 签名密钥）→ 自签一个 admin token；
@@ -309,37 +309,37 @@ OS 用户**执行。所以一条被提示注入的 worker 命令，能做管理�
 
 ### 9.1 开启降权
 
-前提：Norma ≥ v0.5.3（`tool.SetExecHook` / `tool.SetPathGuard`），BLADE 以 **root** 启动，
+前提：Norma ≥ v0.5.3（`tool.SetExecHook` / `tool.SetPathGuard`），BLADEPRO 以 **root** 启动，
 且 `-data` 目录**不包含**可执行文件目录（`jwt.key` / `config.json` 在那里，落在 data 里
 会直接拒绝启动——"看着隔离、实则没隔"比不隔离更危险）。
 
 ```bash
-# 1) 建一个没有任何附加组的服务账号（家目录放在 /var/lib/blade-worker）
-sudo useradd --system --create-home --home-dir /var/lib/blade-worker \
-     --shell /usr/sbin/nologin blade-worker
+# 1) 建一个没有任何附加组的服务账号（家目录放在 /var/lib/bladepro-worker）
+sudo useradd --system --create-home --home-dir /var/lib/bladepro-worker \
+     --shell /usr/sbin/nologin bladepro-worker
 
 # 2) systemd 里以 root 起服务，只加这一个环境变量
-#    /etc/systemd/system/blade.service
+#    /etc/systemd/system/bladepro.service
 [Service]
 User=root
-Environment=BLADE_AGENT_USER=blade-worker
+Environment=BLADEPRO_AGENT_USER=bladepro-worker
 # 可选：额外允许文件工具访问的根（逗号/冒号分隔）
-# Environment=BLADE_AGENT_READ_ROOTS=/opt/wordlists:/srv/engagement
+# Environment=BLADEPRO_AGENT_READ_ROOTS=/opt/wordlists:/srv/engagement
 
 # 3) 重启
-sudo systemctl daemon-reload && sudo systemctl restart blade
+sudo systemctl daemon-reload && sudo systemctl restart bladepro
 ```
 
-启动日志会出现一行 `[isolation] agent 以 blade-worker (...)`，说明生效。
+启动日志会出现一行 `[isolation] agent 以 bladepro-worker (...)`，说明生效。
 
 **开启了什么**：
 
 | 面 | 行为 |
 |---|---|
-| Bash（含后台任务、交互式 shell）、长任务 `run_execution`、自定义工具 | 以 `blade-worker` 身份执行（`SysProcAttr.Credential`，只保留主组） |
-| 子进程环境 | 按"疑似凭据"黑名单清洗：`ANTHROPIC_*`/`OPENAI_*`/`BLADE_*`/`AWS_*`/`GH_*`… 以及名字含 `API_KEY`/`SECRET`/`TOKEN`/`PASSWORD`/`CREDENTIAL` 的变量；`HOME`/`USER`/`SSH_AUTH_SOCK` 等改写或剔除 |
-| 文件工具（Read/Write/Edit/MultiEdit/LS/Glob/Grep） | 只允许 `data/`、skill 目录、`BLADE_AGENT_READ_ROOTS` 内的**真实路径**（软链解析后再比对；`Grep` 在隔离模式下不再走 rg 子进程，逐文件过守卫） |
-| `data/` 树 | 启动时属主交给 `blade-worker`，目录 `2775`（setgid + 组可写）；run 目录由服务端创建为 `0775`，agent 写得进自己的产物目录 |
+| Bash（含后台任务、交互式 shell）、长任务 `run_execution`、自定义工具 | 以 `bladepro-worker` 身份执行（`SysProcAttr.Credential`，只保留主组） |
+| 子进程环境 | 按"疑似凭据"黑名单清洗：`ANTHROPIC_*`/`OPENAI_*`/`BLADEPRO_*`/`AWS_*`/`GH_*`… 以及名字含 `API_KEY`/`SECRET`/`TOKEN`/`PASSWORD`/`CREDENTIAL` 的变量；`HOME`/`USER`/`SSH_AUTH_SOCK` 等改写或剔除 |
+| 文件工具（Read/Write/Edit/MultiEdit/LS/Glob/Grep） | 只允许 `data/`、skill 目录、`BLADEPRO_AGENT_READ_ROOTS` 内的**真实路径**（软链解析后再比对；`Grep` 在隔离模式下不再走 rg 子进程，逐文件过守卫） |
+| `data/` 树 | 启动时属主交给 `bladepro-worker`，目录 `2775`（setgid + 组可写）；run 目录由服务端创建为 `0775`，agent 写得进自己的产物目录 |
 
 **仍然挡不住的（如实说明）**：
 
@@ -347,7 +347,7 @@ sudo systemctl daemon-reload && sudo systemctl restart blade
 - agent 依旧能访问网络、能读 `data/` 下的工作区与 `traffic/` 抓包记录（那是它自己的产物面）；
 - 没被模式覆盖的新凭据环境变量会漏——新增带凭据的变量时把前缀补进
   `server/agent_isolation.go` 的 `agentEnvDenyPrefixes`；
-- 容器化（把执行面整体放进独立容器、不挂 `/opt/blade`、不给 DB 凭据）仍是边界更硬的方案；
+- 容器化（把执行面整体放进独立容器、不挂 `/opt/bladepro`、不给 DB 凭据）仍是边界更硬的方案；
   数据与密钥分家（`data/` 与密钥/配置不同用户）已经由本机制自动完成。
 
 ### 9.2 验收
@@ -356,8 +356,8 @@ sudo systemctl daemon-reload && sudo systemctl restart blade
 
 ```bash
 id -u                          # 期望 worker 的 uid（不是 0，也不是服务进程用户）
-cat /opt/blade/jwt.key         # 期望 Permission denied
-cat /opt/blade/config.json     # 期望 Permission denied
+cat /opt/bladepro/jwt.key         # 期望 Permission denied
+cat /opt/bladepro/config.json     # 期望 Permission denied
 env | grep -iE 'key|token|secret|password'   # 期望为空（或只剩无关项）
 cat /etc/passwd                # Bash 下仍可（shell 本来就是全盘读）；用文件工具 Read 才应被拒
 ```

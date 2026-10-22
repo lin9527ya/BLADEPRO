@@ -9,9 +9,9 @@ import (
 	"strconv"
 
 	actool "github.com/lin9527ya/Norma/tool"
-	"github.com/lin9527ya/blade/agent"
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/traffic"
+	"github.com/lin9527ya/bladepro/agent"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/traffic"
 )
 
 func (s *Server) seedFindingWorkflowTools() {

@@ -12,9 +12,9 @@ import (
 	"time"
 
 	actool "github.com/lin9527ya/Norma/tool"
-	"github.com/lin9527ya/blade/agent"
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/intel"
+	"github.com/lin9527ya/bladepro/agent"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/intel"
 )
 
 // P21 情报/测绘工具面：让 agent 自己去外部测绘引擎（先接 FOFA）查目标面资产，

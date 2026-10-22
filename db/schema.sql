@@ -1,4 +1,4 @@
--- BLADE PostgreSQL schema (单一数据源)
+-- BLADEPRO PostgreSQL schema (单一数据源)
 -- 幂等：可重复执行（IF NOT EXISTS / OR REPLACE / DROP TRIGGER IF EXISTS）。
 
 -- =====================================================================
@@ -1685,3 +1685,37 @@ CREATE INDEX IF NOT EXISTS idx_cred_attempts_budget
     ON credential_attempts (task_id, host, account, at DESC);
 CREATE INDEX IF NOT EXISTS idx_cred_attempts_task
     ON credential_attempts (task_id, id);
+
+-- =====================================================================
+-- SRC 挖掘模式（mode='src'）：覆盖格 + 收尾门的数据基础
+--
+-- 语义：tasks.mode 是创建时定死的运行模式，''=普通渗透（与改造前完全一致），
+-- 'src'=SRC 挖掘。mode_doc 是创建时解析好的快照（JSONB），运行中只读。
+-- src_cells 只存**终态**（空格靠计算：范围资产 × 必做面 − 已有终态），
+-- 不预填行，避免资产 × 面 × item 的行数膨胀。
+-- =====================================================================
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT '';
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS mode_doc JSONB NOT NULL DEFAULT '{}'::jsonb;
+CREATE INDEX IF NOT EXISTS idx_tasks_mode ON tasks(mode) WHERE mode <> '';
+
+CREATE TABLE IF NOT EXISTS src_cells (
+    id               BIGSERIAL PRIMARY KEY,
+    task_id          BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    asset_id         BIGINT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    area             TEXT NOT NULL,
+    item             TEXT NOT NULL DEFAULT '*',
+    state            TEXT NOT NULL CHECK (state IN ('tested_found','tested_clear','na','budget_stop')),
+    reason           TEXT NOT NULL DEFAULT '',
+    evidence_node_id BIGINT REFERENCES exploration_nodes(id) ON DELETE SET NULL,
+    finding_id       BIGINT REFERENCES findings(id) ON DELETE SET NULL,
+    attempts         INT NOT NULL DEFAULT 0,
+    updated_by       TEXT NOT NULL DEFAULT '',
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (task_id, asset_id, area, item)
+);
+CREATE INDEX IF NOT EXISTS idx_src_cells_task  ON src_cells(task_id, asset_id);
+CREATE INDEX IF NOT EXISTS idx_src_cells_state ON src_cells(task_id, state);
+DROP TRIGGER IF EXISTS trg_src_cells_upd ON src_cells;
+CREATE TRIGGER trg_src_cells_upd BEFORE UPDATE ON src_cells
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();

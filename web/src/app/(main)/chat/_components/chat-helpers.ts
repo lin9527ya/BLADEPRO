@@ -38,7 +38,7 @@ export const CONVERSATION_LIST_PAGE = 100;
 // Which agent groups the user has collapsed in the left rail. Persisted so the
 // rail looks the same after a reload; unknown keys are harmless (a deleted agent
 // simply never renders a group again).
-export const COLLAPSED_AGENTS_KEY = "blade.chat.collapsed-agents";
+export const COLLAPSED_AGENTS_KEY = "bladepro.chat.collapsed-agents";
 
 export function conversationIsPinned(conversation: Conversation): boolean {
   return conversation.pinned ?? Boolean(conversation.pinned_at);

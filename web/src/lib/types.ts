@@ -1,8 +1,10 @@
-// BLADE domain model — types used across the UI.
+// BLADEPRO domain model — types used across the UI.
 // Derived from the functional spec (section 7: 关键数据形状).
 
 export type TaskStatus = "created" | "queued" | "running" | "paused" | "done" | "failed" | "timeout" | "policy_blocked"; // P20：探索策略内已无可行方向而收尾（不是超时——改策略/加目标即可复活）
 export type EngineMode = "exploring" | "paused" | "stalled" | "idle";
+/** SRC 挖掘模式：任务创建时定死，''=普通渗透。 */
+export type TaskMode = "" | "src";
 
 export interface Task {
   id: string;
@@ -39,6 +41,11 @@ export interface Task {
   archive_blocked_by_task_id?: string; // live direct dependent that must be archived first
   company_ids?: number[]; // associated company scopes; current company assets join the task at creation
   coverage_enabled?: boolean; // 资产覆盖度功能开关(创建时定,默认开)；false=不计算/不展示覆盖度
+  // SRC 挖掘模式：''/缺省=普通渗透，'src'=按「站点 × 风险面」补格收尾。
+  mode?: TaskMode;
+  src_gaps?: number; // 收尾门剩余缺口；普通渗透任务后端不返回
+  src_cells?: number;
+  src_done?: number;
   // P20 探索策略限制摘要（列表角标用）；明细走 GET /api/tasks/{id}/policy。
   policy_techniques?: string[] | null;
   policy_writes?: string[] | null;
@@ -970,6 +977,93 @@ export interface TaskSrcBatchPlan {
   skipped: number;
 }
 
+/** SRC 挖掘：收尾门算出的一个缺口。kind 说明"缺什么"，不只是"没测"。 */
+export interface SrcGap {
+  asset_id: number;
+  asset: string;
+  asset_type: string;
+  area: string;
+  area_title?: string;
+  item: string;
+  kind: "blank" | "missing_reason" | "missing_evidence" | "missing_finding" | "budget_stop" | "unknown_asset_type" | string;
+  state?: string;
+  reason?: string;
+  attempts?: number;
+  priority?: number;
+}
+
+/** SRC 挖掘：一个覆盖格的终态行（资产 × 风险面 × 细分项）。 */
+export interface SrcCell {
+  id?: number;
+  task_id?: number;
+  asset_id: number;
+  asset?: string;
+  asset_type?: string;
+  area: string;
+  item: string;
+  state: "tested_found" | "tested_clear" | "na" | "budget_stop";
+  reason?: string;
+  evidence_node_id?: number;
+  finding_id?: number;
+  attempts?: number;
+  updated_by?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SrcMatrixCell {
+  area: string;
+  item: string;
+  title?: string;
+  weight?: number;
+  state?: string;
+  reason?: string;
+  attempts?: number;
+  evidence_node_id?: number;
+  finding_id?: number;
+}
+
+export interface SrcMatrixAsset {
+  asset_id: number;
+  asset: string;
+  asset_type: string;
+  required_areas: string[];
+  cells: SrcMatrixCell[];
+}
+
+export interface SrcSummary {
+  task_id: number;
+  assets: number;
+  cells_total: number;
+  cells_terminal: number;
+  cells_measured: number;
+  gaps_total: number;
+  gaps_by_area: Record<string, number>;
+  finishable: boolean;
+  blocked_reason?: string;
+}
+
+export interface SrcTaskState {
+  enabled: boolean;
+  mode?: TaskMode;
+  note?: string;
+  summary?: SrcSummary;
+  gaps?: SrcGap[];
+  gaps_total?: number;
+  gaps_by_area?: Record<string, number>;
+  cells?: SrcCell[];
+  assets?: SrcMatrixAsset[];
+  finishable?: boolean;
+  legend?: string;
+  doc?: {
+    allow_budget_stop?: boolean;
+    max_attempts_per_cell?: number;
+    max_intents_per_asset?: number;
+    platform?: string;
+    program?: string;
+  };
+}
+
 /** P18 约束编译：一条候选拦截规则 + 它在最近真实调用里的命中预览。 */
 export interface ConstraintRuleDraft {
   name: string;
@@ -1560,7 +1654,7 @@ export interface Settings {
   credential_attempt_budget?: number;
   /** 超预算后的裁决：allow / ask（默认）/ deny。 */
   credential_attempt_budget_action?: "allow" | "ask" | "deny";
-  /** 界面显示名（P42）：空 = 内置 "BLADE"。只覆盖运行时标题；静态 HTML 的 title 是构建期常量。 */
+  /** 界面显示名（P42）：空 = 内置 "BLADEPRO"。只覆盖运行时标题；静态 HTML 的 title 是构建期常量。 */
   site_name?: string;
   // ---- 漏洞 IM 推送（渠道本身是独立资源，见 /api/notify/*，这里只有三项全局配置）----
   notify_enabled?: boolean; // 推送总开关，默认开；用于维护期一键止血
@@ -2324,7 +2418,7 @@ export interface UpdateCheck {
   os: string;
   arch: string;
   repo: string;
-  /** 是否存在可回滚的上一版本（blade.old）。 */
+  /** 是否存在可回滚的上一版本（bladepro.old）。 */
   has_backup: boolean;
   /** 本次启动时自更新自举的结论（换装失败 / 已回滚等），无事发生时为空。 */
   boot_notice?: string;

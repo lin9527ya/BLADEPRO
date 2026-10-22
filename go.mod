@@ -1,4 +1,4 @@
-module github.com/lin9527ya/blade
+module github.com/lin9527ya/bladepro
 
 go 1.26.3
 

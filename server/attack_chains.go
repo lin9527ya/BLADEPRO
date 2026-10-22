@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/report"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/report"
 )
 
 // 攻击路径重建：把图里已经记着的两种边接起来读——

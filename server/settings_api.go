@@ -15,9 +15,9 @@ import (
 	"unicode/utf8"
 
 	actool "github.com/lin9527ya/Norma/tool"
-	"github.com/lin9527ya/blade/agent"
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/intercept"
+	"github.com/lin9527ya/bladepro/agent"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/intercept"
 )
 
 // getSettings returns the runtime app settings the UI toggles. The Brave API key
@@ -38,7 +38,7 @@ func corsAllowedOriginsSetting(pg *db.DB) string {
 	return strings.TrimSpace(v)
 }
 
-// siteNameSetting 读界面显示名（空 = 内置 BLADE）。
+// siteNameSetting 读界面显示名（空 = 内置 BLADEPRO）。
 func siteNameSetting(pg *db.DB) string {
 	v, ok, err := pg.GetSetting(settingSiteName)
 	if err != nil || !ok {
@@ -104,7 +104,7 @@ func (s *Server) settingsPayload() map[string]any {
 		// 模式回的是**生效值**（env 覆盖优先于 setting），并单独给一个 env 标志——页面据此提示
 		// 「环境变量把它压住了」，否则用户改了没反应会莫名其妙。
 		"intercept_scope_mode":     s.m.interceptor.ScopeMode(),
-		"intercept_scope_mode_env": strings.TrimSpace(os.Getenv("BLADE_SCOPE_ENFORCEMENT")) != "",
+		"intercept_scope_mode_env": strings.TrimSpace(os.Getenv("BLADEPRO_SCOPE_ENFORCEMENT")) != "",
 		"intercept_scope_hours":    scopeHoursSetting(s.m.pg),
 		// P41 面向目标的产物语言：回**生效值**（缺省即 zh），页面据此显示当前档位。
 		"artifact_language": artifactLanguageSetting(s.m.pg),
@@ -225,7 +225,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		// 以及超预算后的裁决（allow|ask|deny）。拦截层每调用现读，即时生效。
 		CredentialBudget       *int    `json:"credential_attempt_budget"`
 		CredentialBudgetAction *string `json:"credential_attempt_budget_action"`
-		// P42 界面显示名（空 = 内置 BLADE）。只影响运行时标题；静态 HTML 的 title 是构建期常量。
+		// P42 界面显示名（空 = 内置 BLADEPRO）。只影响运行时标题；静态 HTML 的 title 是构建期常量。
 		SiteName *string `json:"site_name"`
 		// P42 允许跨源访问 API 的来源白名单（逗号分隔；空 = 不发 CORS 头）。
 		CORSAllowedOrigins *string `json:"cors_allowed_origins"`

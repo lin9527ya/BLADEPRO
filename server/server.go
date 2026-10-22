@@ -12,16 +12,16 @@ import (
 	"time"
 
 	"github.com/lin9527ya/Norma/llm"
-	"github.com/lin9527ya/blade/agent"
-	"github.com/lin9527ya/blade/llmpool"
+	"github.com/lin9527ya/bladepro/agent"
+	"github.com/lin9527ya/bladepro/llmpool"
 )
 
-// BuildVersion is the backend application version, injected from cmd/blade at
+// BuildVersion is the backend application version, injected from cmd/bladepro at
 // startup (which in turn gets it from -ldflags "-X main.version=<tag>").
 // Defaults to "dev" for local builds. Exposed to the frontend via GET /api/health.
 var BuildVersion = "dev"
 
-// Server exposes the BLADE backend over a JSON HTTP API for the shadcn/ui
+// Server exposes the BLADEPRO backend over a JSON HTTP API for the shadcn/ui
 // frontend.
 type Server struct {
 	m        *Manager
@@ -422,7 +422,7 @@ func (s *Server) registerRoutes(mux routeRegistrar) {
 
 // health 是**唯一免认证**的信息端点，所以它必须**不自报家门**（P42）。
 //
-// 它此前返回 {"ok":true,"service":"blade","version":"v0.4.x"}——那是个明牌指纹：公网上任何人
+// 它此前返回 {"ok":true,"service":"bladepro","version":"v0.4.x"}——那是个明牌指纹：公网上任何人
 // 请求一次就知道这是什么、什么版本（测绘引擎连指纹比对都省了）。现在只回一个 ok；版本与构建
 // 信息移到需要登录的 /api/system/info。
 //
@@ -433,7 +433,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 
 // systemInfo 是需要登录的版本/构建信息（P42 从 /api/health 搬过来）。
 func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"ok": true, "service": "blade", "version": BuildVersion})
+	writeJSON(w, 200, map[string]any{"ok": true, "service": "bladepro", "version": BuildVersion})
 }
 
 // cors 只对**显式配置**的来源发 CORS 头（P42）。此前无条件发

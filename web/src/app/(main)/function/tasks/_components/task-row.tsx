@@ -262,6 +262,14 @@ export const TaskRow = React.memo(function TaskRow({
       </TableCell>
       <TableCell>
         <StatusBadge domain="task" value={task.status} dot />
+        {task.mode === "src" && (
+          <span
+            className="text-muted-foreground ml-1.5 rounded border px-1 py-0.5 text-[10px]"
+            title="SRC 挖掘模式：按「站点 × 风险面」补格收尾（创建时定死）"
+          >
+            SRC
+          </span>
+        )}
         {(task.policy_techniques?.length ?? 0) + (task.policy_writes?.length ?? 0) + (task.policy_custom ?? 0) > 0 && (
           <span
             className="text-muted-foreground ml-1.5 rounded border px-1 py-0.5 text-[10px]"

@@ -12,9 +12,10 @@ import (
 	"github.com/lin9527ya/Norma/permission"
 	actool "github.com/lin9527ya/Norma/tool"
 	"github.com/lin9527ya/Norma/transcript"
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/intercept"
-	"github.com/lin9527ya/blade/policy"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/intercept"
+	"github.com/lin9527ya/bladepro/policy"
+	"github.com/lin9527ya/bladepro/srcmode"
 )
 
 // Planner is the event-driven LLM planner (docs §4.3): each time the asset or
@@ -229,6 +230,8 @@ func renderTriggers(ts *db.ExplorationStore, evs []TriggerEvent) string {
 				sm = intentSummary(ts, ev.IntentID)
 			}
 			b.WriteString(fmt.Sprintf("\n- 意图 #%d 由用户删除，意图内容是：%s、删除原因是：%s。该意图已删除（不再执行）；请据此重新规划。", ev.IntentID, sm, ev.Detail))
+		case "src_gate":
+			b.WriteString(fmt.Sprintf("\n- %s —— **这不是可忽略的提示**：本轮不要再用 prove_goal 收尾，先按 src_state 的 top_gaps 派意图把缺口点亮（tested_found/tested_clear/na/budget_stop 都要写证据与原因）。", ev.Detail))
 		default: // "done"
 			b.WriteString(fmt.Sprintf("\n- 意图 #%d（%s）的 worker 结束，输出结论：%s", ev.IntentID, intentSummary(ts, ev.IntentID), workerOutput(ts, ev.IntentID)))
 			if fids := factIDsYielded(ts, ev.IntentID); fids != "" {
@@ -438,6 +441,15 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	}
 	tsx.SetTaskID(taskID)
 	tsx.SetCoverageEnabled(as == nil || as.CoverageEnabled(taskID))
+	// SRC 挖掘模式：从任务行读取创建时定死的 mode 快照（运行中不再变）。只有
+	// mode='src' 才挂 src_* 工具与提示词覆盖段——普通渗透任务一个字节都不变。
+	if as != nil {
+		if src := as.Src(); src != nil {
+			if mode, raw, err := src.TaskMode(ctx, taskID); err == nil && mode == srcmode.ModeSrc {
+				tsx.SetSrcMode(srcmode.Parse(raw), src)
+			}
+		}
+	}
 	tsx.killWork = p.killWork   // enable kill_work tool (nil = unavailable)
 	tsx.steerWork = p.steerWork // enable steer_work tool (nil = unavailable)
 	if origin, _ := ts.OriginFactID(); origin > 0 {
@@ -469,6 +481,10 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	}
 	// P20：探索策略段不受 wantConstraints 开关控制——它是操作者声明的硬边界。
 	sysBody += policyBlock(pol)
+	// SRC 模式：让 planner 的目标函数从"打深"切到"补格"（静态段，不含本轮态势）。
+	if tsx.SrcMode() {
+		sysBody += srcmode.PlannerOverlay(tsx.SrcDoc())
+	}
 	system, boundary := deferredSystem(sysBody, def)
 	// planner 无自身墙钟预算;有 deadline 时把 MaxDuration 夹逼到剩余,让在跑的规划轮在
 	// 任务到点时进收尾(因超时→任务超时词,因步数→per-run 词)。

@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/lin9527ya/Norma/llm"
-	"github.com/lin9527ya/blade/agent"
-	"github.com/lin9527ya/blade/db"
+	"github.com/lin9527ya/bladepro/agent"
+	"github.com/lin9527ya/bladepro/db"
 )
 
 // TestSteerMsgRenderLabelsTheSource 钉住两件事：规划者那条的文案**一字不改**（既有提示词

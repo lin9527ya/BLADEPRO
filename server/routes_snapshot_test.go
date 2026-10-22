@@ -40,13 +40,13 @@ func (r *recordingRegistrar) HandleFunc(pattern string, h func(http.ResponseWrit
 
 // handlerSymbol 取处理函数的符号名（方法值 → 方法名；闭包 → 含 .funcN 的符号）。
 // 记它是为了抓住「路由还在、但被接到了别的处理函数上」这种改错——只比对 pattern
-// 是看不见的。模块前缀去掉，免得 golden 里全是 github.com/lin9527ya/blade/。
+// 是看不见的。模块前缀去掉，免得 golden 里全是 github.com/lin9527ya/bladepro/。
 func handlerSymbol(h func(http.ResponseWriter, *http.Request)) string {
 	f := runtime.FuncForPC(reflect.ValueOf(h).Pointer())
 	if f == nil {
 		return "?"
 	}
-	return strings.TrimPrefix(f.Name(), "github.com/lin9527ya/blade/")
+	return strings.TrimPrefix(f.Name(), "github.com/lin9527ya/bladepro/")
 }
 
 // inventoryRoutes 清点真实注册的全部路由（已排序，格式 "METHOD /path\thandler"）。

@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/traffic"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/traffic"
 )
 
 type Store struct {

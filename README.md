@@ -1,10 +1,82 @@
 <div align="center">
 
-# BLADE
+# BLADEPRO
 
-AI 自主渗透测试系统（Go 后端 + Next.js 前端）
+面向 SRC 漏洞挖掘的 AI 自主审计系统（Go 后端 + Next.js 前端）
+
+**BLADE 的 SRC 分支**：同样是多 agent 自主引擎，但目标函数从「打穿一条链」换成了「把覆盖矩阵的空格清零，并产出可提交件」。
 
 </div>
+
+---
+
+## BLADEPRO 与 BLADE 的区别
+
+两者共用同一套引擎与数据模型（[BLADE](https://github.com/lin9527ya/BLADE) 专做渗透），BLADEPRO 在其上落地了 `mode="src"` 的任务模式。**同一份目标、同样的授权范围，两个仓跑出来的是两种作业方式**：
+
+| 维度 | BLADE（渗透） | BLADEPRO（SRC 挖掘） |
+|---|---|---|
+| 目标函数 | 证明目标、拿据点、走完攻击链 | 单位时间可提交的有效漏洞数 |
+| 规划 | 深度优先，`prove_goal` 驱动收尾 | 广度优先，按「站点 × 风险面」补格 |
+| 完成判据 | goals met 即 done | 覆盖格清零 + engine 收尾门复核，模型说了不算 |
+| 覆盖表达 | 从意图推导（没派过意图=不显示） | 显式终态 `src_cells`（没行 = 空格的**证据**） |
+| 战果取向 | 据点/凭据/持久化（纵深） | 只读证明，到 `whoami`/`id` 即止 |
+| 缺口可见性 | 靠人读图判断 | `src_state` / `graph_overview.src` 直接给 `top_gaps` 与 `gaps_by_area` |
+| 收尾 | planner 判 met 即落 done | 门被拒 → 注入缺口 → 连续 3 次转 `policy_blocked` 交人工（可人工放行，留痕） |
+
+> 想继续做全链渗透就用 BLADE；要做 SRC 挖洞（广度、可交付、可对账）就用本仓。两者可以并存：同一目标先 BLADE 打深，再用 BLADEPRO 铺面。
+
+## SRC 挖掘模式（`mode="src"`）
+
+创建任务时选 **SRC 挖掘**，或 `POST /api/tasks` 带 `{"mode":"src"}`。模式在创建时定死成快照（`tasks.mode_doc`），运行中不可切换——要换就复制任务。
+
+三层改造，缺一不可（只改提示词是压不住 planner 的）：
+
+1. **规划层**：`graph_overview` 多一个 `src` 块（`gaps_total` / `gaps_by_area` / 前 10 条 `top_gaps`）；planner 的核心目标从「打深」换成「补格」，`gaps_total > 0` 时不得 `prove_goal`。
+2. **判定层**：`src_cells` 存**显式终态**，只存终态不预填行（空格靠计算，避免行数爆炸）。
+   - `tested_found` 必须挂 `finding_id`；
+   - `tested_clear` 必须给证据节点或写清说明；
+   - `na` / `budget_stop` 必须写原因；
+   - 同一格尝试次数超上限只能用 `budget_stop` 收口。
+3. **交付层**（P2 起）：报告正文、证据合规、跨任务去重、提交台账。本版已落 P0+P1。
+
+### 风险面（area）与必做面
+
+| area | 含义 | 必做该面的资产类型 |
+|---|---|---|
+| `unauth` | 未授权 / 未认证可达（swagger/actuator/graphql） | app、service、endpoint |
+| `authz` | 越权 / IDOR / 批量赋值 | app、service、endpoint |
+| `injection` | SQL/NoSQL/SSTI/命令/表达式注入 | app、service、endpoint |
+| `xss` `paths` `session` `upload` `logic` | XSS / 敏感路径 / 登录会话 / 上传 / 业务逻辑 | app、service |
+| `ssrf` | SSRF | endpoint |
+| `host` `takeover` `cred` | 主机暴露 / 子域接管 / 凭证泄露 | ip、root_domain、subdomain |
+| `rce` | 反序列化 / 上传 getshell / 依赖 RCE | 全部站点面（矩阵外面照样能报，只是不占格） |
+
+`mode_doc.required_areas` 可按任务收窄或加面；`hard_items`（如 `paths/enum-200`）要求该面必须逐个细分项点终态，而不是一个 `*` 了事。
+
+### agent 工具（仅在 SRC 任务里出现）
+
+| 工具 | 角色 | 作用 |
+|---|---|---|
+| `src_state` | planner / main | 读完整矩阵、缺口、终态格 |
+| `src_mark_cell` | worker / planner | 点亮一格，终态语义与证据当场校验 |
+| `src_finish_check` | planner | 收尾门只读预检（`finishable`） |
+
+它们**不进 tools 表**：`wireTools` 会把 DB 里绑定的工具重新注入，一旦 seed 就会泄漏到非 SRC 任务。
+
+### HTTP 面
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` | `/api/tasks/{id}/src` | `{enabled, summary, gaps, cells, assets(矩阵), doc}` |
+| `POST` | `/api/tasks/{id}/src/cells` | 人工点格/改格（同一套终态校验，人也不能绕过证据要求） |
+| `POST` | `/api/tasks/{id}/src/force-finish` | 人工放行收尾，必填 `reason`，落审计 |
+
+非 SRC 任务访问 `/src` 返回 `{enabled:false}`，任务详情页的 SRC tab 据此显示提示而不是空矩阵。
+
+### 设计文档
+
+完整方案（P0–P3、DDL、收尾门伪代码、风险与取舍）见 [docs/SRC挖掘agent改造方案.md](docs/SRC挖掘agent改造方案.md)；本仓已实现 P0（模式骨架）+ P1（覆盖矩阵与收尾门）。
 
 ---
 
@@ -44,7 +116,7 @@ AI 自主渗透测试系统（Go 后端 + Next.js 前端）
 ## 审批记录详情
 
 全局「审批记录」、任务内「拦截审批」及对话中的审批卡片均支持展开查看详情。展示结构参考
-[AegisHook 的审批详情组件](https://github.com/RuoJi6/AegisHook/blob/main/web/src/components/CallDetail.vue)，沿用 BLADE 的组件和主题：
+[AegisHook 的审批详情组件](https://github.com/RuoJi6/AegisHook/blob/main/web/src/components/CallDetail.vue)，沿用 BLADEPRO 的组件和主题：
 
 
 ## 资产同步（ScopeSentry）
@@ -53,7 +125,7 @@ AI 自主渗透测试系统（Go 后端 + Next.js 前端）
 
 - 在「**资产同步**」页填 ScopeSentry 的地址与 API Key，接入数据源；
 - 按**项目**或**任务**维度选择要同步的目标与资产类型（域名 / 子域 / IP / 端口 / 站点 / 端点…）；
-- 一键导入并按公司资产范围归并，直接进入 BLADE 的资产图供 agent 探索使用。
+- 一键导入并按公司资产范围归并，直接进入 BLADEPRO 的资产图供 agent 探索使用。
 
 ---
 
@@ -64,8 +136,8 @@ AI 自主渗透测试系统（Go 后端 + Next.js 前端）
 ### 方式一：一键安装脚本（推荐）
 
 ```bash
-git clone https://github.com/lin9527ya/BLADE.git
-cd BLADE
+git clone https://github.com/lin9527ya/BLADEPRO.git
+cd BLADEPRO
 ./install.sh
 ```
 
@@ -79,8 +151,8 @@ cd BLADE
 ### 方式二：Docker Compose（手动）
 
 ```bash
-git clone https://github.com/lin9527ya/BLADE.git
-cd BLADE
+git clone https://github.com/lin9527ya/BLADEPRO.git
+cd BLADEPRO
 cp .env.example .env          # 填 POSTGRES_PASSWORD、可选 ANTHROPIC_API_KEY
 docker compose up -d          # 拉取镜像 + postgres
 # → http://localhost:8787
@@ -88,9 +160,9 @@ docker compose up -d          # 拉取镜像 + postgres
 
 镜像已含常用工具（ripgrep/curl/vim/npm/nmap…）；`./skills` 与 `./data` 以绑定挂载持久化。
 
-> ⚠️ **本仓尚未发布自己的 Docker 镜像。** `docker-compose.yml` 里的 `blade-local` 指向的是
+> ⚠️ **本仓尚未发布自己的 Docker 镜像。** `docker-compose.yml` 里的 `bladepro-local` 指向的是
 > **上游**仓库的镜像，拉下来跑的是上游代码、不是本仓代码。要用本仓代码请走「方式四：从源码编译
-> 单二进制」，或自行 `docker build -f Dockerfile -t blade .`。本仓发镜像的开关见
+> 单二进制」，或自行 `docker build -f Dockerfile -t bladepro .`。本仓发镜像的开关见
 > `.github/workflows/release.yml` 的 `docker` job（设仓库变量 `DOCKERHUB_IMAGE` 即启用）。
 
 远程 MCP 可在系统设置中选择 `http`（Streamable HTTP）或 `sse`（旧版 SSE）。
@@ -100,15 +172,15 @@ docker compose up -d          # 拉取镜像 + postgres
 
 ### 方式三：下载预编译二进制（Releases）
 
-到 [Releases](https://github.com/lin9527ya/BLADE/releases) 下载对应平台的 zip，解压后得到 `blade` + `start.sh`（Windows 为 `start.bat`）+ `skills/` + `config.example.json`：
+到 [Releases](https://github.com/lin9527ya/BLADEPRO/releases) 下载对应平台的 zip，解压后得到 `bladepro` + `start.sh`（Windows 为 `start.bat`）+ `skills/` + `config.example.json`：
 
 ```bash
 cp config.example.json config.json   # 填好 database 连接
 ./start.sh                           # → http://localhost:8787
 ```
 
-> 请用 `start.sh` / `start.bat` 启动，而不是直接跑 `./blade`。它是个守护脚本：程序退出后按退出码决定是否重新拉起，**页面上的[一键更新](#方式一页面一键更新推荐)靠它完成换装**。直接运行 `./blade` 时更新完就不会被拉起了。
-> 后台常驻：`nohup ./start.sh >blade.log 2>&1 &`。
+> 请用 `start.sh` / `start.bat` 启动，而不是直接跑 `./bladepro`。它是个守护脚本：程序退出后按退出码决定是否重新拉起，**页面上的[一键更新](#方式一页面一键更新推荐)靠它完成换装**。直接运行 `./bladepro` 时更新完就不会被拉起了。
+> 后台常驻：`nohup ./start.sh >bladepro.log 2>&1 &`。
 
 ### 方式四：从源码编译单二进制
 
@@ -118,7 +190,7 @@ cd web && npm ci && npm run build:static && cd ..
 # 2) 拷进内嵌目录
 cp -r web/out server/webui/dist
 # 3) 编译（-tags embedui 才内嵌前端）
-CGO_ENABLED=0 go build -tags embedui -o blade ./cmd/blade
+CGO_ENABLED=0 go build -tags embedui -o bladepro ./cmd/bladepro
 ./start.sh
 ```
 
@@ -128,13 +200,13 @@ CGO_ENABLED=0 go build -tags embedui -o blade ./cmd/blade
 
 ```bash
 ./build.sh --release
-# 产物：dist/blade-0.3.3-*.zip
+# 产物：dist/bladepro-0.3.3-*.zip
 ```
 
-UPX 自解压二进制可能与部分 Linux 内核、虚拟化环境或安全策略不兼容，因此默认不启用。可用 `BLADE_TARGETS` 自定义目标；确认目标运行环境兼容时，可显式传入 `--upx` 进一步缩小二进制：
+UPX 自解压二进制可能与部分 Linux 内核、虚拟化环境或安全策略不兼容，因此默认不启用。可用 `BLADEPRO_TARGETS` 自定义目标；确认目标运行环境兼容时，可显式传入 `--upx` 进一步缩小二进制：
 
 ```bash
-BLADE_TARGETS=linux/amd64,windows/amd64 ./build.sh --release
+BLADEPRO_TARGETS=linux/amd64,windows/amd64 ./build.sh --release
 ./build.sh --target linux/amd64 --upx
 ```
 
@@ -142,19 +214,19 @@ BLADE_TARGETS=linux/amd64,windows/amd64 ./build.sh --release
 
 ## 更新升级
 
-> 升级只换程序、不动数据：Postgres 数据卷 `pgdata`、`./data`（工作区、流量、SQLite 等）、`./skills` 都会保留；登录态也不受影响——签名密钥存在库里（`server/auth.go` 的 `jwtKeySetting`），换二进制、换目录、双开都共用同一把。**数据库迁移无需手动执行**——`blade` 每次启动会幂等重跑 `schema.sql`（含 `ADD COLUMN` / `CREATE INDEX IF NOT EXISTS`），即“重启即迁移”。升级前仍建议先备份 `./data` 与数据库。
+> 升级只换程序、不动数据：Postgres 数据卷 `pgdata`、`./data`（工作区、流量、SQLite 等）、`./skills` 都会保留；登录态也不受影响——签名密钥存在库里（`server/auth.go` 的 `jwtKeySetting`），换二进制、换目录、双开都共用同一把。**数据库迁移无需手动执行**——`bladepro` 每次启动会幂等重跑 `schema.sql`（含 `ADD COLUMN` / `CREATE INDEX IF NOT EXISTS`），即“重启即迁移”。升级前仍建议先备份 `./data` 与数据库。
 
 ### 方式一：页面一键更新（推荐）
 
 在 **系统配置** 页（侧边栏「系统配置」→ `/system/settings`）的**版本与更新**卡片里，可以直接检查并安装新版本，无需登录服务器。
 
-点「更新」后：下载当前平台的发布包 → 比对 Release 的 `SHA256SUMS` → 用 `-h` 冒烟测试新二进制 → 暂存为 `blade.new` → 程序退出，由 `start.sh` / `start.bat` 重新拉起并完成换装。页面会自动等到新版本上线后刷新。
+点「更新」后：下载当前平台的发布包 → 比对 Release 的 `SHA256SUMS` → 用 `-h` 冒烟测试新二进制 → 暂存为 `bladepro.new` → 程序退出，由 `start.sh` / `start.bat` 重新拉起并完成换装。页面会自动等到新版本上线后刷新。
 
-- **失败不会留下坏程序**：校验或冒烟不通过就丢弃暂存件、继续跑当前版本；换装后的新版若连续 3 次启动失败，会自动回滚到 `blade.old`（失败的那个留作 `blade.failed` 供排查）。
-- **随时可回退**：上一版本保留为 `blade.old`，卡片上有「回滚到上一版本」。注意数据库结构不会回退。
+- **失败不会留下坏程序**：校验或冒烟不通过就丢弃暂存件、继续跑当前版本；换装后的新版若连续 3 次启动失败，会自动回滚到 `bladepro.old`（失败的那个留作 `bladepro.failed` 供排查）。
+- **随时可回退**：上一版本保留为 `bladepro.old`，卡片上有「回滚到上一版本」。注意数据库结构不会回退。
 - **更新会中断正在运行的任务**——更新即重启，请在空闲时进行。
 - **开发构建不给更新**：版本号是 `dev` 或 `git describe` 带后缀时禁用，避免正式版覆盖掉本地调试的二进制。
-- **Docker 下只换程序、不换镜像**：镜像里的 playwright / nmap 等工具链不会跟着升级，且 `docker compose up -d` 重建容器后会退回镜像自带的版本。要连镜像一起升级仍请用 `docker compose pull blade && docker compose up -d blade`。
+- **Docker 下只换程序、不换镜像**：镜像里的 playwright / nmap 等工具链不会跟着升级，且 `docker compose up -d` 重建容器后会退回镜像自带的版本。要连镜像一起升级仍请用 `docker compose pull bladepro && docker compose up -d bladepro`。
 - 访问 GitHub 需要代理时，在同一页面配置**全局代理**即可，更新链路会走它。更新只从 GitHub 域名下载并强制 HTTPS。
 
 > **⚠️ 这条链路信任什么**：更新包与它的 `SHA256SUMS` 取自 GitHub 的**同一个 release**，所以校验和保证的是
@@ -172,32 +244,32 @@ BLADE_TARGETS=linux/amd64,windows/amd64 ./build.sh --release
 ### 方式二：一键更新脚本
 
 ```bash
-cd BLADE
+cd BLADEPRO
 ./update.sh
 ```
 
 脚本先可选 `git pull` 拉取最新代码，再让你选 **① Docker 更新** 或 **② 本地编译更新**（与 `install.sh` 对应）：
 
-- **① Docker**：可指定目标镜像 tag（回车沿用 `.env` 的 `BLADE_TAG`，缺省 `latest`）→ `docker compose pull` → `docker compose up -d`（换新镜像重启即自动迁移）。
-- **② 本地**：重建前端静态产物 → 重新编译 `./blade`（完成后重启进程生效）。
+- **① Docker**：可指定目标镜像 tag（回车沿用 `.env` 的 `BLADEPRO_TAG`，缺省 `latest`）→ `docker compose pull` → `docker compose up -d`（换新镜像重启即自动迁移）。
+- **② 本地**：重建前端静态产物 → 重新编译 `./bladepro`（完成后重启进程生效）。
 
 ### 方式三：Docker Compose（手动）
 
 ```bash
-cd BLADE
+cd BLADEPRO
 git pull                       # 更新 compose / 脚本（可选）
-# 指定版本：在 .env 设 BLADE_TAG=v0.2.0；不设则用 latest
-docker compose pull blade
-docker compose up -d blade     # 换新镜像重启 → 自动迁移 schema
+# 指定版本：在 .env 设 BLADEPRO_TAG=v0.2.0；不设则用 latest
+docker compose pull bladepro
+docker compose up -d bladepro     # 换新镜像重启 → 自动迁移 schema
 docker image prune -f          # 清理旧镜像（可选）
 ```
 
 ### 方式四：预编译二进制（Releases）
 
-到 [Releases](https://github.com/lin9527ya/BLADE/releases) 下载新版本 zip，停掉旧进程后覆盖 `blade` 与 `skills/`（保留你的 `config.json` 与 `data/`），重启即可：
+到 [Releases](https://github.com/lin9527ya/BLADEPRO/releases) 下载新版本 zip，停掉旧进程后覆盖 `bladepro` 与 `skills/`（保留你的 `config.json` 与 `data/`），重启即可：
 
 ```bash
-cp -r <解压目录>/skills ./ && cp <解压目录>/blade ./
+cp -r <解压目录>/skills ./ && cp <解压目录>/bladepro ./
 ./start.sh
 ```
 
@@ -207,7 +279,7 @@ cp -r <解压目录>/skills ./ && cp <解压目录>/blade ./
 git pull
 cd web && npm ci && npm run build:static && cd ..
 cp -r web/out server/webui/dist
-CGO_ENABLED=0 go build -tags embedui -o blade ./cmd/blade
+CGO_ENABLED=0 go build -tags embedui -o bladepro ./cmd/bladepro
 # 重启 ./start.sh
 ```
 
@@ -215,24 +287,24 @@ CGO_ENABLED=0 go build -tags embedui -o blade ./cmd/blade
 
 ## 配置
 
-**数据库**（`config.json`，或用环境变量 `BLADE_PG_DSN` 覆盖）：
+**数据库**（`config.json`，或用环境变量 `BLADEPRO_PG_DSN` 覆盖）：
 
 ```json
 {
   "database": {
     "host": "127.0.0.1", "port": 5432,
-    "user": "blade", "password": "yourpass",
-    "dbname": "blade", "sslmode": "disable"
+    "user": "bladepro", "password": "yourpass",
+    "dbname": "bladepro", "sslmode": "disable"
   }
 }
 ```
 
 **LLM**：`export ANTHROPIC_API_KEY=sk-...`（或 `OPENAI_API_KEY`），也可在 UI 的「LLM 配置」页填写。
-可选：`BLADE_LLM_PROVIDER` / `BLADE_LLM_MODEL` / `BLADE_LLM_BASE_URL` / `BLADE_LLM_PROXY`。
+可选：`BLADEPRO_LLM_PROVIDER` / `BLADEPRO_LLM_MODEL` / `BLADEPRO_LLM_BASE_URL` / `BLADEPRO_LLM_PROXY`。
 
 **并发**：每个任务的 work agent 数在「系统设置」里配置（默认 3）。
 
-**常用参数**：`./start.sh -addr 127.0.0.1:8787 -proxy 127.0.0.1:8788`（`-addr` 前端+API，`-proxy` 流量录制代理）。启动脚本会把参数原样透传给 `blade`。
+**常用参数**：`./start.sh -addr 127.0.0.1:8787 -proxy 127.0.0.1:8788`（`-addr` 前端+API，`-proxy` 流量录制代理）。启动脚本会把参数原样透传给 `bladepro`。
 
 > **默认只绑 loopback**：不写 `-addr` 就是 `127.0.0.1:8787`（前端+API 都只在本机可达）。
 > 公网部署**不要**图省事改成 `:8787`——那等于把管理端交出去，测绘引擎一次全网扫描就会收录它。
@@ -297,7 +369,7 @@ server {
 ./dev.sh    # 后端(:8787) + 流量代理(:8788) + 前端 next dev(:5173) → http://localhost:5173
 ```
 
-- 后端：`go run ./cmd/blade`（不带 `-tags embedui` 则不内嵌前端）
+- 后端：`go run ./cmd/bladepro`（不带 `-tags embedui` 则不内嵌前端）
 - 前端：`cd web && npm run dev`（`/api` 反代到后端，带热更新）
 - 测试：`go test ./...`
 - Mock 预览（无后端）：`cd web && NEXT_PUBLIC_MOCK=1 npm run dev`
@@ -306,7 +378,7 @@ server {
 
 ## 系统技术架构
 
-BLADE 是一套 **LLM 多 agent 驱动的自主渗透系统**：Go 单体后端（内嵌 Next.js 前端）+ PostgreSQL，agent 能力由 [`norma`](https://github.com/lin9527ya/Norma) SDK 提供（`agentcore` / `tool` / `permission` / `harness` / `memory` / `transcript`）。核心是**双图架构**，以及围绕它的两条自主性机制：**worker 间过程级信息交换**与 **planner 多轮共享 todolist 稳定攻击链路**。
+BLADEPRO 是一套 **LLM 多 agent 驱动的自主渗透系统**：Go 单体后端（内嵌 Next.js 前端）+ PostgreSQL，agent 能力由 [`norma`](https://github.com/lin9527ya/Norma) SDK 提供（`agentcore` / `tool` / `permission` / `harness` / `memory` / `transcript`）。核心是**双图架构**，以及围绕它的两条自主性机制：**worker 间过程级信息交换**与 **planner 多轮共享 todolist 稳定攻击链路**。
 
 ### 总体分层
 
@@ -470,7 +542,7 @@ flowchart TB
   R3["第 3 轮（②产出 fact）　派意图③"] --> T3
 ```
 
-于是攻击链在“事件驱动 + 无状态会话”的环境下依然**稳定推进、不重复、不错序**——这是 BLADE 能自主走完多步利用链的关键。
+于是攻击链在“事件驱动 + 无状态会话”的环境下依然**稳定推进、不重复、不错序**——这是 BLADEPRO 能自主走完多步利用链的关键。
 
 ---
 
@@ -490,7 +562,7 @@ flowchart TB
 
 > ⚠️ **重要提示**：开源协议本身不限制软件的使用用途。以下的「使用限制」与「免责声明」是作者对使用者的额外约定与郑重声明，请务必遵守。
 
-**BLADE 仅供个人学习、代码研究与本地技术验证使用，不得用于对任何线上系统或网站发起实际测试。**
+**BLADEPRO 仅供个人学习、代码研究与本地技术验证使用，不得用于对任何线上系统或网站发起实际测试。**
 
 ### 允许使用范围
 

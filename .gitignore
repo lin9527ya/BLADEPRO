@@ -35,15 +35,15 @@ Thumbs.db
 .claude/
 
 # 内嵌前端的单二进制产物
-/blade
+/bladepro
 # 一键更新在可执行文件旁留下的中间产物（暂存件 / 备份 / 失败版本 / 升级标记）
-/blade.new
-/blade.new.sha256
-/blade.old
-/blade.failed
-/blade.upgrade.json
-# start.sh 的运行日志（README 的 nohup ./start.sh >blade.log 2>&1 & 会留）
-/blade.log
+/bladepro.new
+/bladepro.new.sha256
+/bladepro.old
+/bladepro.failed
+/bladepro.upgrade.json
+# start.sh 的运行日志（README 的 nohup ./start.sh >bladepro.log 2>&1 & 会留）
+/bladepro.log
 /server/webui/dist/
 /dist/
 

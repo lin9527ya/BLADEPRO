@@ -1,5 +1,5 @@
 // Package agent wires real LLM-driven planner and work agents (on top of the
-// agent-core SDK) to the dual SQLite graph. See docs/BLADE-架构设计.md
+// agent-core SDK) to the dual SQLite graph. See docs/BLADEPRO-架构设计.md
 // §4.3 (planner) and §4.4 (work agent).
 //
 // Provider configuration is read from the environment so the system runs with
@@ -25,7 +25,7 @@ import (
 	"github.com/lin9527ya/Norma/llm"
 	acperm "github.com/lin9527ya/Norma/permission"
 	"github.com/lin9527ya/Norma/transcript"
-	"github.com/lin9527ya/blade/llmrec"
+	"github.com/lin9527ya/bladepro/llmrec"
 )
 
 // Config describes the LLM backend resolved from the environment.
@@ -137,13 +137,13 @@ func compactionConfig(windowTokens int) *compaction.Config {
 
 // FromEnv resolves the LLM provider config:
 //
-//	BLADE_LLM_PROVIDER = anthropic|openai (default: inferred from keys)
-//	BLADE_LLM_MODEL    = model id        (default: per provider)
-//	BLADE_LLM_BASE_URL = endpoint        (optional)
-//	BLADE_LLM_PROXY    = proxy URL        (optional; http/https/socks5)
+//	BLADEPRO_LLM_PROVIDER = anthropic|openai (default: inferred from keys)
+//	BLADEPRO_LLM_MODEL    = model id        (default: per provider)
+//	BLADEPRO_LLM_BASE_URL = endpoint        (optional)
+//	BLADEPRO_LLM_PROXY    = proxy URL        (optional; http/https/socks5)
 //	ANTHROPIC_API_KEY / OPENAI_API_KEY         = credentials
 func FromEnv() (Config, bool) {
-	prov := os.Getenv("BLADE_LLM_PROVIDER")
+	prov := os.Getenv("BLADEPRO_LLM_PROVIDER")
 	anthKey := os.Getenv("ANTHROPIC_API_KEY")
 	oaiKey := os.Getenv("OPENAI_API_KEY")
 
@@ -159,11 +159,11 @@ func FromEnv() (Config, bool) {
 	}
 
 	c := Config{
-		BaseURL: os.Getenv("BLADE_LLM_BASE_URL"),
-		Model:   os.Getenv("BLADE_LLM_MODEL"),
-		Proxy:   strings.TrimSpace(os.Getenv("BLADE_LLM_PROXY")),
-		// 默认流式;BLADE_LLM_STREAM=false/0/off 显式关闭走非流式。
-		Stream: !isFalsy(os.Getenv("BLADE_LLM_STREAM")),
+		BaseURL: os.Getenv("BLADEPRO_LLM_BASE_URL"),
+		Model:   os.Getenv("BLADEPRO_LLM_MODEL"),
+		Proxy:   strings.TrimSpace(os.Getenv("BLADEPRO_LLM_PROXY")),
+		// 默认流式;BLADEPRO_LLM_STREAM=false/0/off 显式关闭走非流式。
+		Stream: !isFalsy(os.Getenv("BLADEPRO_LLM_STREAM")),
 	}
 	switch prov {
 	case "openai":

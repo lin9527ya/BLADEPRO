@@ -135,8 +135,8 @@ export function taskControlAction(status: TaskStatus): "pause" | "resume" | null
 export type TaskSortField = "id" | "created" | "duration" | "status";
 
 export const TASK_SORT_FIELDS: readonly TaskSortField[] = ["id", "created", "duration", "status"];
-export const TASK_SORT_PREFERENCE_KEY = "blade_task_list_sort";
-export const TASK_FILTER_PREFERENCE_KEY = "blade_task_list_filters";
+export const TASK_SORT_PREFERENCE_KEY = "bladepro_task_list_sort";
+export const TASK_FILTER_PREFERENCE_KEY = "bladepro_task_list_filters";
 
 export const TASK_STATUS_RANK = new Map(STATUS_OPTIONS.map((option, index) => [option.value, index]));
 

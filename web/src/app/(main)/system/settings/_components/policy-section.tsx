@@ -97,7 +97,7 @@ export function PolicySection({ s }: { s: ReturnType<typeof useSettingsState> })
               </Select>
               {scopeModeEnv && (
                 <p className="text-muted-foreground text-xs">
-                  环境变量 BLADE_SCOPE_ENFORCEMENT 正压着这项设置，页面改不动它。
+                  环境变量 BLADEPRO_SCOPE_ENFORCEMENT 正压着这项设置，页面改不动它。
                 </p>
               )}
             </Field>
@@ -178,7 +178,7 @@ export function PolicySection({ s }: { s: ReturnType<typeof useSettingsState> })
           </p>
           {enforce?.kill_switch_forced_by_env && (
             <p className="text-destructive text-xs leading-relaxed">
-              环境变量 BLADE_KILL_SWITCH 正强制停机，页面解除不了：要恢复请去掉该变量并重启平台。
+              环境变量 BLADEPRO_KILL_SWITCH 正强制停机，页面解除不了：要恢复请去掉该变量并重启平台。
             </p>
           )}
           <div className="flex flex-wrap items-end gap-3">

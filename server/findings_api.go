@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/report"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/report"
 )
 
 func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
@@ -245,7 +245,7 @@ func (s *Server) findingsExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stage, err := os.MkdirTemp("", "blade-finding-export-")
+	stage, err := os.MkdirTemp("", "bladepro-finding-export-")
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return

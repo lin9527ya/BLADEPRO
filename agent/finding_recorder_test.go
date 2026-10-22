@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/evidence"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/evidence"
 )
 
 type failingFindingRecorder struct{}

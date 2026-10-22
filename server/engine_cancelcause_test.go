@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lin9527ya/blade/agent"
+	"github.com/lin9527ya/bladepro/agent"
 )
 
 func TestPauseCancelsWithNamedCause(t *testing.T) {

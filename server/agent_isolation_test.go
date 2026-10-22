@@ -17,7 +17,7 @@ func snapshotIso(t *testing.T) {
 
 func TestScrubAgentEnvDropsCredentialsKeepsToolchain(t *testing.T) {
 	snapshotIso(t)
-	agentIso = agentIsoState{enabled: true, user: "blade-worker", home: "/home/blade-worker"}
+	agentIso = agentIsoState{enabled: true, user: "bladepro-worker", home: "/home/bladepro-worker"}
 
 	in := []string{
 		"PATH=/usr/bin:/bin",
@@ -25,7 +25,7 @@ func TestScrubAgentEnvDropsCredentialsKeepsToolchain(t *testing.T) {
 		"NODE_OPTIONS=--max-old-space-size=2048",
 		"ANTHROPIC_API_KEY=sk-ant-xxx",
 		"OPENAI_API_KEY=sk-xxx",
-		"BLADE_PG_DSN=postgres://blade:secret@127.0.0.1/blade",
+		"BLADEPRO_PG_DSN=postgres://bladepro:secret@127.0.0.1/bladepro",
 		"AWS_SECRET_ACCESS_KEY=xxx",
 		"GITHUB_TOKEN=ghp_xxx",
 		"GPG_AGENT_INFO=/run/user/0/gpg",
@@ -45,19 +45,19 @@ func TestScrubAgentEnvDropsCredentialsKeepsToolchain(t *testing.T) {
 			t.Errorf("工具链变量 %s 被误删：agent 的常规命令会坏", keep)
 		}
 	}
-	for _, drop := range []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "BLADE_PG_DSN",
+	for _, drop := range []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "BLADEPRO_PG_DSN",
 		"AWS_SECRET_ACCESS_KEY", "GITHUB_TOKEN", "GPG_AGENT_INFO", "SSH_AUTH_SOCK",
 		"DB_PASSWORD", "MY_CREDENTIALS"} {
 		if strings.Contains(joined, drop+"=") {
 			t.Errorf("凭据类变量 %s 泄漏给子进程", drop)
 		}
 	}
-	if !strings.Contains(joined, "HOME=/home/blade-worker") || !strings.Contains(joined, "USER=blade-worker") {
+	if !strings.Contains(joined, "HOME=/home/bladepro-worker") || !strings.Contains(joined, "USER=bladepro-worker") {
 		t.Errorf("HOME/USER 没改写成 worker：\n%s", joined)
 	}
 }
 
-// TestScrubAgentEnvLastWins 钉住去重语义：BLADE 在 os.Environ() 之后 append 覆盖项
+// TestScrubAgentEnvLastWins 钉住去重语义：BLADEPRO 在 os.Environ() 之后 append 覆盖项
 // （如代理 env），libc getenv 取第一个，所以必须保留**最后一次**出现的值。
 func TestScrubAgentEnvLastWins(t *testing.T) {
 	snapshotIso(t)
@@ -70,7 +70,7 @@ func TestScrubAgentEnvLastWins(t *testing.T) {
 }
 
 func TestAgentEnvDenied(t *testing.T) {
-	for _, k := range []string{"ANTHROPIC_API_KEY", "blade_agent_user", "GH_TOKEN", "SSH_AUTH_SOCK", "HOME", "some_secret"} {
+	for _, k := range []string{"ANTHROPIC_API_KEY", "bladepro_agent_user", "GH_TOKEN", "SSH_AUTH_SOCK", "HOME", "some_secret"} {
 		if !agentEnvDenied(k) {
 			t.Errorf("%s 应当被清洗", k)
 		}
@@ -154,13 +154,13 @@ func TestAgentAllowedRootsResolvesSymlinksAndRejectsMissing(t *testing.T) {
 
 func TestInstallAgentIsolationDisabledByDefault(t *testing.T) {
 	snapshotIso(t)
-	t.Setenv("BLADE_AGENT_USER", "")
+	t.Setenv("BLADEPRO_AGENT_USER", "")
 	agentIso = agentIsoState{}
 	if err := InstallAgentIsolation(t.TempDir(), t.TempDir(), t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	if agentIso.enabled {
-		t.Fatal("未设置 BLADE_AGENT_USER 时不该启用隔离")
+		t.Fatal("未设置 BLADEPRO_AGENT_USER 时不该启用隔离")
 	}
 }
 
@@ -169,7 +169,7 @@ func TestInstallAgentIsolationDisabledByDefault(t *testing.T) {
 func TestInstallAgentIsolationRejectsDataDirContainingKeyDir(t *testing.T) {
 	snapshotIso(t)
 	dir := t.TempDir()
-	t.Setenv("BLADE_AGENT_USER", "root") // 用 root 绕开"找不到用户"，让检查先命中
+	t.Setenv("BLADEPRO_AGENT_USER", "root") // 用 root 绕开"找不到用户"，让检查先命中
 	err := InstallAgentIsolation(filepath.Join(dir, "data"), dir, filepath.Join(dir, "skills"))
 	if err == nil {
 		t.Fatal("key 目录在 data 目录里应当拒绝启动")

@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/report"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/report"
 )
 
 func (s *Server) getReport(w http.ResponseWriter, r *http.Request) {

@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/lin9527ya/blade/db"
+	"github.com/lin9527ya/bladepro/db"
 )
 
 // P24 资源限额：长任务执行（run_execution）此前只有硬超时，没有 CPU/内存/进程数上限——

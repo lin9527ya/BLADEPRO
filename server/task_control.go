@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/lin9527ya/blade/agent"
-	"github.com/lin9527ya/blade/db"
+	"github.com/lin9527ya/bladepro/agent"
+	"github.com/lin9527ya/bladepro/db"
 )
 
 const maxBatchControlIDs = 100

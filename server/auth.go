@@ -17,7 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/lin9527ya/blade/db"
+	"github.com/lin9527ya/bladepro/db"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -405,10 +405,10 @@ func loginClientIP(r *http.Request) string {
 	return host
 }
 
-// signJWT issues a 7-day HS256 token for user BLADE.
+// signJWT issues a 7-day HS256 token for user BLADEPRO.
 func signJWT(key []byte) (string, error) {
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
-		Subject:   "BLADE",
+		Subject:   "BLADEPRO",
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(jwtTTL)),
 		IssuedAt:  jwt.NewNumericDate(time.Now()),
 	}).SignedString(key)
@@ -426,12 +426,12 @@ func verifyJWT(tokenStr string, key []byte) bool {
 }
 
 // extractToken reads the JWT from Authorization: Bearer header,
-// blade_token cookie, or ?token= query param (for SSE connections).
+// bladepro_token cookie, or ?token= query param (for SSE connections).
 func extractToken(r *http.Request) string {
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		return strings.TrimPrefix(h, "Bearer ")
 	}
-	if c, err := r.Cookie("blade_token"); err == nil && c.Value != "" {
+	if c, err := r.Cookie("bladepro_token"); err == nil && c.Value != "" {
 		return c.Value
 	}
 	return r.URL.Query().Get("token")
@@ -625,7 +625,7 @@ func (s *Server) authLogin(w http.ResponseWriter, r *http.Request) {
 	if !decodeAuthBody(w, r, &req) {
 		return
 	}
-	if req.Username != "BLADE" {
+	if req.Username != "BLADEPRO" {
 		if lockFor := s.auth.login.fail(ip); lockFor > 0 {
 			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(lockFor.Seconds())+1))
 			writeErr(w, 429, fmt.Sprintf("登录失败次数过多，已锁定 %s", lockFor.Round(time.Second)))

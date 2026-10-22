@@ -10,7 +10,7 @@ import (
 	"syscall"
 )
 
-// resolveAgentAccount 解析 BLADE_AGENT_USER：用户名，或 "uid:gid"（数字，容器里常用）。
+// resolveAgentAccount 解析 BLADEPRO_AGENT_USER：用户名，或 "uid:gid"（数字，容器里常用）。
 func resolveAgentAccount(spec string) (uid, gid uint32, home string, err error) {
 	if u, g, ok, perr := parseUIDGID(spec); ok {
 		if perr != nil {

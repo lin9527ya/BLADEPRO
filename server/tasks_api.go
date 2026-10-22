@@ -15,7 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lin9527ya/blade/db"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/srcmode"
 )
 
 func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
@@ -428,6 +429,12 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
+	// SRC 模式：创建时把「模式 + 覆盖配置」解析成快照落库，运行中只读。
+	modeDoc, srcDoc, err := srcmode.Resolve(req.Mode, req.ModeDoc)
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
 	t, err := s.m.CreateTaskWithOptions(req.Description, req.Goal, db.TaskCreateOptions{
 		Name: strings.TrimSpace(req.Name), CategoryID: req.CategoryID,
 		SourceTaskIDs: sourceIDs, CompanyIDs: req.CompanyIDs, LLMProfileIDs: req.LLMProfileIDs,
@@ -435,6 +442,8 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		CoverageEnabled:   req.CoverageEnabled,
 		InterceptRules:    interceptRules,
 		ExplorationPolicy: policyDoc,
+		Mode:              srcDoc.Mode,
+		ModeDoc:           modeDoc,
 	})
 	if err != nil {
 		if errors.Is(err, db.ErrTaskCategoryInvalid) || errors.Is(err, db.ErrTaskCategoryNotFound) {

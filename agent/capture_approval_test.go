@@ -9,9 +9,9 @@ import (
 	"github.com/lin9527ya/Norma/llm"
 	"github.com/lin9527ya/Norma/permission"
 	"github.com/lin9527ya/Norma/tool"
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/guard"
-	"github.com/lin9527ya/blade/intercept"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/guard"
+	"github.com/lin9527ya/bladepro/intercept"
 )
 
 // Exercise the actual SDK event -> hook -> execution -> result path. No real

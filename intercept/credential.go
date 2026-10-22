@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lin9527ya/blade/opsec"
+	"github.com/lin9527ya/bladepro/opsec"
 )
 
 // 凭据尝试预算：对同一个目标的同一个账号，别试太多次。

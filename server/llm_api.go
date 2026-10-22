@@ -10,10 +10,10 @@ import (
 
 	"github.com/lin9527ya/Norma/llm"
 	"github.com/lin9527ya/Norma/transcript"
-	"github.com/lin9527ya/blade/agent"
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/llmrec"
-	"github.com/lin9527ya/blade/policy"
+	"github.com/lin9527ya/bladepro/agent"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/llmrec"
+	"github.com/lin9527ya/bladepro/policy"
 )
 
 // agentMaxTurns returns the configured max_turns for an agent key (0 = unlimited,
@@ -546,4 +546,8 @@ type createTaskReq struct {
 	InterceptRules []taskInterceptRuleReq `json:"intercept_rules,omitempty"`
 	// ExplorationPolicy(P20) 任务级探索策略覆盖层;省略/null=完全继承当时的全局默认。
 	ExplorationPolicy *policy.Override `json:"exploration_policy,omitempty"`
+	// Mode / ModeDoc 是任务模式：省略/""=普通渗透（行为不变），"src"=SRC 挖掘。
+	// ModeDoc 不给时按模式默认值解析并快照；运行中不再变更。
+	Mode    string          `json:"mode,omitempty"`
+	ModeDoc json.RawMessage `json:"mode_doc,omitempty"`
 }

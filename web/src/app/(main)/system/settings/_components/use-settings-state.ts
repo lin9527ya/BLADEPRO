@@ -117,7 +117,7 @@ export function useSettingsState() {
   const [credBudget, setCredBudget] = React.useState("3");
   const [credBudgetAction, setCredBudgetAction] = React.useState<"allow" | "ask" | "deny">("ask");
   const [savingCredBudget, setSavingCredBudget] = React.useState(false);
-  // P42 显示名（空 = 内置 BLADE）。
+  // P42 显示名（空 = 内置 BLADEPRO）。
   const [siteName, setSiteName] = React.useState("");
   const [savingSiteName, setSavingSiteName] = React.useState(false);
   // P35 停机开关与作业时间窗的**执行状态**（不是设置）：到点/停机时平台停到哪一步了。

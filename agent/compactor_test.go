@@ -17,7 +17,7 @@ import (
 	"github.com/lin9527ya/Norma/compaction"
 	"github.com/lin9527ya/Norma/harness"
 	"github.com/lin9527ya/Norma/llm"
-	"github.com/lin9527ya/blade/db"
+	"github.com/lin9527ya/bladepro/db"
 )
 
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
@@ -142,13 +142,13 @@ func TestDomainCompactorViewAppendsIndexAndIsPure(t *testing.T) {
 	}
 }
 
-// TestBladeSummarizerDumpsOriginalAndHintsPath pins the "原文可回读" half: the
+// TestBladeproSummarizerDumpsOriginalAndHintsPath pins the "原文可回读" half: the
 // summary request carries the 7 domain sections AND the ABSOLUTE path of a file
 // holding the very messages being summarized (tool output included verbatim).
-func TestBladeSummarizerDumpsOriginalAndHintsPath(t *testing.T) {
+func TestBladeproSummarizerDumpsOriginalAndHintsPath(t *testing.T) {
 	prov := &recordingProvider{text: "ok"}
 	dumpDir := t.TempDir()
-	sum := bladeSummarizer(prov, 0, true, dumpDir)
+	sum := bladeproSummarizer(prov, 0, true, dumpDir)
 
 	msgs := []llm.Message{
 		llm.UserText("扫一下 example.com"),
@@ -193,11 +193,11 @@ func TestBladeSummarizerDumpsOriginalAndHintsPath(t *testing.T) {
 	}
 }
 
-// TestBladeSummarizerStripsAnalysis pins output hygiene: a model that still emits an
+// TestBladeproSummarizerStripsAnalysis pins output hygiene: a model that still emits an
 // <analysis> block (or wraps the digest in <summary>) yields clean section text.
-func TestBladeSummarizerStripsAnalysis(t *testing.T) {
+func TestBladeproSummarizerStripsAnalysis(t *testing.T) {
 	prov := &recordingProvider{text: "<analysis>let me think</analysis>\n<summary>## 1. 授权范围与约束\n仅 example.com</summary>"}
-	sum := bladeSummarizer(prov, 0, true, t.TempDir())
+	sum := bladeproSummarizer(prov, 0, true, t.TempDir())
 	got, err := sum(context.Background(), []llm.Message{llm.UserText("x")})
 	if err != nil {
 		t.Fatal(err)
@@ -209,7 +209,7 @@ func TestBladeSummarizerStripsAnalysis(t *testing.T) {
 		t.Fatalf("正文必须保留: %q", got)
 	}
 	// 落盘失败也不阻断压缩：dumpDir 为空 → 提示词里是"(未落盘)"。
-	sum2 := bladeSummarizer(prov, 0, true, "")
+	sum2 := bladeproSummarizer(prov, 0, true, "")
 	if _, err := sum2(context.Background(), []llm.Message{llm.UserText("x")}); err != nil {
 		t.Fatalf("落盘不可用时压缩仍须继续: %v", err)
 	}

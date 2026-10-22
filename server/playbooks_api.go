@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/lin9527ya/blade/db"
+	"github.com/lin9527ya/bladepro/db"
 )
 
 // 指纹打法库（全局）：列表 / 详情 / 启用-废弃。所有路由都在 registerRoutes 里挂载，

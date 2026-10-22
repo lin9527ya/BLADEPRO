@@ -13,7 +13,7 @@ import (
 
 	"github.com/lin9527ya/Norma/harness"
 	"github.com/lin9527ya/Norma/llm"
-	"github.com/lin9527ya/blade/llmpool"
+	"github.com/lin9527ya/bladepro/llmpool"
 )
 
 type fakeProvider struct {

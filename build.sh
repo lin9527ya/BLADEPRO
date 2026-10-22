@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
-# BLADE cross-platform release builder.
+# BLADEPRO cross-platform release builder.
 #
 # The default mode builds one target and embeds the already-exported frontend.
 # `./build.sh --release` builds and packages all supported desktop/server targets.
 #
 # Environment variables:
-#   BLADE_TARGET_OS=linux             One target OS in single-target mode.
-#   BLADE_TARGET_ARCH=amd64           One target arch in single-target mode.
-#   BLADE_TARGETS=linux/amd64,...     Comma-separated targets for multi-target mode.
-#   BLADE_BUILD_VERSION=v0.3.3        Version embedded in the binary and archive name.
-#   BLADE_OUTPUT=/path/to/blade       Explicit binary path in single-target mode.
-#   BLADE_OUTPUT_DIR=dist             Directory for default binary paths.
-#   BLADE_PACKAGE=1                   Create a zip archive for each target.
-#   BLADE_PACKAGE_DIR=dist            Directory for release archives.
-#   BLADE_COMPRESS=off                UPX mode: off, auto, or required.
-#   BLADE_UPX_ARGS="--best --lzma"    Arguments passed to UPX.
-#   BLADE_SKIP_FRONTEND=1             Reuse server/webui/dist (for CI artifact builds).
-#   BLADE_SKIP_NPM_CI=1               Skip npm ci while rebuilding the frontend.
-#   BLADE_GOSUMDB=sum.golang.org      Go checksum database.
+#   BLADEPRO_TARGET_OS=linux             One target OS in single-target mode.
+#   BLADEPRO_TARGET_ARCH=amd64           One target arch in single-target mode.
+#   BLADEPRO_TARGETS=linux/amd64,...     Comma-separated targets for multi-target mode.
+#   BLADEPRO_BUILD_VERSION=v0.3.3        Version embedded in the binary and archive name.
+#   BLADEPRO_OUTPUT=/path/to/bladepro       Explicit binary path in single-target mode.
+#   BLADEPRO_OUTPUT_DIR=dist             Directory for default binary paths.
+#   BLADEPRO_PACKAGE=1                   Create a zip archive for each target.
+#   BLADEPRO_PACKAGE_DIR=dist            Directory for release archives.
+#   BLADEPRO_COMPRESS=off                UPX mode: off, auto, or required.
+#   BLADEPRO_UPX_ARGS="--best --lzma"    Arguments passed to UPX.
+#   BLADEPRO_SKIP_FRONTEND=1             Reuse server/webui/dist (for CI artifact builds).
+#   BLADEPRO_SKIP_NPM_CI=1               Skip npm ci while rebuilding the frontend.
+#   BLADEPRO_GOSUMDB=sum.golang.org      Go checksum database.
 set -euo pipefail
 
 cd "$(cd "$(dirname "$0")" && pwd)"
@@ -41,21 +41,21 @@ usage() {
   --no-compress          不使用 UPX，仅使用 Go linker 裁剪并压缩 zip
   --help                 显示帮助
 
-多目标列表可通过 BLADE_TARGETS 覆盖，例如：
-  BLADE_TARGETS=linux/amd64,windows/amd64 ./build.sh --release
+多目标列表可通过 BLADEPRO_TARGETS 覆盖，例如：
+  BLADEPRO_TARGETS=linux/amd64,windows/amd64 ./build.sh --release
 EOF
 }
 
 RELEASE_TARGETS_DEFAULT="linux/amd64,linux/arm64,darwin/amd64,darwin/arm64,windows/amd64"
-BLADE_RELEASE="${BLADE_RELEASE:-0}"
-BLADE_COMPRESS="${BLADE_COMPRESS:-off}"
-BLADE_PACKAGE="${BLADE_PACKAGE:-0}"
+BLADEPRO_RELEASE="${BLADEPRO_RELEASE:-0}"
+BLADEPRO_COMPRESS="${BLADEPRO_COMPRESS:-off}"
+BLADEPRO_PACKAGE="${BLADEPRO_PACKAGE:-0}"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --release)
-      BLADE_RELEASE=1
-      BLADE_PACKAGE=1
+      BLADEPRO_RELEASE=1
+      BLADEPRO_PACKAGE=1
       shift
       ;;
     --target)
@@ -63,20 +63,20 @@ while [ "$#" -gt 0 ]; do
       target_arg="$2"
       case "$target_arg" in
         */*)
-          BLADE_TARGET_OS="${target_arg%%/*}"
-          BLADE_TARGET_ARCH="${target_arg##*/}"
-          BLADE_TARGETS="$target_arg"
+          BLADEPRO_TARGET_OS="${target_arg%%/*}"
+          BLADEPRO_TARGET_ARCH="${target_arg##*/}"
+          BLADEPRO_TARGETS="$target_arg"
           ;;
         *) die "目标必须是 OS/ARCH，例如 linux/amd64" ;;
       esac
       shift 2
       ;;
     --no-compress)
-      BLADE_COMPRESS=0
+      BLADEPRO_COMPRESS=0
       shift
       ;;
     --upx)
-      BLADE_COMPRESS=required
+      BLADEPRO_COMPRESS=required
       shift
       ;;
     --help|-h)
@@ -89,35 +89,35 @@ done
 
 command -v go >/dev/null 2>&1 || die "未检测到 Go（项目需要 Go 1.26 或更高版本）"
 
-BLADE_GOSUMDB="${BLADE_GOSUMDB:-sum.golang.org}"
-if [ -z "${BLADE_BUILD_VERSION:-}" ]; then
+BLADEPRO_GOSUMDB="${BLADEPRO_GOSUMDB:-sum.golang.org}"
+if [ -z "${BLADEPRO_BUILD_VERSION:-}" ]; then
   if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    BLADE_BUILD_VERSION="$(git describe --tags --always --dirty)"
+    BLADEPRO_BUILD_VERSION="$(git describe --tags --always --dirty)"
   else
-    BLADE_BUILD_VERSION="dev"
+    BLADEPRO_BUILD_VERSION="dev"
   fi
 fi
 # Release tags are commonly passed as v0.3.3; keep the binary version consistent.
-BLADE_BUILD_VERSION="${BLADE_BUILD_VERSION#v}"
-BLADE_OUTPUT_DIR="${BLADE_OUTPUT_DIR:-dist}"
-BLADE_PACKAGE_DIR="${BLADE_PACKAGE_DIR:-$BLADE_OUTPUT_DIR}"
-BLADE_UPX_ARGS="${BLADE_UPX_ARGS:---best --lzma}"
+BLADEPRO_BUILD_VERSION="${BLADEPRO_BUILD_VERSION#v}"
+BLADEPRO_OUTPUT_DIR="${BLADEPRO_OUTPUT_DIR:-dist}"
+BLADEPRO_PACKAGE_DIR="${BLADEPRO_PACKAGE_DIR:-$BLADEPRO_OUTPUT_DIR}"
+BLADEPRO_UPX_ARGS="${BLADEPRO_UPX_ARGS:---best --lzma}"
 
-if [ "${BLADE_RELEASE}" = "1" ]; then
-  BLADE_TARGETS="${BLADE_TARGETS:-$RELEASE_TARGETS_DEFAULT}"
+if [ "${BLADEPRO_RELEASE}" = "1" ]; then
+  BLADEPRO_TARGETS="${BLADEPRO_TARGETS:-$RELEASE_TARGETS_DEFAULT}"
 else
-  BLADE_TARGET_OS="${BLADE_TARGET_OS:-$(GOSUMDB="$BLADE_GOSUMDB" go env GOOS)}"
-  BLADE_TARGET_ARCH="${BLADE_TARGET_ARCH:-$(GOSUMDB="$BLADE_GOSUMDB" go env GOARCH)}"
-  BLADE_TARGETS="${BLADE_TARGETS:-${BLADE_TARGET_OS}/${BLADE_TARGET_ARCH}}"
+  BLADEPRO_TARGET_OS="${BLADEPRO_TARGET_OS:-$(GOSUMDB="$BLADEPRO_GOSUMDB" go env GOOS)}"
+  BLADEPRO_TARGET_ARCH="${BLADEPRO_TARGET_ARCH:-$(GOSUMDB="$BLADEPRO_GOSUMDB" go env GOARCH)}"
+  BLADEPRO_TARGETS="${BLADEPRO_TARGETS:-${BLADEPRO_TARGET_OS}/${BLADEPRO_TARGET_ARCH}}"
 fi
 
-if [ "${BLADE_SKIP_FRONTEND:-0}" = "1" ]; then
-  [ -d server/webui/dist ] || die "BLADE_SKIP_FRONTEND=1 但 server/webui/dist 不存在"
+if [ "${BLADEPRO_SKIP_FRONTEND:-0}" = "1" ]; then
+  [ -d server/webui/dist ] || die "BLADEPRO_SKIP_FRONTEND=1 但 server/webui/dist 不存在"
 else
   command -v npm >/dev/null 2>&1 || die "未检测到 npm（前端静态构建需要 Node.js/npm）"
   command -v rsync >/dev/null 2>&1 || die "未检测到 rsync"
   info "构建前端静态资源"
-  if [ "${BLADE_SKIP_NPM_CI:-0}" != "1" ]; then
+  if [ "${BLADEPRO_SKIP_NPM_CI:-0}" != "1" ]; then
     (cd web && npm ci)
   fi
   (cd web && npm run build:static)
@@ -129,29 +129,29 @@ fi
 compress_binary() {
   binary="$1"
   goos="$2"
-  case "$BLADE_COMPRESS" in
+  case "$BLADEPRO_COMPRESS" in
     0|off|false|none)
       info "跳过 UPX：$binary"
       return 0
       ;;
     auto|required|true|1) ;;
-    *) die "BLADE_COMPRESS 必须是 off、auto 或 required" ;;
+    *) die "BLADEPRO_COMPRESS 必须是 off、auto 或 required" ;;
   esac
 
   if ! command -v upx >/dev/null 2>&1; then
-    if [ "$BLADE_COMPRESS" = "required" ]; then
-      die "BLADE_COMPRESS=required 但未检测到 upx"
+    if [ "$BLADEPRO_COMPRESS" = "required" ]; then
+      die "BLADEPRO_COMPRESS=required 但未检测到 upx"
     fi
     warn "未检测到 upx，保留 linker 压缩结果：$binary"
     return 0
   fi
 
   before=$(wc -c < "$binary" | tr -d ' ')
-  upx_args="$BLADE_UPX_ARGS"
+  upx_args="$BLADEPRO_UPX_ARGS"
   [ "$goos" = "darwin" ] && upx_args="$upx_args --force-macos"
   # shellcheck disable=SC2086
   if ! upx $upx_args -- "$binary"; then
-    if [ "$BLADE_COMPRESS" = "required" ]; then
+    if [ "$BLADEPRO_COMPRESS" = "required" ]; then
       die "UPX 压缩失败：$binary"
     fi
     warn "UPX 不支持该目标格式，保留未压缩二进制：$binary"
@@ -165,16 +165,16 @@ package_binary() {
   binary="$1"
   goos="$2"
   goarch="$3"
-  package_name="blade-${BLADE_BUILD_VERSION}-${goos}-${goarch}"
-  package_root="${BLADE_PACKAGE_DIR}/${package_name}"
-  archive="${BLADE_PACKAGE_DIR}/${package_name}.zip"
+  package_name="bladepro-${BLADEPRO_BUILD_VERSION}-${goos}-${goarch}"
+  package_root="${BLADEPRO_PACKAGE_DIR}/${package_name}"
+  archive="${BLADEPRO_PACKAGE_DIR}/${package_name}.zip"
 
   command -v zip >/dev/null 2>&1 || die "打包需要 zip"
   rm -rf "$package_root" "$archive"
   mkdir -p "$package_root"
   cp "$binary" "$package_root/"
   # 守护启动脚本是正式入口：页面上的一键更新要靠它在进程退出后重新拉起，
-  # 直接跑 blade 本体的话更新完就再也起不来了。按目标系统只带对应的那一份。
+  # 直接跑 bladepro 本体的话更新完就再也起不来了。按目标系统只带对应的那一份。
   if [ "$goos" = "windows" ]; then
     cp start.bat "$package_root/"
   else
@@ -184,7 +184,7 @@ package_binary() {
   cp -R skills "$package_root/"
   cp config.example.json "$package_root/"
   if [ -f README.md ]; then cp README.md "$package_root/"; fi
-  (cd "$BLADE_PACKAGE_DIR" && zip -q -r -9 "$(basename "$archive")" "$(basename "$package_root")")
+  (cd "$BLADEPRO_PACKAGE_DIR" && zip -q -r -9 "$(basename "$archive")" "$(basename "$package_root")")
   rm -rf "$package_root"
   ok "Release 压缩包：$archive"
 }
@@ -202,40 +202,40 @@ build_target() {
     *) die "不支持的系统：$goos（支持 linux、darwin、windows）" ;;
   esac
 
-  binary_name="blade"
-  [ "$goos" = "windows" ] && binary_name="blade.exe"
-  if [ -n "${BLADE_OUTPUT:-}" ] && [ "$BLADE_RELEASE" != "1" ]; then
-    output="$BLADE_OUTPUT"
+  binary_name="bladepro"
+  [ "$goos" = "windows" ] && binary_name="bladepro.exe"
+  if [ -n "${BLADEPRO_OUTPUT:-}" ] && [ "$BLADEPRO_RELEASE" != "1" ]; then
+    output="$BLADEPRO_OUTPUT"
   else
-    output="${BLADE_OUTPUT_DIR}/blade-${goos}-${goarch}/${binary_name}"
+    output="${BLADEPRO_OUTPUT_DIR}/bladepro-${goos}-${goarch}/${binary_name}"
   fi
   mkdir -p "$(dirname "$output")"
 
-  info "编译 ${goos}/${goarch}，版本 ${BLADE_BUILD_VERSION}"
-  GOSUMDB="$BLADE_GOSUMDB" \
+  info "编译 ${goos}/${goarch}，版本 ${BLADEPRO_BUILD_VERSION}"
+  GOSUMDB="$BLADEPRO_GOSUMDB" \
   CGO_ENABLED=0 \
   GOOS="$goos" \
   GOARCH="$goarch" \
   go build \
     -tags embedui \
     -trimpath \
-    -ldflags "-s -w -buildid= -X main.version=${BLADE_BUILD_VERSION}" \
+    -ldflags "-s -w -buildid= -X main.version=${BLADEPRO_BUILD_VERSION}" \
     -o "$output" \
-    ./cmd/blade
+    ./cmd/bladepro
 
   compress_binary "$output" "$goos"
   if command -v file >/dev/null 2>&1; then file "$output"; fi
-  if [ "$BLADE_PACKAGE" = "1" ]; then package_binary "$output" "$goos" "$goarch"; fi
+  if [ "$BLADEPRO_PACKAGE" = "1" ]; then package_binary "$output" "$goos" "$goarch"; fi
   ok "编译完成：$output"
 }
 
 write_checksums() {
-  [ "$BLADE_PACKAGE" = "1" ] || return 0
-  checksum_file="$BLADE_PACKAGE_DIR/SHA256SUMS"
+  [ "$BLADEPRO_PACKAGE" = "1" ] || return 0
+  checksum_file="$BLADEPRO_PACKAGE_DIR/SHA256SUMS"
   if command -v sha256sum >/dev/null 2>&1; then
-    (cd "$BLADE_PACKAGE_DIR" && for archive in *.zip; do sha256sum "$archive"; done > "$(basename "$checksum_file")")
+    (cd "$BLADEPRO_PACKAGE_DIR" && for archive in *.zip; do sha256sum "$archive"; done > "$(basename "$checksum_file")")
   elif command -v shasum >/dev/null 2>&1; then
-    (cd "$BLADE_PACKAGE_DIR" && for archive in *.zip; do shasum -a 256 "$archive"; done > "$(basename "$checksum_file")")
+    (cd "$BLADEPRO_PACKAGE_DIR" && for archive in *.zip; do shasum -a 256 "$archive"; done > "$(basename "$checksum_file")")
   else
     warn "未检测到 sha256sum 或 shasum，跳过 SHA256SUMS"
     return 0
@@ -243,21 +243,21 @@ write_checksums() {
   ok "校验文件：$checksum_file"
 }
 
-mkdir -p "$BLADE_OUTPUT_DIR"
-if [ "$BLADE_PACKAGE" = "1" ]; then mkdir -p "$BLADE_PACKAGE_DIR"; fi
+mkdir -p "$BLADEPRO_OUTPUT_DIR"
+if [ "$BLADEPRO_PACKAGE" = "1" ]; then mkdir -p "$BLADEPRO_PACKAGE_DIR"; fi
 
 old_ifs="$IFS"
 IFS=','
-read -r -a targets <<< "$BLADE_TARGETS"
+read -r -a targets <<< "$BLADEPRO_TARGETS"
 IFS="$old_ifs"
-[ "${#targets[@]}" -gt 0 ] || die "BLADE_TARGETS 不能为空"
+[ "${#targets[@]}" -gt 0 ] || die "BLADEPRO_TARGETS 不能为空"
 for target in "${targets[@]}"; do
   target="${target//[[:space:]]/}"
   [ -n "$target" ] || continue
   build_target "$target"
 done
 
-if [ "$BLADE_PACKAGE" = "1" ]; then
+if [ "$BLADEPRO_PACKAGE" = "1" ]; then
   write_checksums
-  info "Release 包已生成于：$BLADE_PACKAGE_DIR"
+  info "Release 包已生成于：$BLADEPRO_PACKAGE_DIR"
 fi

@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/lin9527ya/Norma/llm"
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/intercept"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/intercept"
 )
 
 type reviewCaptureProvider struct{ request llm.CompletionRequest }

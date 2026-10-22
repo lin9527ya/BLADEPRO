@@ -49,6 +49,7 @@ import type {
   LLMProfile,
   Task,
   TaskCategory,
+  TaskMode,
 } from "@/lib/types";
 
 import { CategoryPicker, CompanyPicker } from "./task-categories";
@@ -143,6 +144,8 @@ export function CreateTaskSheet({
   const [open, setOpen] = React.useState(false);
   const [name, setName] = React.useState("");
   const [categoryID, setCategoryID] = React.useState<number | undefined>(undefined);
+  // 任务模式:''=普通渗透(默认,老行为不变),'src'=按「站点 × 风险面」补格收尾。
+  const [mode, setMode] = React.useState<TaskMode>("");
   const [description, setDescription] = React.useState("");
   const [goal, setGoal] = React.useState("");
   const [selectedTemplateID, setSelectedTemplateID] = React.useState<number | null>(null);
@@ -248,6 +251,7 @@ export function CreateTaskSheet({
         seedFirstIntent,
         planHeartbeatSeconds: heartbeatSec,
         coverageEnabled,
+        mode,
         interceptRules: interceptRules
           .map((r) => ({ ...r, pattern: r.pattern.trim() }))
           .filter((r) => r.pattern !== ""),
@@ -266,6 +270,7 @@ export function CreateTaskSheet({
       setCategoryID(undefined);
       setDescription("");
       setGoal("");
+      setMode("");
       setSelectedTemplateID(null);
       setSourceTaskIDs([]);
       setCompanyIDs([]);
@@ -341,6 +346,36 @@ export function CreateTaskSheet({
                 portalContainer={sheetContentRef}
               />
               <FieldDescription>可选，单个分类；用于任务列表筛选和归档，不影响 Agent 执行。</FieldDescription>
+            </Field>
+            <Field>
+              <FieldLabel>任务模式</FieldLabel>
+              {/* 模式创建时定死(与后端的快照语义一致):运行中不可切换,所以只在这里选。 */}
+              <div className="inline-flex w-fit rounded-md border p-0.5">
+                {[
+                  { value: "" as TaskMode, label: "普通渗透（默认）" },
+                  { value: "src" as TaskMode, label: "SRC 挖掘" },
+                ].map((opt) => (
+                  <button
+                    key={opt.value || "normal"}
+                    type="button"
+                    aria-label={`任务模式：${opt.label}`}
+                    aria-pressed={mode === opt.value}
+                    onClick={() => setMode(opt.value)}
+                    className={`rounded px-2.5 py-1 text-xs transition-colors ${
+                      mode === opt.value
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              {mode === "src" && (
+                <p className="text-muted-foreground text-xs">
+                  按「站点 × 风险面」补格：覆盖格没清零前任务不会结束；不追据点/持久化，只做只读证明。
+                </p>
+              )}
             </Field>
             <div className="grid gap-2">
               <Label htmlFor="description">描述</Label>

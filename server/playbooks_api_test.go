@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lin9527ya/blade/db"
+	"github.com/lin9527ya/bladepro/db"
 )
 
 // TestPlaybooksAPI：列表/详情/废弃的鉴权与纪律——废弃必须给理由；未认证不可达。

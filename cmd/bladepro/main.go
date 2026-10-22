@@ -1,4 +1,4 @@
-// Command blade runs the BLADE backend: the dual SQLite graph stores,
+// Command bladepro runs the BLADEPRO backend: the dual SQLite graph stores,
 // the event-driven exploration engine, and the JSON HTTP API consumed by the
 // shadcn/ui frontend.
 package main
@@ -18,10 +18,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/lin9527ya/blade/agent"
-	"github.com/lin9527ya/blade/config"
-	"github.com/lin9527ya/blade/selfupdate"
-	"github.com/lin9527ya/blade/server"
+	"github.com/lin9527ya/bladepro/agent"
+	"github.com/lin9527ya/bladepro/config"
+	"github.com/lin9527ya/bladepro/selfupdate"
+	"github.com/lin9527ya/bladepro/server"
 )
 
 // version is the build version, injected at release time via
@@ -144,7 +144,7 @@ func run() int {
 	if _, e := os.Stat(cfgPath); e == nil {
 		log.Printf("[config] 配置文件: %s", cfgPath)
 	} else {
-		log.Printf("[config] 配置文件: %s (不存在 — 将仅尝试环境变量 BLADE_PG_DSN)", cfgPath)
+		log.Printf("[config] 配置文件: %s (不存在 — 将仅尝试环境变量 BLADEPRO_PG_DSN)", cfgPath)
 	}
 
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -169,7 +169,7 @@ func run() int {
 		skillDir = abs
 	}
 	log.Printf("[config] skill 目录: %s", skillDir)
-	// agent 降权（可选）：BLADE_AGENT_USER 设置后，Bash / 长任务 / 自定义工具以该用户
+	// agent 降权（可选）：BLADEPRO_AGENT_USER 设置后，Bash / 长任务 / 自定义工具以该用户
 	// 运行、文件工具被限制在 data+skill 目录内、子进程环境剔除疑似凭据。未设置时是
 	// no-op（保持 agent 与服务端同权的旧行为，见 deploy/README.md「信任模型」）。
 	if err := server.InstallAgentIsolation(*dataDir, config.BaseDir(), skillDir); err != nil {
@@ -197,7 +197,7 @@ func run() int {
 	}
 
 	go func() {
-		log.Printf("BLADE %s backend listening on %s (data=%s, workers=%d)", version, *addr, *dataDir, mgr.Workers())
+		log.Printf("BLADEPRO %s backend listening on %s (data=%s, workers=%d)", version, *addr, *dataDir, mgr.Workers())
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("serve: %v", err)
 		}

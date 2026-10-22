@@ -149,6 +149,7 @@ GET /api/tasks/{id}/intercept-rules	server.(*Server).taskInterceptListRules-fm
 GET /api/tasks/{id}/llm/resolution	server.(*Server).taskLLMResolutionHandler-fm
 GET /api/tasks/{id}/policy	server.(*Server).getTaskPolicy-fm
 GET /api/tasks/{id}/scope	server.(*Server).taskScopeList-fm
+GET /api/tasks/{id}/src	server.(*Server).getTaskSrc-fm
 GET /api/tasks/{id}/src-batch	server.(*Server).getTaskSrcBatch-fm
 GET /api/tasks/{id}/src-report.zip	server.(*Server).getTaskSrcReportZip-fm
 GET /api/tasks/{id}/timeline	server.(*Server).taskTimeline-fm
@@ -284,6 +285,8 @@ POST /api/tasks/{id}/intercept-rules/{rid}/toggle	server.(*Server).taskIntercept
 POST /api/tasks/{id}/policy/preview	server.(*Server).previewTaskPolicy-fm
 POST /api/tasks/{id}/policy/prune	server.(*Server).pruneTaskPolicy-fm
 POST /api/tasks/{id}/scope	server.(*Server).taskScopeAdd-fm
+POST /api/tasks/{id}/src/cells	server.(*Server).postTaskSrcCell-fm
+POST /api/tasks/{id}/src/force-finish	server.(*Server).postTaskSrcForceFinish-fm
 POST /api/tools/custom	server.(*Server).pgCreateCustomTool-fm
 POST /api/tools/custom/test	server.(*Server).pgTestCustomTool-fm
 POST /api/tools/{key}/reset	server.(*Server).pgResetTool-fm

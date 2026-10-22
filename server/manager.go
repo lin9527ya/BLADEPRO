@@ -15,12 +15,12 @@ import (
 	"time"
 
 	actool "github.com/lin9527ya/Norma/tool"
-	"github.com/lin9527ya/blade/agent"
-	pgdb "github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/enrich"
-	"github.com/lin9527ya/blade/guard"
-	"github.com/lin9527ya/blade/intercept"
-	"github.com/lin9527ya/blade/traffic"
+	"github.com/lin9527ya/bladepro/agent"
+	pgdb "github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/enrich"
+	"github.com/lin9527ya/bladepro/guard"
+	"github.com/lin9527ya/bladepro/intercept"
+	"github.com/lin9527ya/bladepro/traffic"
 )
 
 // Task is one engagement: a description + goal + its own exploration store,
@@ -61,6 +61,9 @@ type Task struct {
 	// ExplorationPolicy 是任务级探索策略文档（P20，JSONB 快照）。nil/空 = 无策略。
 	// 由 /policy 接口写入并同步到这里，供 DTO 与 UI 展示；执行点走 DB 现读（policyResolver）。
 	ExplorationPolicy json.RawMessage        `json:"exploration_policy,omitempty"`
+	// Mode 是任务模式（""=普通渗透，"src"=SRC 挖掘），创建时定死；ModeDoc 是其快照。
+	Mode              string                 `json:"mode,omitempty"`
+	ModeDoc           json.RawMessage        `json:"mode_doc,omitempty"`
 	FirstRunAt        int64                  `json:"first_run_at,omitempty"`
 	DeadlineAt        int64                  `json:"deadline_at,omitempty"`
 	Store             *pgdb.ExplorationStore `json:"-"`
@@ -279,7 +282,7 @@ const (
 	// settingCORSAllowedOrigins（P42）是允许跨源访问 API 的来源白名单（逗号分隔）。
 	// 空 = 不发 CORS 头（同源前端不需要它）；填 "*" 才是真的全开放——得自己写出来。
 	settingCORSAllowedOrigins = "cors_allowed_origins"
-	// settingSiteName（P42）是界面显示名（空 = 内置 "BLADE"）。给在意隐身的人一个改名的口子：
+	// settingSiteName（P42）是界面显示名（空 = 内置 "BLADEPRO"）。给在意隐身的人一个改名的口子：
 	// 名字本身是低成本指纹。**注意它只改运行时显示的标题**——静态 HTML 里的 <title> 是构建期
 	// 常量（web/src/config/app-config.ts），要连爬虫看到的也改掉得改那里重新构建（README 有写）。
 	settingSiteName = "site_name"
@@ -736,7 +739,7 @@ func (m *Manager) namedProfileSearchCreds(name string) (baseURL, apiKey, model s
 	// 要求每个请求带路由头，缺了直接 400。值用**稳定**串（按配置名派生）：它只影响
 	// 路由/缓存亲和，不需要每次变化；稳定反而对端点的缓存更友好。
 	if k := strings.TrimSpace(p.SessionHeaderKey); k != "" {
-		headers = map[string]string{k: "blade-" + name}
+		headers = map[string]string{k: "bladepro-" + name}
 	}
 	return strings.TrimRight(strings.TrimSpace(p.BaseURL), "/"), p.APIKey, searchBackendModel, headers
 }
@@ -1014,6 +1017,8 @@ func taskFromPG(pt *pgdb.Task, store *pgdb.ExplorationStore, ic *intercept.Inter
 		TimeoutSeconds: pt.TimeoutSeconds, PlanHeartbeatSeconds: pt.PlanHeartbeatSeconds,
 		CoverageEnabled:   pt.CoverageEnabled,
 		ExplorationPolicy: append(json.RawMessage(nil), pt.ExplorationPolicy...),
+		Mode:              pt.Mode,
+		ModeDoc:           append(json.RawMessage(nil), pt.ModeDoc...),
 		FirstRunAt:        unixOrZero(pt.FirstRunAt), DeadlineAt: unixOrZero(pt.DeadlineAt),
 		Store: store, Guard: guard.NewWithInterceptor(ic, pt.ID), notify: make(chan struct{}, 1),
 	}
@@ -1973,6 +1978,21 @@ func (t *Task) NotifyHint(texts []string) {
 	}
 	t.trigMu.Lock()
 	t.pendingTriggers = append(t.pendingTriggers, agent.TriggerEvent{Kind: "hint", Hints: texts})
+	t.trigMu.Unlock()
+	t.Notify()
+}
+
+// NotifySrcGate records that the SRC finish gate rejected "done" and why (detail =
+// 缺口摘要), then wakes the planner — so the next round is told to fill the gaps
+// instead of re-proving an already-met goal. The engine only pushes this when the
+// gap set actually changed (same gaps twice would just burn a round).
+func (t *Task) NotifySrcGate(detail string) {
+	detail = strings.TrimSpace(detail)
+	if t == nil || detail == "" {
+		return
+	}
+	t.trigMu.Lock()
+	t.pendingTriggers = append(t.pendingTriggers, agent.TriggerEvent{Kind: "src_gate", Detail: detail})
 	t.trigMu.Unlock()
 	t.Notify()
 }

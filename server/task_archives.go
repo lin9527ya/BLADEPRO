@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lin9527ya/blade/agent"
-	pgdb "github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/traffic"
+	"github.com/lin9527ya/bladepro/agent"
+	pgdb "github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/traffic"
 )
 
 const taskArchivePollInterval = 2 * time.Second

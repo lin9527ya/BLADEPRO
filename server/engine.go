@@ -14,9 +14,10 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/lin9527ya/Norma/harness"
 	"github.com/lin9527ya/Norma/llm"
-	"github.com/lin9527ya/blade/agent"
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/intercept"
+	"github.com/lin9527ya/bladepro/agent"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/intercept"
+	"github.com/lin9527ya/bladepro/srcmode"
 )
 
 // isFKViolation reports whether err is a Postgres foreign-key violation (SQLSTATE
@@ -107,6 +108,10 @@ type Engine struct {
 	paused   sync.Map // taskID -> bool, user-paused (planner + workers idle but loops alive)
 	deleting sync.Map // taskID -> bool, delete barrier (no new task-owned writes)
 	dropCnt  sync.Map // taskID -> *int64, running count of dropped (unpersistable) activity records
+
+	// SRC 收尾门的防死循环状态：连续拒绝次数 + 上一份缺口的哈希（同一份缺口只提示一次）。
+	srcMu   sync.Mutex
+	srcGate map[string]*srcGateState
 
 	// deleteMu makes installing the delete barrier atomic with registering a new
 	// task operation. Once BeginDelete returns, every admitted writer is reflected
@@ -920,18 +925,22 @@ func (e *Engine) plannerLoop(ctx context.Context, t *Task) {
 		// 还有 open/running 意图 → 保持 running、静默等待；意图已全部跑干 → 落 done。
 		// 整段纯 Go、不触发任何 LLM 调用，也不打规划轮 marker。
 		if open, err := t.Store.HasOpenGoal(); err == nil && !open {
-			t.drainTriggers() // 丢弃累积的 done/finding 触发，避免 goalless 长会话里无界增长
-			if active, err := t.Store.HasActiveIntent(); err == nil && !active {
-				// frontier 抽干且无在跑意图 → 收尾。用 Guarded 版做 CAS，避免踩到并发的
-				// pause/delete/超时收尾的状态转换。
-				if won, err := e.m.SetTaskStatusGuarded(t.ID, "done"); err != nil {
-					log.Printf("[goalless] task %s 收尾落 done 失败: %v", t.ID, err)
-				} else if won {
-					e.emitActivity(t, db.Activity{Worker: "system", Kind: "text",
-						Summary: "目标已全部达成，直投意图已执行完毕，任务结束"})
+			// SRC 模式下"目标全达成"不等于任务完成：覆盖格清零才是成功判据，所以
+			// 不走进 goalless 的早退收尾，继续让 planner 按缺口补格（落 done 仍要过收尾门）。
+			if t.Mode != srcmode.ModeSrc {
+				t.drainTriggers() // 丢弃累积的 done/finding 触发，避免 goalless 长会话里无界增长
+				if active, err := t.Store.HasActiveIntent(); err == nil && !active {
+					// frontier 抽干且无在跑意图 → 收尾。用 Guarded 版做 CAS，避免踩到并发的
+					// pause/delete/超时收尾的状态转换。
+					if won, err := e.m.SetTaskStatusGuarded(t.ID, "done"); err != nil {
+						log.Printf("[goalless] task %s 收尾落 done 失败: %v", t.ID, err)
+					} else if won {
+						e.emitActivity(t, db.Activity{Worker: "system", Kind: "text",
+							Summary: "目标已全部达成，直投意图已执行完毕，任务结束"})
+					}
 				}
+				return // goalless 分支永不进入 planner.Plan
 			}
-			return // goalless 分支永不进入 planner.Plan
 		}
 		if !e.beginTaskOperation(t.ID) {
 			return
@@ -961,6 +970,12 @@ func (e *Engine) plannerLoop(ctx context.Context, t *Task) {
 			log.Printf("[planner] task %s 规划出错: %v", t.ID, err)
 		case met:
 			log.Printf("[planner] task %s 判定目标达成: %s", t.ID, reason)
+			// SRC 模式：目标达成只是"可以试着收尾"，覆盖格清零才是真的完成。
+			// 门没过就本轮不落 done，缺口已经写进时间线并推给下一轮 planner。
+			if !e.srcFinishGate(ectx, t, taskIDInt) {
+				e.touch(t.ID)
+				break
+			}
 			// 所有目标达成 → 持久化任务状态为 done（前端 DTO 会优先展示该终态）。
 			if err := e.m.SetTaskStatus(t.ID, "done"); err != nil {
 				log.Printf("[planner] task %s 标记完成落库失败: %v", t.ID, err)

@@ -4,6 +4,44 @@
 
 ## [Unreleased]
 
+### 项目改名 BLADEPRO：从「全链渗透」到「SRC 挖掘」
+
+本仓是 [BLADE](https://github.com/lin9527ya/BLADE) 的 SRC 分支：引擎同源，任务模式不同。
+BLADE 继续专做渗透（打深、拿据点），BLADEPRO 落 `tasks.mode="src"`——目标函数从「证明目标、
+走完攻击链」换成「把覆盖矩阵的空格清零，并产出可提交件」。
+
+#### 新增的功能
+
+- **任务模式**：`tasks.mode` / `tasks.mode_doc`（创建时快照，运行中只读），创建任务接口与
+  任务 DTO 暴露 `mode`；`mode=""` 的任务行为与改造前**完全一致**（默认值、无副作用）。
+- **显式覆盖格 `src_cells`**：`(task, asset, area, item)` 唯一，只存四个终态
+  `tested_found / tested_clear / na / budget_stop`。空格不预填，靠「范围内资产 × 必做面 −
+  已有终态」现算，避免资产 × 面 × item 的行数在创建时就爆炸。
+- **风险面 taxonomy**（`srcmode` 包）：13 个粗粒度、可判定的面（unauth/authz/injection/
+  ssrf/xss/rce/cred/paths/session/upload/logic/host/takeover），按资产类型给出必做面；
+  `required_areas` 可覆盖、`hard_items` 可要求细分项逐个点终态。
+- **agent 工具**：`src_state`（读矩阵/缺口）、`src_mark_cell`（点格，终态证据当场校验）、
+  `src_finish_check`（收尾门预检）。只在 `mode=src` 时按角色追加，**不进 tools 表**——
+  `wireTools` 会把 DB 绑定的工具重新注入，seed 进去就会泄漏到非 SRC 任务。
+- **规划层改造**：`graph_overview` 新增 `src` 块（`gaps_total` / `gaps_by_area` / `top_gaps`
+  ≤10 / `finishable`）；planner 与 worker 的 system 各追加一段 SRC 目标函数与纪律。
+- **engine 收尾门**：planner 判 `met` 后不直接落 done，先跑 `srcmode.CheckFinish`；有缺口则
+  拒绝 done、写时间线、把缺口摘要推给下一轮（同一份缺口只推一次），连续 3 次同一份缺口未清
+  零转 `policy_blocked` 交人工（新增中断原因 `src_gate_blocked`）。
+- **兼容 goalless 分支**：SRC 任务即使目标全部 met 也不走「无目标即收尾」的早退，继续让
+  planner 补格——否则收尾门会被这条捷径绕过去。
+- **HTTP 面**：`GET /api/tasks/{id}/src`（矩阵+缺口+终态）、`POST .../src/cells`（人工点格，
+  同一套校验）、`POST .../src/force-finish`（人工放行，必填理由，落审计活动）。
+- **归档/恢复**：`task_archives_restore` 的显式列清单带上 `mode` / `mode_doc`，恢复后模式不丢。
+
+#### 说明
+
+- 本仓改名 BLADEPRO：Go module `github.com/lin9527ya/bladepro`、二进制 `bladepro`、
+  环境变量 `BLADEPRO_*`、Docker 镜像/服务名与 UI 文案同步；数据库表结构新增列全部带默认值，
+  旧库启动即迁移。
+- 本版实现方案文档的 **P0（模式骨架）+ P1（覆盖矩阵与收尾门）**；P2（提交台账/证据合规/
+  跨任务去重）与 P3（平台规则/看板）仍是路线图，见 `docs/SRC挖掘agent改造方案.md`。
+
 ### Worker 编号改为任务内序号
 
 - 会话页的 `Worker #N` 不再用全局意图 id（任务 1 到 20，任务 2 会从 #21 继续），改为
@@ -61,24 +99,24 @@
 
 ## [0.5.1] - 2026-10-22
 
-### agent 执行面降权（可选：`BLADE_AGENT_USER`）
+### agent 执行面降权（可选：`BLADEPRO_AGENT_USER`）
 
 #### 新增的功能
 
-- **agent 可以不再与服务端同权**：设置 `BLADE_AGENT_USER=blade-worker` 后，Bash（含后台任务、
+- **agent 可以不再与服务端同权**：设置 `BLADEPRO_AGENT_USER=bladepro-worker` 后，Bash（含后台任务、
   交互式 shell）、长任务 `run_execution`、自定义工具都以该用户执行（`SysProcAttr.Credential`，
   只保留主组）；`jwt.key` / `config.json` / 数据库口令因此不再被一条提示注入就全部拿走。
-- **子进程环境清洗**：`ANTHROPIC_*` / `OPENAI_*` / `BLADE_*` / `AWS_*` / `GH_*` 及名字含
+- **子进程环境清洗**：`ANTHROPIC_*` / `OPENAI_*` / `BLADEPRO_*` / `AWS_*` / `GH_*` 及名字含
   `API_KEY`、`SECRET`、`TOKEN`、`PASSWORD`、`CREDENTIAL` 的变量不再继承；`HOME` / `USER` /
   `SSH_AUTH_SOCK` 等指向服务端用户的条目改写或剔除。
 - **文件工具收口**：Read/Write/Edit/MultiEdit/LS/Glob/Grep 只允许 `data/`、skill 目录与
-  `BLADE_AGENT_READ_ROOTS` 内的真实路径（软链解析后再比对；隔离模式下 Grep 不走 rg 子进程）。
+  `BLADEPRO_AGENT_READ_ROOTS` 内的真实路径（软链解析后再比对；隔离模式下 Grep 不走 rg 子进程）。
 - `data/` 树启动时交给 agent 用户（目录 setgid + 组可写），run 目录 `0775`，agent 写自己的产物
   不受影响；`-data` 若包含密钥/配置目录则**拒绝启动**（否则降权是假的）。
 
 #### 说明
 
-- 未设置 `BLADE_AGENT_USER` 时行为与之前完全一致（agent 与服务端同权），启动日志会留一行提示。
+- 未设置 `BLADEPRO_AGENT_USER` 时行为与之前完全一致（agent 与服务端同权），启动日志会留一行提示。
 - 依赖 Norma 新增的 `tool.SetExecHook` / `tool.SetPathGuard`（v0.5.3）；Windows 不支持降权。
 
 ### 会话页：给运行中的 Worker 发提示（实时注入，不是暂停续发）
@@ -115,20 +153,20 @@
   （567 个文件），目的是**不留暴露用途与出处的特征**，同时满足"被扫到也认不出是什么"的那半边。
   · 仓库改名（GitHub 会重定向旧链接；**Releases 跟随仓库**，所以一键更新仍然可用——已部署的
     旧版本走的旧路径会被 302 到新仓库）。原作者留下的 `upstream` remote 一并移除（那个仓库早已不可达）。
-  · Go 模块路径改为 `github.com/lin9527ya/blade`（185 个文件）；入口目录 `cmd/blade`。
-  · 环境变量前缀统一为 **`BLADE_*`**（`BLADE_PG_DSN` / `BLADE_LLM_*` / `BLADE_SCOPE_ENFORCEMENT` /
-    `BLADE_KILL_SWITCH` / `BLADE_TAG` / `BLADE_CONFIG` / `BLADE_SKILL_DIR` / `BLADE_BTW_MAX_OUTPUT_TOKENS`；
-    前端的 `AUTOPENTEST_API` → `BLADE_API`）。**旧前缀不再兼容**——升级时要改自己的 `.env`
-    与 systemd unit（`deploy/blade.service` 已同步）。
-  · 可执行文件改为 `blade`（`start.sh` 的 `BIN`、Dockerfile 的 `/app/blade`、
-    `deploy/blade.service`、CI 的 dist 路径都同步）。
-  · 界面：默认标题改成**中性**的 `BLADE`（原来的标题会把用途写在 `<title>` 里，被扫到一次就等于
+  · Go 模块路径改为 `github.com/lin9527ya/bladepro`（185 个文件）；入口目录 `cmd/bladepro`。
+  · 环境变量前缀统一为 **`BLADEPRO_*`**（`BLADEPRO_PG_DSN` / `BLADEPRO_LLM_*` / `BLADEPRO_SCOPE_ENFORCEMENT` /
+    `BLADEPRO_KILL_SWITCH` / `BLADEPRO_TAG` / `BLADEPRO_CONFIG` / `BLADEPRO_SKILL_DIR` / `BLADEPRO_BTW_MAX_OUTPUT_TOKENS`；
+    前端的 `AUTOPENTEST_API` → `BLADEPRO_API`）。**旧前缀不再兼容**——升级时要改自己的 `.env`
+    与 systemd unit（`deploy/bladepro.service` 已同步）。
+  · 可执行文件改为 `bladepro`（`start.sh` 的 `BIN`、Dockerfile 的 `/app/bladepro`、
+    `deploy/bladepro.service`、CI 的 dist 路径都同步）。
+  · 界面：默认标题改成**中性**的 `BLADEPRO`（原来的标题会把用途写在 `<title>` 里，被扫到一次就等于
     告诉对方这台机器上有攻击平台）；图标与 logo 换成新的 `favicon1.ico`（16/32/48），
     旧的 `logo.svg` 删除。
   · `docker-compose.yml` 的镜像不再指向**上游作者的**外部镜像，改成 `build: .`（本地构建）；
     同时修掉上一版 ports 段的 YAML 缩进错误（会让 `docker compose` 解析失败）。
-- **数据库**：新装默认用 `blade` 用户与库（`install.sh` / `docker-compose.yml` 的默认值）；
-  本机已存在的库已迁移（备份 → 以旧库为模板建 `blade` 库 → 指向新库），旧库暂时保留以留回滚余地。
+- **数据库**：新装默认用 `bladepro` 用户与库（`install.sh` / `docker-compose.yml` 的默认值）；
+  本机已存在的库已迁移（备份 → 以旧库为模板建 `bladepro` 库 → 指向新库），旧库暂时保留以留回滚余地。
 - **未改**（外部不可见，改它们只有迁移风险）：Go 包内的变量名与函数名里不含品牌；
   运行期数据目录仍是 `data/`；PG 数据卷名未变（只在 `docker volume ls` 可见）。
 
@@ -160,7 +198,7 @@
   名字是构建期常量（`web/src/config/app-config.ts`），要连它一起换掉得改那里重新构建。
 - **`deploy/` 部署包**：`README.md`（两套方案 + 部署后自检清单）、`cloudflared.yml`（Cloudflare
   Tunnel：源站零入站端口，最隐身）、`ufw-cloudflare.sh`（只放行 Cloudflare 段，段从官方端点拉）、
-  `nginx-cloudflare.conf`（CF 真实 IP + SSE 免缓冲 + 只接受 CF 来源）、`blade.service`（systemd 单元，
+  `nginx-cloudflare.conf`（CF 真实 IP + SSE 免缓冲 + 只接受 CF 来源）、`bladepro.service`（systemd 单元，
   与 start.sh 的 0/75 退出码约定配套）。README 的部署章一并改写（原来教人绑全接口）。
 - 验收 accP42 + `listenIsLoopback` 单测。
 
@@ -313,7 +351,7 @@
     暂停所有在跑任务、取消在跑的长任务，并在任务时间线留一句为什么停的。
   · **停机开关**：一条 API 立即全停（不等 5 秒 tick），带回执——谁、何时、为什么、停了几条，
     历史留 10 条。**解除不自动恢复任务**：恢复意味着平台重新对目标动手，那一下该由人按下
-    （页面上有「继续全部暂停任务」）。环境变量 `BLADE_KILL_SWITCH` 可强制停机：出事的原因
+    （页面上有「继续全部暂停任务」）。环境变量 `BLADEPRO_KILL_SWITCH` 可强制停机：出事的原因
     可能就是平台自己，那时"从界面上关掉它"这条路本身不可信。
   · **停止状态下不起任何新工作**：不补位、不触发 agent、不跑计划任务——否则一个 5 分钟一次的
     计划任务，在停机一小时里会堆出十二条跑不动的任务。排队任务保持排队（位置不丢）。
@@ -738,7 +776,7 @@
   （P12 的失效安全在范围读不出来时取的就是「宁停勿越」）。现在越界先落到人手里：弹出审批，
   由你决定放行还是拦下。
   - **只影响「从未保存过 `intercept_scope_mode`」的实例**；显式保存过的值仍然优先。想让越界直接
-    被拦、不走人工，把该设置写成 `deny`，或用环境变量 `BLADE_SCOPE_ENFORCEMENT=deny` 强制。
+    被拦、不走人工，把该设置写成 `deny`，或用环境变量 `BLADEPRO_SCOPE_ENFORCEMENT=deny` 强制。
   - **越界审批不设超时**：它会一直等到你裁决、或该工作被取消。这是刻意的——授权边界上「等」比
     「替你决定」更安全。等待期间意图租约会持续续住，不会被看门狗判成僵尸回收。
   - 未声明可用范围行的任务、以及没有任务的上下文（对话页 / Auto agent）不受影响。
@@ -998,7 +1036,7 @@
 
 - **修复掩码可被「改目标地址、保留凭据」绕过（严重）**：配置合并对「未提及的键」一律保留库中原值，于是只改地址、对凭据避而不谈，就能让服务端把库里的真凭据发到任意地址，且完全静默。现规定目标地址一旦变化，每个凭据字段都必须显式表态——给新值，或显式留空表示不再需要。
 - **修复 markdown 系渠道对不可信内容零转义**：漏洞标题与摘要来自模型输出、资产 URL 来自扫描结果，构造的标题会在钉钉 / 企业微信 / 飞书里渲染成可点击外链，图片语法则会在渲染时被客户端拉取并泄露阅读者 IP。现统一做单行化 + markdown 元字符转义，且转义发生在各渠道的渲染出口而非共用的标题函数。
-- **修复投递地址的 SSRF 面**：此前环回、内网与云元数据地址一律可投递，而失败响应体前 200 字节会进 `last_error` 并被投递历史回显，构成一条半盲读原语。现改在**拨号阶段**设防，覆盖 DNS 重绑定，并拒绝跨主机重定向；环回与链路本地地址需显式设置 `BLADE_NOTIFY_ALLOW_LOCAL=1`，RFC1918 私网仍放行（内网自建 SMTP 中继很常见）。
+- **修复投递地址的 SSRF 面**：此前环回、内网与云元数据地址一律可投递，而失败响应体前 200 字节会进 `last_error` 并被投递历史回显，构成一条半盲读原语。现改在**拨号阶段**设防，覆盖 DNS 重绑定，并拒绝跨主机重定向；环回与链路本地地址需显式设置 `BLADEPRO_NOTIFY_ALLOW_LOCAL=1`，RFC1918 私网仍放行（内网自建 SMTP 中继很常见）。
 - **修复推送凭据经错误信息外泄**：钉钉的 `access_token`、企业微信的 `key`、Telegram 的 bot token 都在 URL 里，而投递失败时完整 URL 会流入 `last_error`、投递历史、服务端日志与前端提示四处。现统一脱敏，只保留 `scheme://host` 与底层原因。
 - **修复汇总消息被截断后整批标记已送达导致的静默丢失**：被截掉的漏洞既不在消息里、也不在失败列表里，投递历史却显示成功。现改为按**整条**打包，只标记装进本条的那些，其余回队列等下一条续发且不消耗重试次数，消息头部也写明还有多少条将在下一条继续。
 - **修复最低级别门槛打错字会让过滤器静默失效**：`min_severity` 写成 `hgih` 这类笔误时未知级别序数为 0，判定退化成恒真，用户以为只收高危、实际全部漏洞都被灌进群里。现于写入路径校验取值并列出可选值。
@@ -1379,13 +1417,13 @@
 #### 新增的功能
 
 - 支持**页面一键更新**：系统配置页新增「版本与更新」卡片，顶栏在有新版时亮出提示。流程为下载发布包 → 校验 `SHA256SUMS` → 冒烟测试 → 暂存 → 退出由守护脚本重新拉起完成换装，页面自动刷新。
-- 新增守护启动脚本 `start.sh` / `start.bat` 作为正式启动入口（发布包与 Docker 镜像均已带上，`install.sh` 不变），按退出码决定是否重新拉起，并负责把 SIGTERM 转发给 blade 本体。校验与换装逻辑都在 Go 里，脚本保持傻瓜化。
+- 新增守护启动脚本 `start.sh` / `start.bat` 作为正式启动入口（发布包与 Docker 镜像均已带上，`install.sh` 不变），按退出码决定是否重新拉起，并负责把 SIGTERM 转发给 bladepro 本体。校验与换装逻辑都在 Go 里，脚本保持傻瓜化。
 - 失败自动兜底：校验或冒烟不通过就丢弃、继续跑当前版本；新版连续 3 次启动失败则回滚上一版本。设置页另有手动回滚（注意数据库结构不会回退）。
 - 更新只认 GitHub 域名且强制 HTTPS，发布源不可配置；开发构建禁用一键更新。GitHub 查询结果缓存 30 分钟，避免顶栏提示耗尽 API 配额。
 
 #### 已知限制
 
-- Docker 下只换程序、不换镜像：工具链不会跟着升级，且重建容器会退回镜像自带版本，需要时仍用 `docker compose pull blade`。
+- Docker 下只换程序、不换镜像：工具链不会跟着升级，且重建容器会退回镜像自带版本，需要时仍用 `docker compose pull bladepro`。
 - 不同步发布包里的 `skills/`，新版新增的内置 skill 不会自动生效。
 - 更新即重启，会中断正在运行的任务。
 
@@ -1609,7 +1647,7 @@
 
 #### 新增的功能
 
-- 新增 `reset-password.sh` 重置管理员（用户名固定 `BLADE`）密码：支持 local / docker 两种部署，连接信息可显式指定或自动从 `--dsn`/`$BLADE_PG_DSN`/`config.json` 读取；在库内用 `pgcrypto` 生成与后端登录兼容的 bcrypt 哈希并写回 `settings.auth.password_hash`，重置后无需重启服务。密码经环境变量传入、不进入进程 argv，并做转义防注入。
+- 新增 `reset-password.sh` 重置管理员（用户名固定 `BLADEPRO`）密码：支持 local / docker 两种部署，连接信息可显式指定或自动从 `--dsn`/`$BLADEPRO_PG_DSN`/`config.json` 读取；在库内用 `pgcrypto` 生成与后端登录兼容的 bcrypt 哈希并写回 `settings.auth.password_hash`，重置后无需重启服务。密码经环境变量传入、不进入进程 argv，并做转义防注入。
 
 ### 贡献者
 
@@ -1704,7 +1742,7 @@
 - LLM 配置页改为配置卡片列表和右侧抽屉编辑，并提供 Pool 轮询顺序、优先级、排除项、健康状态和恢复操作。
 - 配置链耗尽信息支持窄屏换行；当前模型由会话列表图标改为当前会话标题旁的文字标签和完整 Tooltip。
 - 任务内各角色解析 LLM 的顺序调整为「Agent 绑定 → 任务配置链 → 全局」：显式绑定模型的角色始终跑在该模型上，未绑定角色才落到任务链，任务链为空时再落到全局。
-- 出站代理留空即直连，不再回退 `HTTP_PROXY`/`HTTPS_PROXY` 环境变量（显式 `BLADE_LLM_PROXY` 不受影响）；代理输入支持带账号密码的 `socks5://user:pass@host:port`。
+- 出站代理留空即直连，不再回退 `HTTP_PROXY`/`HTTPS_PROXY` 环境变量（显式 `BLADEPRO_LLM_PROXY` 不受影响）；代理输入支持带账号密码的 `socks5://user:pass@host:port`。
 
 #### 修复的问题
 
@@ -1855,8 +1893,8 @@
 - [@Autumn-27](https://github.com/Autumn-27)
 - [@neouks](https://github.com/neouks)
 
-[Unreleased]: https://github.com/lin9527ya/BLADE/compare/v0.5.1...HEAD
-[0.5.1]: https://github.com/lin9527ya/BLADE/releases/tag/v0.5.1
-[0.5.0]: https://github.com/lin9527ya/BLADE/releases/tag/v0.5.0
-[0.4.2]: https://github.com/lin9527ya/BLADE/releases/tag/v0.4.2
-[0.4.0]: https://github.com/lin9527ya/BLADE/releases/tag/v0.4.0
+[Unreleased]: https://github.com/lin9527ya/BLADEPRO/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/lin9527ya/BLADEPRO/releases/tag/v0.5.1
+[0.5.0]: https://github.com/lin9527ya/BLADEPRO/releases/tag/v0.5.0
+[0.4.2]: https://github.com/lin9527ya/BLADEPRO/releases/tag/v0.4.2
+[0.4.0]: https://github.com/lin9527ya/BLADEPRO/releases/tag/v0.4.0

@@ -6,7 +6,7 @@
 #
 # 用法（root）：
 #   sudo ./vps-hardening.sh                     # 默认：ufw 拒绝入站 + 放行 sshd 端口、fail2ban、自动更新、UTC
-#   sudo ./vps-hardening.sh --hostname srv-01   # 顺带把主机名改成中性值（别写 blade/pentest）
+#   sudo ./vps-hardening.sh --hostname srv-01   # 顺带把主机名改成中性值（别写 bladepro/pentest）
 #   sudo ./vps-hardening.sh --disable-ipv6      # 彻底关掉 IPv6（很多 VPS 带公网 v6，忘了它就是后门）
 #   sudo ./vps-hardening.sh --no-ssh-allow      # 不自动放行 SSH（仅当 SSH 只走 tailnet/WireGuard 时用）
 set -euo pipefail

@@ -272,7 +272,7 @@ func TestLoginThrottleLocksAfterRepeatedFailures(t *testing.T) {
 	login := func(pw string) int {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest("POST", "/api/auth/login",
-			strings.NewReader(`{"username":"BLADE","password":"`+pw+`"}`))
+			strings.NewReader(`{"username":"BLADEPRO","password":"`+pw+`"}`))
 		s.authLogin(w, req)
 		return w.Code
 	}

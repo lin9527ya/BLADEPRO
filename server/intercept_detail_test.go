@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/intercept"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/intercept"
 )
 
 func TestInterceptDetailHTTP(t *testing.T) {

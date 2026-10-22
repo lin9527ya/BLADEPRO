@@ -9,8 +9,8 @@ import (
 
 	"github.com/lin9527ya/Norma/mcp"
 	actool "github.com/lin9527ya/Norma/tool"
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/mcphttp"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/mcphttp"
 )
 
 // mcpClient is the shared surface of a connected MCP server (stdio, Streamable HTTP,

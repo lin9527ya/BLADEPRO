@@ -75,7 +75,7 @@ export function ChangePasswordDialog({
           <DialogHeader>
             <DialogTitle>修改密码</DialogTitle>
             <DialogDescription>
-              用户名固定为 <b>BLADE</b>。需先输入当前密码验证；修改后<b>已签发的登录 token 会立即失效</b>
+              用户名固定为 <b>BLADEPRO</b>。需先输入当前密码验证；修改后<b>已签发的登录 token 会立即失效</b>
               （服务端轮换签名密钥），需要重新登录。
             </DialogDescription>
           </DialogHeader>

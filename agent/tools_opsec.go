@@ -6,7 +6,7 @@ import (
 
 	actool "github.com/lin9527ya/Norma/tool"
 
-	"github.com/lin9527ya/blade/opsec"
+	"github.com/lin9527ya/bladepro/opsec"
 )
 
 // opsec_notes（P38）：这一手**预计**会留下什么。

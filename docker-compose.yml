@@ -2,33 +2,33 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-blade}
+      POSTGRES_USER: ${POSTGRES_USER:-bladepro}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 设置 POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB:-blade}
+      POSTGRES_DB: ${POSTGRES_DB:-bladepro}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-blade} -d ${POSTGRES_DB:-blade}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bladepro} -d ${POSTGRES_DB:-bladepro}"]
       interval: 5s
       timeout: 3s
       retries: 10
     restart: unless-stopped
 
-  blade:
-    # 本地构建（不再引用任何外部镜像）：先 ./build.sh 产出 dist/<arch>/blade，再 compose up --build。
+  bladepro:
+    # 本地构建（不再引用任何外部镜像）：先 ./build.sh 产出 dist/<arch>/bladepro，再 compose up --build。
     build: .
-    image: blade:${BLADE_TAG:-local}
+    image: bladepro:${BLADEPRO_TAG:-local}
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      BLADE_PG_DSN: postgres://${POSTGRES_USER:-blade}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-blade}?sslmode=disable
+      BLADEPRO_PG_DSN: postgres://${POSTGRES_USER:-bladepro}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-bladepro}?sslmode=disable
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      BLADE_LLM_PROVIDER: ${BLADE_LLM_PROVIDER:-}
-      BLADE_LLM_MODEL: ${BLADE_LLM_MODEL:-}
-      BLADE_LLM_BASE_URL: ${BLADE_LLM_BASE_URL:-}
-      BLADE_LLM_PROXY: ${BLADE_LLM_PROXY:-}
+      BLADEPRO_LLM_PROVIDER: ${BLADEPRO_LLM_PROVIDER:-}
+      BLADEPRO_LLM_MODEL: ${BLADEPRO_LLM_MODEL:-}
+      BLADEPRO_LLM_BASE_URL: ${BLADEPRO_LLM_BASE_URL:-}
+      BLADEPRO_LLM_PROXY: ${BLADEPRO_LLM_PROXY:-}
     ports:
       # 只映射到宿主 loopback（P42）：公网访问请走 Cloudflare Tunnel 或 SSH 隧道（见 deploy/）。
       # 真要直连公网，也请配合防火墙只放行 Cloudflare 来源段，别裸奔。

@@ -6,13 +6,13 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/policy"
-	"github.com/lin9527ya/blade/traffic"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/policy"
+	"github.com/lin9527ya/bladepro/traffic"
 )
 
 // DTO/serialization layer: each handler emits EXACTLY the frontend's spec shapes
-// (blade/web/src/lib/types.ts). These reshape db package structs so the
+// (bladepro/web/src/lib/types.ts). These reshape db package structs so the
 // internal DB model never leaks over the API. The db structs and the frontend are
 // the canonical contracts; this file maps one onto the other.
 
@@ -67,6 +67,11 @@ type TaskDTO struct {
 	PolicyWrites     []string `json:"policy_writes,omitempty"`
 	PolicyCustom     int      `json:"policy_custom,omitempty"`
 	PolicyMaxIntents int      `json:"policy_max_intents,omitempty"`
+	// SRC 挖掘模式：mode 为 "" 时以下字段全部省略（普通渗透任务的 DTO 一个字节都不变）。
+	Mode    string `json:"mode,omitempty"`
+	SrcGaps int    `json:"src_gaps,omitempty"`
+	SrcCells int   `json:"src_cells,omitempty"`
+	SrcDone int    `json:"src_done,omitempty"`
 }
 
 // FindingSeverityDTO 是任务列表里按严重度分档的漏洞计数（严重/高/中/低）。
@@ -150,6 +155,7 @@ func taskDTO(t *Task, status string) TaskDTO {
 		PolicyWrites:       polWrites,
 		PolicyCustom:       polCustom,
 		PolicyMaxIntents:   polMax,
+		Mode:               t.Mode,
 	}
 }
 

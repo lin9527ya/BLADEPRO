@@ -31,7 +31,7 @@ var agentIso agentIsoState
 // （JAVA_HOME / NODE_OPTIONS / PLAYWRIGHT_BROWSERS_PATH…），而它们不是秘密。代价是
 // "没被模式覆盖的新秘密"会漏——新增带凭据的环境变量时，记得把前缀补到这里。
 var agentEnvDenyPrefixes = []string{
-	"ANTHROPIC_", "OPENAI_", "CLAUDE_", "BLADE_",
+	"ANTHROPIC_", "OPENAI_", "CLAUDE_", "BLADEPRO_",
 	"AWS_", "GH_", "GITHUB_", "AZURE_", "GOOGLE_", "GCP_", "HF_", "HUGGINGFACE_",
 }
 
@@ -40,26 +40,26 @@ var agentEnvDenyFragments = []string{
 	"CREDENTIAL", "PRIVATE_KEY",
 }
 
-// agentEnvOverrideKeys 不继承，而是由 BLADE 重写（家目录/身份/条目指向服务端用户的都换掉）。
+// agentEnvOverrideKeys 不继承，而是由 BLADEPRO 重写（家目录/身份/条目指向服务端用户的都换掉）。
 var agentEnvOverrideKeys = map[string]bool{
 	"HOME": true, "USER": true, "LOGNAME": true,
 	"XDG_CONFIG_HOME": true, "XDG_CACHE_HOME": true, "XDG_DATA_HOME": true,
 	"SSH_AUTH_SOCK": true, "SSH_AGENT_PID": true, "GPG_AGENT_INFO": true, "KRB5CCNAME": true,
 }
 
-// InstallAgentIsolation 按 BLADE_AGENT_USER 给 agent 的**执行面**上锁：
+// InstallAgentIsolation 按 BLADEPRO_AGENT_USER 给 agent 的**执行面**上锁：
 //
 //   - 命令（Bash / 后台任务 / 交互式 shell / run_execution / 自定义工具）以该用户身份运行；
-//   - 子进程环境按"疑似凭据"模式清洗——LLM key、BLADE_* 等不再被继承；
+//   - 子进程环境按"疑似凭据"模式清洗——LLM key、BLADEPRO_* 等不再被继承；
 //   - Norma 的文件工具（Read/Write/Edit/MultiEdit/LS/Glob/Grep）被限制在
-//     dataDir + skillDir + BLADE_AGENT_READ_ROOTS 之内（逗号或冒号分隔）。
+//     dataDir + skillDir + BLADEPRO_AGENT_READ_ROOTS 之内（逗号或冒号分隔）。
 //
-// 未设置 BLADE_AGENT_USER 时什么都不做，只留一行信任模型提示——行为与之前完全一致。
+// 未设置 BLADEPRO_AGENT_USER 时什么都不做，只留一行信任模型提示——行为与之前完全一致。
 // 设置后要求进程是 root（降权需要），否则**报错而不是静默**：配了却没生效比不配更危险。
 func InstallAgentIsolation(dataDir, keyDir, skillDir string) error {
-	spec := strings.TrimSpace(os.Getenv("BLADE_AGENT_USER"))
+	spec := strings.TrimSpace(os.Getenv("BLADEPRO_AGENT_USER"))
 	if spec == "" {
-		log.Printf("[isolation] 未启用 agent 降权（BLADE_AGENT_USER 未设置）：agent 与服务端同权，" +
+		log.Printf("[isolation] 未启用 agent 降权（BLADEPRO_AGENT_USER 未设置）：agent 与服务端同权，" +
 			"提示注入即控制台全权。隔离做法见 deploy/README.md「信任模型」")
 		return nil
 	}
@@ -71,12 +71,12 @@ func InstallAgentIsolation(dataDir, keyDir, skillDir string) error {
 	}
 	uid, gid, home, err := resolveAgentAccount(spec)
 	if err != nil {
-		return fmt.Errorf("BLADE_AGENT_USER=%q: %w", spec, err)
+		return fmt.Errorf("BLADEPRO_AGENT_USER=%q: %w", spec, err)
 	}
 	if os.Geteuid() != 0 {
-		return fmt.Errorf("BLADE_AGENT_USER=%q 需要以 root 启动才能降权（当前 euid=%d）", spec, os.Geteuid())
+		return fmt.Errorf("BLADEPRO_AGENT_USER=%q 需要以 root 启动才能降权（当前 euid=%d）", spec, os.Geteuid())
 	}
-	roots, err := agentAllowedRoots(dataDir, skillDir, os.Getenv("BLADE_AGENT_READ_ROOTS"))
+	roots, err := agentAllowedRoots(dataDir, skillDir, os.Getenv("BLADEPRO_AGENT_READ_ROOTS"))
 	if err != nil {
 		return err
 	}
@@ -121,7 +121,7 @@ func prepareAgentStateDirs(dataDir string) error {
 }
 
 // hardenAgentCmd 把一条即将执行的命令收敛到 agent 身份：降权 + 环境清洗。
-// Norma 的 ExecHook 与 BLADE 自己的两个 spawn 点（run_execution、自定义工具）共用它；
+// Norma 的 ExecHook 与 BLADEPRO 自己的两个 spawn 点（run_execution、自定义工具）共用它；
 // 隔离未启用时是 no-op。
 func hardenAgentCmd(cmd *exec.Cmd) {
 	if !agentIso.enabled {
@@ -195,7 +195,7 @@ func agentPathGuard(abs string) error {
 }
 
 // agentAllowedRoots 解析允许根为真实路径。dataDir / skillDir 必须存在；额外根来自
-// BLADE_AGENT_READ_ROOTS（PathListSeparator 或逗号分隔），写错就报错（启动期暴露）。
+// BLADEPRO_AGENT_READ_ROOTS（PathListSeparator 或逗号分隔），写错就报错（启动期暴露）。
 func agentAllowedRoots(dataDir, skillDir, extra string) ([]string, error) {
 	seen := map[string]bool{}
 	roots := make([]string, 0, 2)

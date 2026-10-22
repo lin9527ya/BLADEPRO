@@ -102,6 +102,8 @@ import type {
   Severity,
   SkillCall,
   SkillItem,
+  SrcCell,
+  SrcTaskState,
   SSProject,
   SSTask,
   Stats,
@@ -116,6 +118,7 @@ import type {
   TaskConstraint,
   TaskGoal,
   TaskLLMResolutions,
+  TaskMode,
   TaskNode,
   TaskPolicy,
   TaskSchedule,
@@ -140,7 +143,7 @@ import type {
 
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem("blade_token");
+  return localStorage.getItem("bladepro_token");
 }
 
 export async function http<T>(path: string, init?: RequestInit): Promise<T> {
@@ -162,8 +165,8 @@ export async function http<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (r.status === 401) {
     if (typeof window !== "undefined") {
-      localStorage.removeItem("blade_token");
-      document.cookie = "blade_token=; path=/; max-age=0";
+      localStorage.removeItem("bladepro_token");
+      document.cookie = "bladepro_token=; path=/; max-age=0";
       window.location.href = "/login";
     }
     throw new Error("未授权");
@@ -216,7 +219,7 @@ function baseIsCrossOrigin(base: string): boolean {
 // SSE 的凭据只在**跨源**时才放进查询串：EventSource 不支持自定义头，而跨源请求又带不上
 // 同站 cookie（SameSite=Lax），那种情况下 ?token= 是唯一可行的认证方式。
 //
-// 同源（生产默认 base 为空）时**不带**：让浏览器用 blade_token cookie 认证，URL 里就不出现
+// 同源（生产默认 base 为空）时**不带**：让浏览器用 bladepro_token cookie 认证，URL 里就不出现
 // 凭据——否则它会进浏览器历史，以及反向代理的 access log（README 的 nginx 示例默认记录
 // $request，其中含查询串）。开发态前端在 :5173、后端在 :8787，属跨源，仍走 ?token=。
 export function sseUrl(path: string): string {
@@ -297,6 +300,9 @@ export const api = {
     seedFirstIntent?: boolean;
     planHeartbeatSeconds?: number;
     coverageEnabled?: boolean;
+    // SRC 挖掘模式：创建时定死（""=普通渗透）。modeDoc 是模式配置快照，省略=后端默认。
+    mode?: TaskMode;
+    modeDoc?: unknown;
     interceptRules?: AssetInterceptRuleInput[];
     // P20：任务级探索策略覆盖层；省略 = 完全继承当时的全局默认（服务端解析成快照落库）。
     explorationPolicy?: ExplorationPolicyOverride;
@@ -313,6 +319,8 @@ export const api = {
       seed_first_intent: input.seedFirstIntent ?? false,
       plan_heartbeat_seconds: input.planHeartbeatSeconds ?? 0, // 0 = 后端归一到默认 600(10min)
       coverage_enabled: input.coverageEnabled ?? true, // 默认开;false=关闭资产覆盖度功能
+      mode: input.mode || undefined, // 只发 "src"；普通渗透不带该键，老行为不变
+      mode_doc: input.modeDoc, // 省略时后端按 SRC 默认快照解析
       intercept_rules: input.interceptRules ?? [], // 任务级资产拦截规则
       exploration_policy: input.explorationPolicy ?? null, // P20 探索策略覆盖层(null=继承全局默认)
     }),
@@ -422,6 +430,24 @@ export const api = {
     }>(`/tasks/${id}/coverage`),
   // 资产覆盖图：范围内全部资产 + 连接用的根域名/公司节点，含 tested/in_scope。
   taskCoverageGraph: (id: string) => get<CoverageGraphData>(`/tasks/${id}/coverage-graph`),
+  // SRC 挖掘：覆盖矩阵（资产 × 必做风险面）+ 缺口 + 收尾门；非 src 任务返回 enabled=false。
+  taskSrc: (id: string) => get<SrcTaskState>(`/tasks/${id}/src`),
+  // 人工点格：与 agent 的 src_mark_cell 同一套校验，证据要求绕不过去。
+  markSrcCell: (
+    id: string,
+    input: {
+      asset_id: number;
+      area: string;
+      item?: string;
+      state: SrcCell["state"];
+      reason?: string;
+      evidence_node_id?: number;
+      finding_id?: number;
+    },
+  ) => post<{ cell: SrcCell }>(`/tasks/${id}/src/cells`, input),
+  // 人工放行收尾：必须写理由（进审计），只替 engine 做判定，不改覆盖格。
+  forceFinishSrc: (id: string, reason: string) =>
+    post<{ ok: boolean; status: string; gaps_total: number }>(`/tasks/${id}/src/force-finish`, { reason }),
   // 全局 llm_usage 聚合（仪表盘新版 token 视图）：按 profile 总量 + 按天分桶。
   usageStats: (days = 365) => get<UsageStats>(`/tokens/usage?days=${days}`),
   // ---- 目标管理（总览）----

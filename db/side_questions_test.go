@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/lin9527ya/Norma/llm"
-	"github.com/lin9527ya/blade/sidequestion"
+	"github.com/lin9527ya/bladepro/sidequestion"
 )
 
 func sideFixture(t *testing.T) (*DB, sidequestion.Snapshot) {

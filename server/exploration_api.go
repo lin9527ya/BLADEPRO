@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/lin9527ya/blade/db"
+	"github.com/lin9527ya/bladepro/db"
 )
 
 func (s *Server) intents(w http.ResponseWriter, r *http.Request) {

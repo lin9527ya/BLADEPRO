@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/lin9527ya/blade/traffic"
+	"github.com/lin9527ya/bladepro/traffic"
 )
 
 func (s *Server) getTraffic(w http.ResponseWriter, r *http.Request) {

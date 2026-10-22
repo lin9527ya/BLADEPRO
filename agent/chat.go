@@ -11,9 +11,9 @@ import (
 	"github.com/lin9527ya/Norma/permission"
 	actool "github.com/lin9527ya/Norma/tool"
 	"github.com/lin9527ya/Norma/transcript"
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/guard"
-	"github.com/lin9527ya/blade/intercept"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/guard"
+	"github.com/lin9527ya/bladepro/intercept"
 )
 
 // ChatAgent is the generic, task-independent conversational runner behind the chat

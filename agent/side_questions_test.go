@@ -12,8 +12,8 @@ import (
 
 	"github.com/lin9527ya/Norma/llm"
 	"github.com/lin9527ya/Norma/transcript"
-	"github.com/lin9527ya/blade/db"
-	"github.com/lin9527ya/blade/sidequestion"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/sidequestion"
 )
 
 type sideAgentProvider struct {

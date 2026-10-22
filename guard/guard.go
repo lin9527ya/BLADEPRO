@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/lin9527ya/Norma/hook"
-	"github.com/lin9527ya/blade/intercept"
+	"github.com/lin9527ya/bladepro/intercept"
 )
 
 // AuditEntry records one gated tool call.
@@ -176,7 +176,7 @@ func (g *Guard) settle(ctx context.Context, ev hook.Event, dec intercept.Decisio
 	return hook.Result{}
 }
 
-// systemBlockMessage frames an intercept block as an BLADE platform-governance
+// systemBlockMessage frames an intercept block as an BLADEPRO platform-governance
 // decision so the agent does not mistake it for a target-side defense.
 //
 // The bare reasons ("禁止执行此工具" / "用户拒绝") read exactly like a WAF/403 on
@@ -189,7 +189,7 @@ func (g *Guard) settle(ctx context.Context, ev hook.Event, dec intercept.Decisio
 // Audit/history rows keep the raw reason (see Interceptor.Log); only the
 // model-facing tool_result carries this framing.
 func systemBlockMessage(reason string) string {
-	return "【BLADE 平台管控·非目标防御】此调用被平台拦截。" +
+	return "【BLADEPRO 平台管控·非目标防御】此调用被平台拦截。" +
 		"原因：" + reason + "。此操作被禁止。"
 }
 

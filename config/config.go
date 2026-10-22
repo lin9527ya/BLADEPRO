@@ -73,7 +73,7 @@ func isGoRunDir(dir string) bool {
 }
 
 // Path returns the config file path. Resolution order:
-//  1. env BLADE_CONFIG (explicit override)
+//  1. env BLADEPRO_CONFIG (explicit override)
 //  2. ./config.json in the current working directory (running from the project
 //     dir — robust no matter where `go run` placed the temp/cached binary)
 //  3. config.json next to the executable (a distributed binary keeps it beside)
@@ -81,7 +81,7 @@ func isGoRunDir(dir string) bool {
 // The first existing file wins. If none exist, the CWD path is returned so the
 // "not found" message points at the project dir the user most likely expected.
 func Path() string {
-	if v := strings.TrimSpace(os.Getenv("BLADE_CONFIG")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("BLADEPRO_CONFIG")); v != "" {
 		return v
 	}
 	var candidates []string
@@ -136,12 +136,12 @@ func tightenConfigPerms(path string) {
 
 // SkillDir returns the skill root directory with precedence:
 //
-//	env BLADE_SKILL_DIR  >  config file (skill_dir)  >  BaseDir()/skills
+//	env BLADEPRO_SKILL_DIR  >  config file (skill_dir)  >  BaseDir()/skills
 //
 // The directory is created if it does not exist.
 func SkillDir() string {
 	var d string
-	if v := strings.TrimSpace(os.Getenv("BLADE_SKILL_DIR")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("BLADEPRO_SKILL_DIR")); v != "" {
 		d = v
 	} else if v := strings.TrimSpace(Load().SkillDir); v != "" {
 		d = v
@@ -154,15 +154,15 @@ func SkillDir() string {
 
 // PostgresDSN resolves the connection string with precedence:
 //
-//	env BLADE_PG_DSN  >  config file (database.dsn, or assembled from fields)
+//	env BLADEPRO_PG_DSN  >  config file (database.dsn, or assembled from fields)
 //
 // There is NO built-in fallback: when neither source supplies a database config,
 // it returns an error naming the config path it inspected, so startup fails loudly
 // instead of silently connecting to a wrong default. source describes where the
 // DSN came from (for startup logging).
 func PostgresDSN() (dsn, source string, err error) {
-	if v := strings.TrimSpace(os.Getenv("BLADE_PG_DSN")); v != "" {
-		return v, "环境变量 BLADE_PG_DSN", nil
+	if v := strings.TrimSpace(os.Getenv("BLADEPRO_PG_DSN")); v != "" {
+		return v, "环境变量 BLADEPRO_PG_DSN", nil
 	}
 	db := Load().Database
 	if d := strings.TrimSpace(db.DSN); d != "" {
@@ -171,7 +171,7 @@ func PostgresDSN() (dsn, source string, err error) {
 	if db.Host != "" || db.DBName != "" || db.User != "" {
 		return db.buildDSN(), "配置文件 " + Path() + " (database 字段)", nil
 	}
-	return "", "", fmt.Errorf("未找到数据库配置：环境变量 BLADE_PG_DSN 未设置，且配置文件 %s 未提供 database（dsn 或 host/user/dbname）。请创建该配置文件或设置环境变量后重试", Path())
+	return "", "", fmt.Errorf("未找到数据库配置：环境变量 BLADEPRO_PG_DSN 未设置，且配置文件 %s 未提供 database（dsn 或 host/user/dbname）。请创建该配置文件或设置环境变量后重试", Path())
 }
 
 func (d Database) buildDSN() string {

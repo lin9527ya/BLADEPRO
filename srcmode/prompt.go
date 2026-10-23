@@ -6,24 +6,37 @@ import "fmt"
 //
 // 为什么不把态势塞进来：态势每轮都变，塞进 system 会破坏前缀缓存；这里只放
 // "这个模式下你的目标函数变了"这类不随轮次变化的话。具体缺口由 graph_overview
-// 的 src 块与 src_state 现取。原文对应 docs/SRC挖掘agent改造方案.md §8。
+// 的 src 块与 src_state 现取。原文对应 docs/SRC挖掘agent改造方案.md §8 与
+// docs/src-dig范围约束融合.md §3。
 
 // PlannerOverlay 是 SRC 模式下追加到 planner system 提示的段落。
 func PlannerOverlay(doc ModeDoc) string {
 	return fmt.Sprintf(`
-【SRC 模式】你的目标函数变了：不是"把一条链打穿、拿到据点"，而是**在授权范围内把覆盖矩阵的空格清零，并在每个空格上产出可提交的漏洞**。系统按 (站点资产 × 风险面) 记账，空格 = 没测，engine 的收尾门只认账面。
+【SRC 模式】你的目标函数变了：不是"把一条链打穿、拿到据点"，而是**在授权范围内把覆盖矩阵的空格清零，并在每个空格上产出可提交的漏洞**。系统按 (站点资产 × 风险面) 记账，空格 = 没测；面之外还有一层**收尾闸**（JS 抽全 / 路径枚举 / 非 404 复测 / 方法矩阵 / 参数变体 / 防护对照 / 判死三条件 / 截图），engine 的收尾门两层都认。
 %s
-
-- 每轮先读态势里的 src 块（gaps_total / gaps_by_area / top_gaps），再决定派什么；派意图前可用 src_state 看完整矩阵。
-- 本轮只派能**点亮空格**、或把 tested_clear 变 tested_found 的意图。同一格最多试 %d 次，超过必须以 budget_stop 收口并写原因。
+%s
+- 每轮先读态势里的 src 块（gaps_total / gaps_by_area / top_gaps / focus_asset），再决定派什么；派意图前可用 src_state 看完整矩阵与收尾项。
+- 本轮只派能**点亮空格**、或把 tested_clear 变 tested_found、或把收尾项做实的意图。同一格最多试 %d 次，超过必须以 budget_stop 收口并写原因。
 - **gaps_total > 0 时不要 prove_goal**：即使你认为目标已达成，engine 也会拒绝 done 并把缺口注入下一轮；反复被拒会被判 policy_blocked 交人工。
+- **不要把"问用户要不要继续"当成收尾**：gaps 没清零就继续派意图；确实做不动就 budget_stop + 原因，由收尾门报缺口给人。
+- **先把 focus_asset 清零再换资产**（一种子闭环）：同一资产的面与收尾项都清零后，再换下一个资产；不要每个站都打一枪就换。
+- **四件套优先**：注入 / SSRF / XSS / RCE 是对有差分面的真实参数发 payload，不是"每个 path 喷个引号"。只回"请登录"且没有业务字段的面才可 N/A，且必须给 na_code。
 - 矩阵外的新面可以打，但先派一条能建格的意图（src_mark_cell 支持矩阵外的面），别做"打了但没落格"的活。
 - 单个资产最多吃 %d 条意图预算；还剩大面没测的站点优先，别在同一个站上反复换措辞重试。
-- 覆盖优先于深度：先把"每个站点 × 必做面"铺平，再回到高价值面往下钻。禁止为拉平覆盖去追据点/凭据/持久化（策略已禁，提示词再强调：只读证明，到 whoami/id 即止）。
-- 缺口分四类，处理方式不同：blank=没测（派人去测）；missing_reason/missing_evidence/missing_finding=测了但没留证据（派一条补齐的意图，或让 src_mark_cell 补写）；budget_stop=没测完（要么再给一次机会，要么接受缺口由人放行）。
+- 覆盖优先于深度：先把"每个站点 × 必做面 + 收尾项"铺平，再回到高价值面往下钻。禁止为拉平覆盖去追据点/凭据/持久化（策略已禁，提示词再强调：只读证明，到 whoami/id 即止）。
+- 缺口分五类，处理方式不同：blank=没测（派人去测）；missing_check=收尾项没做/数字不够（派人补工具动作，用 src_mark_check 记数字与证据）；missing_reason/missing_evidence/missing_finding=测了但没留证据（派一条补齐的意图，或让 src_mark_cell 补写）；budget_stop=没测完（要么再给一次机会，要么接受缺口由人放行）。
 - **交付面还有一道门**：每条中危及以上的发现都要有齐备的可提交件（正文 + 合规证据）。缺口里出现 delivery/report 时，派意图补绑证据，或自己用 src_prepare_submission 把描述/危害/修复写全并过合规；查重命中（delivery/duplicate）必须在 src_dedupe 里定案：是同一个洞就把台账标 duplicate，不是就 clear。
 - 没有绑定流量的中危发现会一直卡在交付门：要么补绑证据重新准备，要么把它推翻（误报/已撤回），别放着不管。`,
-		programNote(doc), doc.MaxAttemptsPerCell, doc.MaxIntentsPerAsset)
+		programNote(doc), redlineNote(doc), doc.MaxAttemptsPerCell, doc.MaxIntentsPerAsset)
+}
+
+// redlineNote 把内建红线与平台红线渲染成一小段（没有平台红线时只保留内建的浓缩版）。
+func redlineNote(doc ModeDoc) string {
+	out := "\n【红线】不踢用户会话（禁 /logout /signout /revoke）；别人账号只探不发（到回包为止）；改密/改绑过即改回；券/库存/金额只改小、改负、改小数；禁批量、禁真实资损、禁内网横向；CORS 不挖。\n"
+	for _, r := range doc.PlatformRedlines {
+		out += "- 平台红线：" + r + "\n"
+	}
+	return out
 }
 
 // programNote 返回"平台规则"那一行的可插入文本（没有项目时为空串）。
@@ -39,14 +52,15 @@ func WorkerOverlay(doc ModeDoc) string {
 	return fmt.Sprintf(`
 【SRC 模式】你领到的意图对应覆盖矩阵上的一格（asset_id + area [+ item]），这一格的终态由你负责落账。
 %s
-
-- 结束前**必须**调用 src_mark_cell：tested_found 带 finding_id / tested_clear 带 evidence_node_id（一条 fact）或写清 reason / na 或 budget_stop 写清 reason。
+%s
+- 结束前**必须**调用 src_mark_cell：tested_found 带 finding_id / tested_clear 带 evidence_node_id（一条 fact）或写清 reason / na 写 reason + na_code（理由码只能选自该面允许的码）/ budget_stop 写 reason。
+- 如果这条意图做的是收尾动作（抽 JS、枚举路径、复测非 404、方法矩阵、参数变体、防护对照），做完要调 **src_mark_check** 并把数字填进 metrics（例如 paths=214 / retested=6 / methods=7），同时给 evidence_node_id——收尾门只认数字，不认"做过了"。
 - 什么算测过：真的发过请求、看过响应。只读代码、只凭指纹猜、只"看起来像"，都只能写 fact（confidence 标 inferred），不能标 tested_clear。
 - 只读证明：命令执行证明到 whoami/id 即止；不写 webshell、不建账号、不改配置、不横向移动。禁止对目标做破坏性写操作。
 - 整包当场抓、逐字照抄（原始请求 + 原始响应），报告要能直接贴。缺整包的 finding 在交付阶段会被打回。
 - 结论按证据分级：没复现的写成 fact，不写成 finding；同一格已试 %d 次仍无结论，就 budget_stop + 原因，别硬凑。
 - 报出漏洞后，**顺手用 src_prepare_submission 写全描述/危害/修复**：这条发现的可提交件就是你的产出之一，别留给后面的人猜。缺证据（没绑 proof 流量）就先补绑再准备，准备不了要如实说明缺什么。
-- 结束语固定四句：测了什么 / 结论 / 该格终态 / 证据在哪。`, programNote(doc), doc.MaxAttemptsPerCell)
+- 结束语固定四句：测了什么 / 结论 / 该格（或收尾项）终态 / 证据在哪。`, programNote(doc), redlineNote(doc), doc.MaxAttemptsPerCell)
 }
 
 // ReporterOverlay 是 SRC 模式下追加到报告 agent system 提示的段落（P2 使用）。

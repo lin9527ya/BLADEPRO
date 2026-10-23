@@ -3,7 +3,7 @@
 > 版本：v1.0（2026-10-23）
 > 依据：`~/.claude/skills/src-dig/`（`SKILL.md`、`rules/` 13 篇、`工具/` 校验器、`知识库/bytesrc-rules.md`）
 > 适用：BLADEPRO 的 `mode="src"`；`mode=""` 的普通渗透一字节不变
-> 定位：**实现契约**。下面每一条都写了"落在哪个文件、什么状态"，不是理念清单。
+> 定位：**实现契约**。下面每一条都写了"落在哪个文件、什么状态"，不是理念清单。F1–F4 已落地（2026-10-23）。
 
 ---
 
@@ -52,49 +52,49 @@
 
 ## 3. 约束 → 机制映射
 
-状态列：**已实现** = 当前代码就用；**待实施 Fx** = 本方案的增量。
+状态列：**已实现** = 当前代码就用；`Fx` = 在哪个阶段落的（F1–F4 均已落地，见 §11）。
 
 ### 3.1 覆盖：测够没有
 
 | 技能约束 | 现状 | 融合机制 | 状态 |
 |---|---|---|---|
 | 10 类必做矩阵（未授权/越权/注入/SSRF/XSS/RCE/敏感路径/认证会话/上传穿越/逻辑提权） | `srcmode/taxonomy.go` 13 area，按资产类型给必做面；`src_cells` 四终态 | 保留；补齐 items（ES DSL / HQL·SpEL / XPath·LDAP / OOB / 存储型 XSS / 模板·表达式·WS 执行 / SCM·Actuator / reset·rebind·2FA / 越权`对象图` / 逻辑`privilege`·`money`） | 已实现（部分 items）+ F1 补 items |
-| **收尾闸 8 项**（空格的第二层） | 无 | 新表 `src_checks`（任务 × 资产 × 收尾项），只存终态；门里多一类 `missing_check` 缺口 | **待实施 F1** |
-| N/A 只允许"无入口"，且必须写原因 | `na` 只校验 reason 非空 | `src_cells.na_code` + 按 area 的白名单（§5.2）；非法码直接拒绝 | **待实施 F1** |
+| **收尾闸 8 项**（空格的第二层） | 无 | 新表 `src_checks`（任务 × 资产 × 收尾项），只存终态；门里多一类 `missing_check` 缺口 | **已实现（F1）** |
+| N/A 只允许"无入口"，且必须写原因 | `na` 只校验 reason 非空 | `src_cells.na_code` + 按 area 的白名单（§5.2）；非法码直接拒绝 | **已实现（F1）** |
 | 四件套不得连日空窗 | 四件套已是必做面 → blank 本身是缺口 | 面权重已让注入/RCE 排在前面；补"四件套全 N/A"告警 | 已实现（排序）+ F4 告警 |
-| 平台档豁免（手工等价物） | 只有限速/时间窗 | `check_tier=full|platform`；platform 档把 `paths≥200` 换成 `manual_paths≥1`、方法矩阵只要求状态变更端点 | **待实施 F2** |
-| CORS 永久不挖 | 无显式表达 | 不作为 area（矩阵里不出现）；提示词"勿开 CORS"，`cors` 报告一律 N/A | **待实施 F1** |
+| 平台档豁免（手工等价物） | 只有限速/时间窗 | `check_tier=full|platform`；platform 档把 `paths≥200` 换成 `manual_paths≥1`、方法矩阵只要求状态变更端点 | **已实现（F2）** |
+| CORS 永久不挖 | 无显式表达 | 不作为 area（矩阵里不出现）；提示词"勿开 CORS"，`cors` 报告一律 N/A | **已实现（F1）** |
 
 ### 3.2 红线：有没有越线
 
 | 技能约束 | 现状 | 融合机制 | 状态 |
 |---|---|---|---|
-| 禁登出/注销/吊销（`/logout` `/signout` `/revoke`） | 仅文档约定 | **内建命令级规则**（策略 `Custom` + `Layer=command`），所有 `mode=src` 任务自动带 | **待实施 F2** |
-| 别人账号只探不发 / 改密改绑过即改回 | 无 | worker/planner 红线段（8 条），并要求报告判读用语（"服务端接受了把 uid 换成 X 的请求"） | **待实施 F2** |
+| 禁登出/注销/吊销（`/logout` `/signout` `/revoke`） | 仅文档约定 | **内建命令级规则**（策略 `Custom` + `Layer=command`），所有 `mode=src` 任务自动带 | **已实现（F2）** |
+| 别人账号只探不发 / 改密改绑过即改回 | 无 | worker/planner 红线段（8 条），并要求报告判读用语（"服务端接受了把 uid 换成 X 的请求"） | **已实现（F2）** |
 | 券/库存/金额只改小/负/小数，禁真实资损 | 策略已禁 `bruteforce`/`dos` 等 | 红线段 +（可选）项目自定义命令规则 | 部分已实现 + F2 |
 | 禁批量、禁内网横向、禁社工 | 策略词表（bruteforce/dos/social_engineering/persistence） | 保留；平台项目可加 `no_automation` 规则 | 部分已实现 + F2 |
-| 平台红线：禁扫描器批量、越权≤5 组、AK/SK 只提交 | `program.rules` 有禁用手法/写/命令规则 | 新增 `no_automation`、`max_records_read`、`redlines[]` | **待实施 F2** |
+| 平台红线：禁扫描器批量、越权≤5 组、AK/SK 只提交 | `program.rules` 有禁用手法/写/命令规则 | 新增 `no_automation`、`max_records_read`、`redlines[]` | **已实现（F2）** |
 
 ### 3.3 交付：能不能交
 
 | 技能约束 | 现状 | 融合机制 | 状态 |
 |---|---|---|---|
 | 8 块版式 + 全角＃ + 文件名=标题 | `report.SrcMarkdown` 已实现 | 保留；补提交块 / CRLF / 严格版式 | 已实现 + F3 |
-| 标题规则（汉字≤25/字母≤50/总长≤100、禁 URL/编号/路径开头/METHOD 形式） | 无 | `srcmode.ValidateTitle`（移植 `report_validate.validate_title`） | **待实施 F3** |
-| 唯一标识头跨步骤不得重复 | 已实现，但头清单**误收** `traceparent`/`b3`/`amzn`（链级复用会误报） | 收紧为 `x-tt-logid / x-tt-trace-id / x-request-id / x-trace-id / request-id / x-traceid / x-log-id` | **待实施 F3（修正）** |
-| Content-Length 不得大于正文实际 | 已实现（声明>实际即报） | 补容差（≤实际+换行数）与省略标记豁免 | **待实施 F3** |
-| 超长签名头截断事故 | 无 | `truncated_header`：签名头（`x-medusa/x-argus/x-tt-token/x-gorgon/x-tt-logid`）值 <64 或含 `.../…/(截断)` | **待实施 F3** |
-| 超长报文 100k + 省略标记 | 无 | 渲染时自动中段缩减并插入 `[中间无关请求内容已省略]` | **待实施 F3** |
-| 报文结构（请求行+Host / 状态行 / 禁整行省略号） | 无 | `srcmode.CheckReportMarkdown`（对成品再查一遍） | **待实施 F3** |
-| 提交块（平台/等级/测试源 IP/测试账号） | 台账有平台与映射等级 | `SubmitInfo` 从 `mode_doc` 生成，置于正文前 | **待实施 F3** |
+| 标题规则（汉字≤25/字母≤50/总长≤100、禁 URL/编号/路径开头/METHOD 形式） | 无 | `srcmode.ValidateTitle`（移植 `report_validate.validate_title`） | **已实现（F3）** |
+| 唯一标识头跨步骤不得重复 | 已实现，但头清单**误收** `traceparent`/`b3`/`amzn`（链级复用会误报） | 收紧为 `x-tt-logid / x-tt-trace-id / x-request-id / x-trace-id / request-id / x-traceid / x-log-id` | **已实现（F3，修正）** |
+| Content-Length 不得大于正文实际 | 已实现（声明>实际即报） | 补容差（≤实际+换行数）与省略标记豁免 | **已实现（F3）** |
+| 超长签名头截断事故 | 无 | `truncated_header`：签名头（`x-medusa/x-argus/x-tt-token/x-gorgon/x-tt-logid`）值 <64 或含 `.../…/(截断)` | **已实现（F3）** |
+| 超长报文 100k + 省略标记 | 无 | 渲染时自动中段缩减并插入 `[中间无关请求内容已省略]` | **已实现（F3）** |
+| 报文结构（请求行+Host / 状态行 / 禁整行省略号） | 无 | `srcmode.CheckReportMarkdown`（对成品再查一遍） | **已实现（F3）** |
+| 提交块（平台/等级/测试源 IP/测试账号） | 台账有平台与映射等级 | `SubmitInfo` 从 `mode_doc` 生成，置于正文前 | **已实现（F3）** |
 | 定级口径（严重/高危/中危） | `findings.severity` | **不自动判定**：报告与台账引用该等级；口径写进提示词，最终以平台结论回填 | 明确不做自动 |
 
 ### 3.4 节奏：别停、别偏科
 
 | 技能约束 | 现状 | 融合机制 | 状态 |
 |---|---|---|---|
-| 一种子闭环（一个 host 挖完再换） | 全局按缺口优先级（广度） | `Report.focus_asset` + 提示词"先清零当前资产"；**只改排序不改门** | **待实施 F4** |
-| 禁停工问句（"要不要继续"） | planner 无此行为，但可能空转 | 收尾门已在工程上兜住；提示词补一句 | **待实施 F4** |
+| 一种子闭环（一个 host 挖完再换） | 全局按缺口优先级（广度） | `Report.focus_asset` + 提示词"先清零当前资产"；**只改排序不改门** | **已实现（F4）** |
+| 禁停工问句（"要不要继续"） | planner 无此行为，但可能空转 | 收尾门已在工程上兜住；提示词补一句 | **已实现（F4）** |
 | 中危同一对象先升链 | 缺口按权重排序 | 保留；报告备注提示 | 已实现（部分） |
 | 任务夹 / 产物结构 | `tasks/<id>/i<intent>` runDir + artifacts | 不重复造；报告落 `报告/` 由导出面保证 | 已实现 |
 
@@ -289,3 +289,48 @@ done 之前：
 - 别人账号："**只到提交出去、看服务端回包接不接受**为止。不在第三方账号上完成最终写入。"（同上 L739–741）
 - 报文自洽："唯一标识头跨步骤不得重复；`Content-Length` 不得大于正文实际字节数。"（`vuln-report-format.md` §一）
 - 报文逐字节："每一份报文都必须是当场抓下来的真包，逐字节照抄——不许回忆、不许改写、不许拼凑。"（同上）
+
+## 11. 落地记录（2026-10-23）
+
+F1–F4 已实现并推送。这一节记"实际落了什么、和设计有什么出入"，供后来人对照。
+
+### F1 覆盖语义（收尾闸 + N/A 码）
+
+- 数据：`src_checks` 表、`src_cells.na_code`（`db/schema.sql`、`db/src_checks.go`、`db/src_cells.go`）。
+- 判定：`srcmode/checks.go`（8 项目录、full/platform 两档门槛、`checkSatisfied` 数字判据）、
+  `srcmode/na.go`（11 个理由码 + 按面白名单）。门里多一类 `missing_check` 缺口。
+- 交互：工具 `src_mark_check`、`POST /api/tasks/{id}/src/checks`、SRC 页签「收尾闸」卡片（按资产 chips + 弹窗填数字/证据/理由码）。
+- 与设计的出入：`done` 强依赖 `evidence_node_id`（设计里写的是"必须有"，落地时确认对 UI 也要生效，
+  所以人在弹窗里同样要填节点 id）；`metrics` 用 `map[string]int` 而不是任意 JSON——只收数字，便于判门槛。
+
+### F2 红线
+
+- 内建会话红线编译成命令级策略规则（`srcmode/redlines.go` + `srcBuildinPolicyFloor`），
+  所有 `mode=src` 任务自动带，不依赖 program。
+- 最小伤害/平台红线走提示词（planner/worker 的 `redlineNote`），没有硬拦——它们的语义太细，
+  硬拦会误伤（例如"改密后改回"本身就是允许的动作）。
+- program 新字段：`check_tier / check_thresholds / no_automation / redlines / max_records_read /
+  require_screenshots / strict_layout / egress_ip / test_accounts`，创建任务时编译进 `mode_doc`。
+- 与设计的出入：`no_automation` 的扫描器规则锚定为"命令位置"（`^` 或 `;`/`&`/`|` 之后），
+  避免 `grep nuclei readme.md` 这类误伤（单测固定了这条）。
+
+### F3 交付校验
+
+- 合规：唯一标识头收紧为 7 个按请求唯一的头（去掉 traceparent/b3/amzn）；新增 `truncated_header`。
+- 标题：`ValidateTitle` 并入 `ValidateReportText`（长度/链接/路径开头/编号/METHOD 形式）。
+- 成品：`CheckReportMarkdown` 在准备交付件时对渲染后的 markdown 再查一遍（Host、整行省略号、跨块重复 id、Content-Length）。
+- 渲染：正文没内联时补 `[中间无关请求内容已省略]`；单条报文超 100k 自动中段缩减；
+  `.md` 导出改 CRLF；严格版式下备注退出正文。
+- 提交块：`srcmode.SubmitInfo` 从 `mode_doc` 生成（平台/项目/等级/测试源 IP/测试账号），置于正文前。
+
+### F4 节奏
+
+- `Report.focus_asset`（按资产聚合缺口权重）+ `suspicious_na`（四件套全 N/A 计数）；
+  两者只影响排序/告警，不新增阻塞条件。
+- planner/worker 覆盖段：先清零 focus_asset、四件套优先、禁"问用户要不要继续"。
+
+### 还没做的（诚实边界）
+
+- DB 集成测试仍未在真库跑过（本机无 PostgreSQL），`src_checks` 的 SQL 只经过编译期检查。
+- 截图不生成，只登记；定级不自动判定（机器只搬运等级）。
+- `max_records_read` 只在合规提示层，没有硬拦"第 6 组读取"——那需要流量级计数，超出本轮范围。

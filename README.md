@@ -30,15 +30,16 @@
 
 创建任务时选 **SRC 挖掘**，或 `POST /api/tasks` 带 `{"mode":"src"}`。模式在创建时定死成快照（`tasks.mode_doc`），运行中不可切换——要换就复制任务。
 
-三层改造，缺一不可（只改提示词是压不住 planner 的）：
+四层改造，缺一不可（只改提示词是压不住 planner 的）：
 
-1. **规划层**：`graph_overview` 多一个 `src` 块（`gaps_total` / `gaps_by_area` / 前 10 条 `top_gaps`）；planner 的核心目标从「打深」换成「补格」，`gaps_total > 0` 时不得 `prove_goal`。
-2. **判定层**：`src_cells` 存**显式终态**，只存终态不预填行（空格靠计算，避免行数爆炸）。
+1. **规划层**：`graph_overview` 多一个 `src` 块（`gaps_total` / `gaps_by_area` / 前 10 条 `top_gaps` / `focus_asset`）；planner 的核心目标从「打深」换成「补格」，`gaps_total > 0` 时不得 `prove_goal`。
+2. **判定层（面）**：`src_cells` 存**显式终态**，只存终态不预填行（空格靠计算，避免行数爆炸）。
    - `tested_found` 必须挂 `finding_id`；
    - `tested_clear` 必须给证据节点或写清说明；
-   - `na` / `budget_stop` 必须写原因；
+   - `na` 必须写原因**和理由码**（`na_code`，按风险面白名单：`no_input` / `no_exec_sink` / `no_login_entry` …），`budget_stop` 必须写原因；
    - 同一格尝试次数超上限只能用 `budget_stop` 收口。
-3. **交付层**：显式提交台账（`src_submissions`）+ 证据合规 + 报告正文门 + 跨任务指纹去重，收尾门一并要求"能交付"。
+3. **判定层（收尾闸）**：`src_checks` 回答"测够没有"——JS 抽全 / 路径枚举 / 非 404 复测 / 方法矩阵 / 参数变体 / 防护对照 / 判死三条件 / 截图。`done` 必须带达标数字（如 `paths≥200`）与证据节点；平台项目可选 `check_tier=platform`（手工清单替代批量枚举）。
+4. **交付层**：显式提交台账（`src_submissions`）+ 证据合规（唯一标识头/包长/签名头截断）+ 标题与报文格式 + 跨任务指纹去重，收尾门一并要求"能交付"；绑定平台项目时导出带【提交信息】块。
 
 ### 风险面（area）与必做面
 
@@ -136,7 +137,7 @@ report_finding → 绑 proof/verification 流量 → src_prepare_submission（�
 
 **与 src-dig 技能的范围约束融合**：本仓的 SRC 口径对齐 `~/.claude/skills/src-dig/`（收尾闸、N/A 语义、安全红线、交付校验）。映射表、数据模型与判定口径见 [docs/src-dig范围约束融合.md](docs/src-dig范围约束融合.md)；字节系/京东系/通用的平台规则 JSON 见 [docs/平台规则模板.md](docs/平台规则模板.md)。
 
-> 状态：融合方案里标 `F1–F4` 的条目是**待实施**；当前生效的是 P0–P3（面覆盖 + 交付门）。
+> 状态：融合方案的 F1–F4 已落地（2026-10-23）：收尾闸、N/A 理由码、会话红线命令规则、交付校验与提交块。实现细节与诚实边界见 [融合文档 §11](docs/src-dig范围约束融合.md)。
 
 ---
 

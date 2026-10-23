@@ -63,6 +63,8 @@ type ModeDoc struct {
 	// EgressIP / TestAccounts 是提交块字段（vuln-report-format §〇）。
 	EgressIP     string `json:"egress_ip,omitempty"`
 	TestAccounts string `json:"test_accounts,omitempty"`
+	// MaxRecordsRead 是越权读取上限（合规提示用；0 = 用内建默认 5）。
+	MaxRecordsRead int `json:"max_records_read,omitempty"`
 	// PlatformRedlines 是平台原始红线（逐条进提示词，不自动编译成规则）。
 	PlatformRedlines []string `json:"platform_redlines,omitempty"`
 }

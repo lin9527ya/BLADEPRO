@@ -179,3 +179,76 @@ func TestProgramDescribe(t *testing.T) {
 		t.Fatal("空项目不该生成说明")
 	}
 }
+
+func TestProgramCheckTierAndNoAutomation(t *testing.T) {
+	p := &Program{Name: "字节系", Platform: "ByteSRC"}
+	p.Rules.CheckTier = "platform"
+	p.Rules.CheckThresholds = map[string]int{"manual_paths": 1}
+	p.Rules.NoAutomation = true
+	p.Rules.RequireScreenshots = true
+	p.Rules.StrictLayout = true
+	p.Rules.MaxRecordsRead = 5
+	p.Rules.EgressIP = "1.2.3.4"
+	p.Rules.TestAccounts = "账号A"
+	p.Rules.Redlines = []string{" 越权读取不超过 5 组 ", ""}
+	if err := p.Validate(); err != nil {
+		t.Fatalf("合法项目不该报错：%v", err)
+	}
+	if len(p.Rules.Redlines) != 1 {
+		t.Fatalf("空红线应被清掉：%+v", p.Rules.Redlines)
+	}
+
+	doc := p.ApplyToModeDoc(DefaultDoc())
+	if doc.CheckTier != CheckTierPlatform {
+		t.Fatalf("check_tier 未编译进 mode_doc：%+v", doc)
+	}
+	if doc.Threshold("manual_paths") != 1 {
+		t.Fatal("check_thresholds 未编译进 mode_doc")
+	}
+	if !doc.RequireScreenshots || !doc.StrictLayout || doc.MaxRecordsRead != 5 {
+		t.Fatalf("截图/严格版式/读取上限未编译：%+v", doc)
+	}
+	if doc.EgressIP != "1.2.3.4" || doc.TestAccounts != "账号A" {
+		t.Fatalf("提交块字段未编译：%+v", doc)
+	}
+	if len(doc.PlatformRedlines) != 1 || doc.PlatformRedlines[0] != "越权读取不超过 5 组" {
+		t.Fatalf("平台红线未编译：%+v", doc.PlatformRedlines)
+	}
+
+	rules := p.NoAutomationRules()
+	if len(rules) != 3 {
+		t.Fatalf("no_automation 应产出 3 条规则，got %d", len(rules))
+	}
+	hits := []string{"nuclei -u https://x", "nmap -p- 1.2.3.4", "ffuf -w dict.txt -u https://x/FUZZ"}
+	for i, sample := range hits {
+		if !regexpMatch(rules[i].Pattern, sample) {
+			t.Fatalf("规则 %d 未命中 %q", i, sample)
+		}
+	}
+	// 正常请求不该被误伤。
+	for _, sample := range []string{"curl https://x/api/order?id=1", "grep nuclei readme.md"} {
+		for i, r := range rules {
+			if regexpMatch(r.Pattern, sample) {
+				t.Fatalf("规则 %d 误伤 %q", i, sample)
+			}
+		}
+	}
+}
+
+func TestProgramValidateRejectsBadTier(t *testing.T) {
+	p := &Program{Name: "x"}
+	p.Rules.CheckTier = "lenient"
+	if err := p.Validate(); err == nil {
+		t.Fatal("未知档位应被拒绝")
+	}
+	p.Rules.CheckTier = ""
+	p.Rules.CheckThresholds = map[string]int{"nope": 1}
+	if err := p.Validate(); err == nil {
+		t.Fatal("未知指标应被拒绝")
+	}
+	p.Rules.CheckThresholds = nil
+	p.Rules.EgressIP = "1.2.3.4 5.6.7.8"
+	if err := p.Validate(); err == nil {
+		t.Fatal("带空格的 egress_ip 应被拒绝")
+	}
+}

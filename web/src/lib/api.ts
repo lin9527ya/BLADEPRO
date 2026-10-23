@@ -448,11 +448,29 @@ export const api = {
       area: string;
       item?: string;
       state: SrcCell["state"];
+      na_code?: string;
       reason?: string;
       evidence_node_id?: number;
       finding_id?: number;
     },
   ) => post<{ cell: SrcCell }>(`/tasks/${id}/src/cells`, input),
+  // 人工标记收尾项：与 agent 的 src_mark_check 同一套校验（数字门槛 + 证据节点）。
+  markSrcCheck: (
+    id: string,
+    input: {
+      asset_id: number;
+      check_key: string;
+      state: "done" | "na" | "budget_stop";
+      na_code?: string;
+      reason?: string;
+      metrics?: Record<string, number>;
+      evidence_node_id?: number;
+    },
+  ) =>
+    post<{ check: Record<string, unknown>; gaps_total: number; checks_total: number; checks_done: number; finishable: boolean }>(
+      `/tasks/${id}/src/checks`,
+      input,
+    ),
   // 人工放行收尾：必须写理由（进审计），只替 engine 做判定，不改覆盖格。
   forceFinishSrc: (id: string, reason: string) =>
     post<{ ok: boolean; status: string; gaps_total: number }>(`/tasks/${id}/src/force-finish`, { reason }),

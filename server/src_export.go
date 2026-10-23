@@ -136,7 +136,12 @@ func (s *Server) buildSrcInput(ctx context.Context, f *db.DBFinding) (report.Src
 			raw := strings.TrimRight(sn.ReqHead, "\r\n")
 			if body := srcRequestBody(store, sn); body != "" {
 				raw = strings.TrimRight(raw+"\n\n"+body, "\r\n")
+			} else if sn.ReqLen > 0 {
+				// 正文没内联（二进制/过大/暂存缺失）时必须显式标注缩减：否则头里的
+				// Content-Length 与交出去的正文对不上，平台会判"拼凑报文"。
+				raw = strings.TrimRight(raw+"\n\n"+srcOmissionMarker, "\r\n")
 			}
+			raw = truncateSrcPacket(raw)
 			desc := srcRoleLabel(b.Role)
 			if n := strings.TrimSpace(b.Note); n != "" {
 				desc += "：" + clipRunes(n, 160)
@@ -266,7 +271,7 @@ func (s *Server) getFindingSrcReport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(report.SrcFilename(in.Title, ".md")))
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(report.SrcMarkdown(in)))
+	_, _ = w.Write([]byte(crlfText(report.SrcMarkdown(in))))
 }
 
 func (s *Server) getFindingSrcReportDocx(w http.ResponseWriter, r *http.Request) {
@@ -305,4 +310,33 @@ func (s *Server) getFindingSrcReportCheck(w http.ResponseWriter, r *http.Request
 		"steps":     len(in.Steps),
 		"endpoints": len(in.Endpoints),
 	})
+}
+
+// srcOmissionMarker 是"中段已省略"的标准标记（与 src-dig packet_rules.py 同口径）。
+const srcOmissionMarker = "[中间无关请求内容已省略]"
+
+// srcMaxPacketChars 是单条报文的字符上限：超过就保留头与尾、中段显式缩减。
+const srcMaxPacketChars = 100_000
+
+// truncateSrcPacket 把超长报文压到上限内：保留头部（请求行+头+参数）与尾部（关键回显），
+// 中段插标准标记。技能的口径是"保留头与证明段，中段显式缩减"，不是整段删掉。
+func truncateSrcPacket(raw string) string {
+	if len(raw) <= srcMaxPacketChars {
+		return raw
+	}
+	head := srcMaxPacketChars * 2 / 3
+	tail := srcMaxPacketChars - head - len(srcOmissionMarker) - 2
+	if head >= len(raw) || tail <= 0 {
+		return raw
+	}
+	return raw[:head] + "\n" + srcOmissionMarker + "\n" + raw[len(raw)-tail:]
+}
+
+// crlfText 把 LF 转成 CRLF：src-dig 的报告落盘规范是 CRLF（Windows 平台预览不乱版）。
+func crlfText(s string) string {
+	if !strings.Contains(s, "\n") {
+		return s
+	}
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.ReplaceAll(s, "\n", "\r\n")
 }

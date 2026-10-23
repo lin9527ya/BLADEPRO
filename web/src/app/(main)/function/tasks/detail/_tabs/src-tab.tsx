@@ -26,7 +26,15 @@ import { Spinner } from "@/components/ui/spinner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
-import type { SrcCell, SrcMatrixAsset, SrcMatrixCell, SrcSubmission, SrcTaskState } from "@/lib/types";
+import type {
+  SrcCell,
+  SrcCheckAsset,
+  SrcCheckItem,
+  SrcMatrixAsset,
+  SrcMatrixCell,
+  SrcSubmission,
+  SrcTaskState,
+} from "@/lib/types";
 
 // 风险面短名 → 中文。后端 cell.title / gap.area_title 有值时优先用后端的，
 // 这里只兜底（矩阵里老数据可能没带 title）。
@@ -173,6 +181,7 @@ export function SrcTab({ taskId }: { taskId: string }) {
   const [target, setTarget] = React.useState<MarkTarget | null>(null);
   const [cellState, setCellState] = React.useState<SrcCell["state"] | "">("");
   const [cellReason, setCellReason] = React.useState("");
+  const [cellNaCode, setCellNaCode] = React.useState("");
   const [evidenceNodeID, setEvidenceNodeID] = React.useState("");
   const [findingID, setFindingID] = React.useState("");
   const [markError, setMarkError] = React.useState("");
@@ -201,6 +210,16 @@ export function SrcTab({ taskId }: { taskId: string }) {
   const [prepError, setPrepError] = React.useState("");
   const [prepSaving, setPrepSaving] = React.useState(false);
 
+  // 收尾闸（F1）：一个资产 × 一项收尾。done 要数字+证据，na 要理由码。
+  const [checkTarget, setCheckTarget] = React.useState<{ asset: SrcCheckAsset; item: SrcCheckItem } | null>(null);
+  const [checkState, setCheckState] = React.useState<"done" | "na" | "budget_stop" | "">("");
+  const [checkNACode, setCheckNACode] = React.useState("");
+  const [checkReason, setCheckReason] = React.useState("");
+  const [checkEvidence, setCheckEvidence] = React.useState("");
+  const [checkMetrics, setCheckMetrics] = React.useState<Record<string, string>>({});
+  const [checkError, setCheckError] = React.useState("");
+  const [checkSaving, setCheckSaving] = React.useState(false);
+
   const load = React.useCallback(async () => {
     setLoading(true);
     try {
@@ -223,6 +242,7 @@ export function SrcTab({ taskId }: { taskId: string }) {
   const gapsTotal = summary?.gaps_total ?? data?.gaps_total ?? 0;
   const gaps = data?.gaps ?? [];
   const assets = data?.assets ?? [];
+  const checks = data?.checks ?? [];
   const gapsByArea = summary?.gaps_by_area ?? data?.gaps_by_area ?? {};
   const finishable = data?.finishable ?? summary?.finishable ?? false;
 
@@ -232,6 +252,7 @@ export function SrcTab({ taskId }: { taskId: string }) {
       CELL_STATES.includes(cell.state as SrcCell["state"]) ? (cell.state as SrcCell["state"]) : "",
     );
     setCellReason(cell.reason ?? "");
+    setCellNaCode(cell.na_code ?? "");
     setEvidenceNodeID(cell.evidence_node_id ? String(cell.evidence_node_id) : "");
     setFindingID(cell.finding_id ? String(cell.finding_id) : "");
     setMarkError("");
@@ -247,6 +268,7 @@ export function SrcTab({ taskId }: { taskId: string }) {
         area: target.cell.area,
         item: target.cell.item,
         state: cellState,
+        na_code: cellState === "na" ? cellNaCode.trim() || undefined : undefined,
         reason: cellReason.trim() || undefined,
         evidence_node_id: Number(evidenceNodeID) > 0 ? Number(evidenceNodeID) : undefined,
         finding_id: Number(findingID) > 0 ? Number(findingID) : undefined,
@@ -262,8 +284,51 @@ export function SrcTab({ taskId }: { taskId: string }) {
     }
   };
 
-  const submitForce = async () => {
-    const reason = forceReason.trim();
+  const openCheck = (asset: SrcCheckAsset, item: SrcCheckItem) => {
+    setCheckTarget({ asset, item });
+    setCheckState(item.state ?? "");
+    setCheckNACode(item.na_code ?? "");
+    setCheckReason(item.reason ?? "");
+    setCheckEvidence(item.evidence_node_id ? String(item.evidence_node_id) : "");
+    const metrics: Record<string, string> = {};
+    for (const f of item.metrics_fields ?? []) {
+      const v = item.metrics?.[f.key];
+      metrics[f.key] = v === undefined || v === null ? "" : String(v);
+    }
+    setCheckMetrics(metrics);
+    setCheckError("");
+  };
+
+  const submitCheck = async () => {
+    if (!checkTarget || !checkState) return;
+    setCheckSaving(true);
+    setCheckError("");
+    try {
+      const metrics: Record<string, number> = {};
+      for (const [k, v] of Object.entries(checkMetrics)) {
+        const n = Number(v);
+        if (Number.isFinite(n) && n > 0) metrics[k] = Math.floor(n);
+      }
+      await api.markSrcCheck(taskId, {
+        asset_id: checkTarget.asset.asset_id,
+        check_key: checkTarget.item.key,
+        state: checkState,
+        na_code: checkState === "na" ? checkNACode.trim() || undefined : undefined,
+        reason: checkReason.trim() || undefined,
+        metrics: Object.keys(metrics).length > 0 ? metrics : undefined,
+        evidence_node_id: Number(checkEvidence) > 0 ? Number(checkEvidence) : undefined,
+      });
+      setCheckTarget(null);
+      toast.success("收尾项已更新");
+      await load();
+    } catch (e) {
+      setCheckError(String((e as Error).message || e));
+    } finally {
+      setCheckSaving(false);
+    }
+  };
+
+  const submitForce = async () => {    const reason = forceReason.trim();
     if (!reason) return;
     setForcing(true);
     setForceError("");
@@ -512,6 +577,64 @@ export function SrcTab({ taskId }: { taskId: string }) {
             </CardContent>
           </Card>
 
+          <Card className="gap-0 py-0">
+            <CardHeader className="border-b py-3">
+              <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+                收尾闸
+                <span className="text-muted-foreground text-xs font-normal">
+                  面之外的第二层：JS 抽全 / 路径枚举 / 非 404 复测 / 方法矩阵 / 参数变体 / 防护对照 / 判死三条件 / 截图
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {checks.length === 0 ? (
+                <Empty className="py-8">
+                  <EmptyHeader>
+                    <EmptyTitle>没有收尾项</EmptyTitle>
+                    <EmptyDescription>
+                      该任务没有站点面资产，或模式快照关掉了收尾闸（check_tier=off / skip_check_gate）。
+                    </EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
+              ) : (
+                checks.map((row) => (
+                  <div key={row.asset_id} className="border-b p-3 last:border-b-0">
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                      <code
+                        className="bg-muted max-w-[24rem] truncate rounded px-1.5 py-0.5 font-mono text-xs"
+                        title={row.asset}
+                      >
+                        {row.asset}
+                      </code>
+                      <Badge variant="outline">{row.asset_type}</Badge>
+                      <span className="text-muted-foreground text-xs">
+                        已终态 {(row.items ?? []).filter((it) => it.state).length}/{row.items.length}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {(row.items ?? []).map((item) => (
+                        <button
+                          key={item.key}
+                          type="button"
+                          title={`${item.hint}`}
+                          onClick={() => openCheck(row, item)}
+                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition-colors hover:opacity-80 ${cellTone(
+                            item.state === "done" ? "tested_clear" : item.state === "na" ? "na" : undefined,
+                          )}`}
+                        >
+                          <span>{item.title}</span>
+                          <span className="font-medium">
+                            {item.state === "done" ? "已做" : item.state === "na" ? "N/A" : item.state === "budget_stop" ? "预算停" : "未做"}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+
           <Card className="gap-0 overflow-hidden py-0">
             <CardHeader className="border-b py-3">
               <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
@@ -692,6 +815,25 @@ export function SrcTab({ taskId }: { taskId: string }) {
                 onChange={(e) => setCellReason(e.target.value)}
               />
             </div>
+            {cellState === "na" ? (
+              <div className="grid gap-2">
+                <Label htmlFor="src-cell-na">N/A 理由码（na 必填）</Label>
+                <Select value={cellNaCode} onValueChange={setCellNaCode}>
+                  <SelectTrigger id="src-cell-na" className="w-full">
+                    <SelectValue placeholder="选一个：没这个面 ≠ 没测" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {NA_CODE_LABELS.map(([code, label]) => (
+                        <SelectItem key={code} value={code}>
+                          {label}（{code}）
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
                 <Label htmlFor="src-cell-evidence">证据节点 ID（可选）</Label>
@@ -830,6 +972,110 @@ export function SrcTab({ taskId }: { taskId: string }) {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={checkTarget !== null} onOpenChange={(open) => (open ? null : setCheckTarget(null))}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{checkTarget?.item.title ?? "收尾项"}</DialogTitle>
+            <DialogDescription>
+              {checkTarget?.item.hint}
+              {checkTarget?.item.na_codes && Object.keys(checkTarget.item.na_codes).length > 0
+                ? " · 可标 N/A（需理由码）"
+                : " · 本项不接受 N/A，必须实际做完"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="src-check-state">终态</Label>
+              <Select
+                value={checkState}
+                onValueChange={(v) => setCheckState(v as "done" | "na" | "budget_stop")}
+              >
+                <SelectTrigger id="src-check-state" className="w-full">
+                  <SelectValue placeholder="选择终态" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem value="done">done（做完，需数字与证据节点）</SelectItem>
+                    <SelectItem value="na">na（不适用，需理由码）</SelectItem>
+                    <SelectItem value="budget_stop">budget_stop（没测完）</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
+            {checkState === "done" && (checkTarget?.item.metrics_fields ?? []).length > 0 ? (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {(checkTarget?.item.metrics_fields ?? []).map((f) => (
+                  <div key={f.key} className="grid gap-1">
+                    <Label htmlFor={`src-metric-${f.key}`} className="text-xs">
+                      {f.label}
+                      {f.min ? <span className="text-muted-foreground">（门槛 ≥{f.min}）</span> : null}
+                    </Label>
+                    <Input
+                      id={`src-metric-${f.key}`}
+                      type="number"
+                      min={0}
+                      value={checkMetrics[f.key] ?? ""}
+                      onChange={(e) => setCheckMetrics((prev) => ({ ...prev, [f.key]: e.target.value }))}
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {checkState === "na" ? (
+              <div className="grid gap-2">
+                <Label htmlFor="src-check-na">N/A 理由码</Label>
+                <Select value={checkNACode} onValueChange={setCheckNACode}>
+                  <SelectTrigger id="src-check-na" className="w-full">
+                    <SelectValue placeholder="选择理由码" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {Object.entries(checkTarget?.item.na_codes ?? {}).map(([code, label]) => (
+                        <SelectItem key={code} value={code}>
+                          {label}（{code}）
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
+            <div className="grid gap-2">
+              <Label htmlFor="src-check-reason">说明</Label>
+              <Input
+                id="src-check-reason"
+                value={checkReason}
+                placeholder="例如：路径枚举 214 条；非 404 复测 6 条"
+                onChange={(e) => setCheckReason(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="src-check-evidence">证据节点 id（done 必填）</Label>
+              <Input
+                id="src-check-evidence"
+                type="number"
+                min={1}
+                value={checkEvidence}
+                placeholder="record_fact 返回的节点 id"
+                onChange={(e) => setCheckEvidence(e.target.value)}
+              />
+            </div>
+            {checkError ? (
+              <p className="text-destructive text-xs [overflow-wrap:anywhere]">{checkError}</p>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCheckTarget(null)}>
+              取消
+            </Button>
+            <Button disabled={checkSaving || !checkState} onClick={() => void submitCheck()}>
+              {checkSaving && <Spinner data-icon="inline-start" />}
+              保存
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={prepareOpen} onOpenChange={setPrepareOpen}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
@@ -910,3 +1156,18 @@ export function SrcTab({ taskId }: { taskId: string }) {
     </div>
   );
 }
+
+// N/A 理由码的中文说明（后端 srcmode 的白名单同名；这里只做 UI 展示）。
+const NA_CODE_LABELS: Array<[string, string]> = [
+  ["no_input", "无业务参数"],
+  ["no_url_param", "无 URL 拉取/代理参数"],
+  ["no_reflect", "无回显点"],
+  ["no_writer", "无用户可控写入点"],
+  ["no_exec_sink", "无执行 sink"],
+  ["no_upload_entry", "无上传入口"],
+  ["no_object", "抽不出业务对象"],
+  ["no_login_entry", "无发会话/重置/改绑口"],
+  ["static_page", "纯静态页"],
+  ["platform_exempt", "平台档案明确不测"],
+  ["out_of_scope", "越界资产"],
+];

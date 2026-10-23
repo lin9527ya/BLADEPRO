@@ -109,6 +109,29 @@ func programPolicyFloor(user *policy.Override, p *srcmode.Program) *policy.Overr
 	for _, r := range p.RateLimitRules() {
 		rules = append(rules, policy.CustomRule{Label: r.Label, Pattern: r.Pattern, Regex: r.Regex, Layer: policy.CustomLayerCommand})
 	}
+	for _, r := range p.NoAutomationRules() {
+		rules = append(rules, policy.CustomRule{Label: r.Label, Pattern: r.Pattern, Regex: r.Regex, Layer: policy.CustomLayerCommand})
+	}
+	if len(rules) > 0 {
+		out.Custom = &rules
+	}
+	return &out
+}
+
+// srcBuiltinPolicyFloor 把"任何 SRC 任务都成立"的红线并进策略：目前只有会话红线
+// （禁登出/注销/吊销）。它不依赖 program——技能里这条是挖洞动作本身的边界。
+func srcBuiltinPolicyFloor(user *policy.Override) *policy.Override {
+	out := policy.Override{}
+	if user != nil {
+		out = *user
+	}
+	var rules []policy.CustomRule
+	if out.Custom != nil {
+		rules = append(rules, (*out.Custom)...)
+	}
+	for _, r := range srcmode.BuiltinRules() {
+		rules = append(rules, policy.CustomRule{Label: r.Label, Pattern: r.Pattern, Regex: r.Regex, Layer: policy.CustomLayerCommand})
+	}
 	if len(rules) > 0 {
 		out.Custom = &rules
 	}
@@ -125,6 +148,9 @@ func validateProgramPolicy(p *srcmode.Program) error {
 		eff.Custom = append(eff.Custom, policy.CustomRule{Label: r.Label, Pattern: r.Pattern, Regex: r.Regex, Layer: policy.CustomLayerCommand})
 	}
 	for _, r := range p.RateLimitRules() {
+		eff.Custom = append(eff.Custom, policy.CustomRule{Label: r.Label, Pattern: r.Pattern, Regex: r.Regex, Layer: policy.CustomLayerCommand})
+	}
+	for _, r := range p.NoAutomationRules() {
 		eff.Custom = append(eff.Custom, policy.CustomRule{Label: r.Label, Pattern: r.Pattern, Regex: r.Regex, Layer: policy.CustomLayerCommand})
 	}
 	return policy.Validate(eff)

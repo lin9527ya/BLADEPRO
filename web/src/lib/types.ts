@@ -1006,6 +1006,7 @@ export interface SrcCell {
   area: string;
   item: string;
   state: "tested_found" | "tested_clear" | "na" | "budget_stop";
+  na_code?: string;
   reason?: string;
   evidence_node_id?: number;
   finding_id?: number;
@@ -1021,6 +1022,7 @@ export interface SrcMatrixCell {
   title?: string;
   weight?: number;
   state?: string;
+  na_code?: string;
   reason?: string;
   attempts?: number;
   evidence_node_id?: number;
@@ -1033,6 +1035,36 @@ export interface SrcMatrixAsset {
   asset_type: string;
   required_areas: string[];
   cells: SrcMatrixCell[];
+}
+
+/** SRC 收尾闸：一个资产 × 一项收尾（JS 抽全/路径枚举/…）。空 state = 还没做。 */
+export interface SrcCheckMetricField {
+  key: string;
+  label: string;
+  /** 当前档位下的门槛（0 = 不设门槛）。 */
+  min?: number;
+}
+
+export interface SrcCheckItem {
+  key: string;
+  title: string;
+  hint: string;
+  weight?: number;
+  require_evidence?: boolean;
+  metrics_fields?: SrcCheckMetricField[];
+  na_codes?: Record<string, string>;
+  state?: "done" | "na" | "budget_stop";
+  na_code?: string;
+  reason?: string;
+  metrics?: Record<string, number>;
+  evidence_node_id?: number;
+}
+
+export interface SrcCheckAsset {
+  asset_id: number;
+  asset: string;
+  asset_type: string;
+  items: SrcCheckItem[];
 }
 
 export interface SrcSummary {
@@ -1048,6 +1080,15 @@ export interface SrcSummary {
   /** 交付面（P2）：中危及以上发现数 / 其中报告已齐备的条数。 */
   findings_medium_plus?: number;
   reports_ready?: number;
+  /** 收尾闸（F1）：应有项 / 已终态项 / 按项统计的缺口数。 */
+  checks_total?: number;
+  checks_done?: number;
+  checks_by_key?: Record<string, number>;
+  /** 当前应集中打的资产（一种子闭环：只影响排序与提示）。 */
+  focus_asset_id?: number;
+  focus_asset?: string;
+  /** 四件套（注入/SSRF/XSS/RCE）全是 na 的资产数：不阻塞，但要人复核。 */
+  suspicious_na?: number;
 }
 
 /** SRC 提交台账的一行（一条发现 × 一个平台）。 */
@@ -1108,6 +1149,8 @@ export interface SrcTaskState {
   gaps_by_area?: Record<string, number>;
   cells?: SrcCell[];
   assets?: SrcMatrixAsset[];
+  /** 收尾闸（F1）：每个资产 × 适用收尾项，含门槛与理由码。 */
+  checks?: SrcCheckAsset[];
   finishable?: boolean;
   legend?: string;
   /** 本任务的提交台账（P2）。 */
@@ -1118,6 +1161,10 @@ export interface SrcTaskState {
     max_intents_per_asset?: number;
     platform?: string;
     program?: string;
+    check_tier?: "full" | "platform" | "off";
+    require_screenshots?: boolean;
+    checks_total?: number;
+    checks_done?: number;
   };
 }
 

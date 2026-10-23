@@ -86,11 +86,34 @@ func (s *Server) prepareSrcSubmission(ctx context.Context, req agent.SrcPrepareR
 	impact := strings.TrimSpace(req.Impact)
 	fix := strings.TrimSpace(req.Fix)
 
+	// 八段正文先渲染：后面的报文级校验与提交块都要看成品。
+	// 接口清单/复现整包仍由证据生成（与导出面同一份 buildSrcInput），
+	// 描述/危害/修复用本次写清的三段覆盖。
+	in, _ := s.buildSrcInput(ctx, f)
+	in.Title = title
+	in.Description = description
+	in.Impact = impact
+	in.Fix = fix
+	doc := s.srcDocForTask(req.TaskID)
+	if doc.StrictLayout {
+		// 严格版式：备注不进退稿风险最高的正文（发现 id / 证据版本由台账承担）。
+		in.Notes = nil
+	}
+	markdown := report.SrcMarkdown(in)
+	if block := srcmode.SubmitInfo(doc, report.SrcSeverityLabel(f.Severity)); block != "" {
+		markdown = block + "\n" + markdown
+	}
+
 	var issues []string
 	for _, is := range srcmode.CheckCompliance(f.Severity, steps) {
 		issues = append(issues, "证据不合规："+is.Detail)
 	}
 	issues = append(issues, srcmode.ValidateReportText(title, description, impact, fix)...)
+	// 成品再查一遍报文层：缺 Host、整行省略号、跨步骤重复的唯一标识头、
+	// Content-Length 与正文不符。快照层查过的东西在导出后仍可能被改坏。
+	for _, p := range srcmode.CheckReportMarkdown(markdown) {
+		issues = append(issues, "报文格式："+p)
+	}
 
 	fingerprint := report.Fingerprint(f.VulnClass, refs)
 	dupes, err := store.SrcDuplicatesByFingerprint(ctx, fingerprint, f.ID, 10)
@@ -108,15 +131,6 @@ func (s *Server) prepareSrcSubmission(ctx context.Context, req agent.SrcPrepareR
 	if ready {
 		status = db.SrcSubReady
 	}
-
-	// 八段正文：接口清单/复现整包仍由证据生成（与导出面同一份 buildSrcInput），
-	// 描述/危害/修复用本次写清的三段覆盖。
-	in, _ := s.buildSrcInput(ctx, f)
-	in.Title = title
-	in.Description = description
-	in.Impact = impact
-	in.Fix = fix
-	markdown := report.SrcMarkdown(in)
 
 	// P3：绑定平台项目时，提交台账同时记 program 与"平台等级"（severity_map 映射）。
 	var program *srcmode.Program

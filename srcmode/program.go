@@ -51,6 +51,25 @@ type ProgramRules struct {
 	MaxAttemptsPerCell int                 `json:"max_attempts_per_cell,omitempty"`
 	MaxIntentsPerAsset int                 `json:"max_intents_per_asset,omitempty"`
 	RequiredAreas      map[string][]string `json:"required_areas,omitempty"`
+
+	// ---- F2：收尾闸档位与平台红线 ----
+	// CheckTier: full（默认）/ platform（平台档案档）/ off。
+	CheckTier string `json:"check_tier,omitempty"`
+	// CheckThresholds 按指标名覆盖内建门槛（如 {"paths":0,"manual_paths":1}）。
+	CheckThresholds map[string]int `json:"check_thresholds,omitempty"`
+	// NoAutomation 编译"禁扫描器/禁洪水"命令级规则（平台档案常见的硬约束）。
+	NoAutomation bool `json:"no_automation,omitempty"`
+	// Redlines 是平台原始红线，逐条进提示词（不自动编译：语义太细，拦不准会误伤）。
+	Redlines []string `json:"redlines,omitempty"`
+	// MaxRecordsRead 是越权读取上限（合规层提示用，不硬拦）。
+	MaxRecordsRead int `json:"max_records_read,omitempty"`
+	// RequireScreenshots 平台要求关键步骤截图时置真。
+	RequireScreenshots bool `json:"require_screenshots,omitempty"`
+	// StrictLayout 导出严格 8 块（备注退出正文）。
+	StrictLayout bool `json:"strict_layout,omitempty"`
+	// EgressIP / TestAccounts 是提交块字段。
+	EgressIP     string `json:"egress_ip,omitempty"`
+	TestAccounts string `json:"test_accounts,omitempty"`
 }
 
 // 平台等级（severity_map 的值域）。有些平台只有三档，有些有五档。
@@ -116,6 +135,39 @@ func (p *Program) Validate() error {
 		}
 		p.SeverityMap[internal] = lv
 	}
+	switch strings.TrimSpace(p.Rules.CheckTier) {
+	case "", CheckTierFull, CheckTierPlatform, CheckTierOff:
+	default:
+		return fmt.Errorf("check_tier 只能是 full / platform / off：%s", p.Rules.CheckTier)
+	}
+	for metric, v := range p.Rules.CheckThresholds {
+		if !IsCheckMetric(metric) {
+			return fmt.Errorf("check_thresholds 里有未知指标：%s（%s）", metric, strings.Join(CheckMetricKeys(), " / "))
+		}
+		if v < 0 {
+			return fmt.Errorf("check_thresholds[%s] 不能为负", metric)
+		}
+	}
+	if p.Rules.MaxRecordsRead < 0 {
+		return fmt.Errorf("max_records_read 不能为负")
+	}
+	if len(p.Rules.Redlines) > 30 {
+		return fmt.Errorf("redlines 最多 30 条（当前 %d 条）", len(p.Rules.Redlines))
+	}
+	kept := make([]string, 0, len(p.Rules.Redlines))
+	for _, r := range p.Rules.Redlines {
+		r = strings.TrimSpace(r)
+		if r == "" {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	p.Rules.Redlines = kept
+	p.Rules.EgressIP = strings.TrimSpace(p.Rules.EgressIP)
+	p.Rules.TestAccounts = strings.TrimSpace(p.Rules.TestAccounts)
+	if len(p.Rules.EgressIP) > 64 || strings.ContainsAny(p.Rules.EgressIP, " \t\n") {
+		return fmt.Errorf("egress_ip 不合法：%q", p.Rules.EgressIP)
+	}
 	return nil
 }
 
@@ -151,7 +203,55 @@ func (p *Program) ApplyToModeDoc(doc ModeDoc) ModeDoc {
 	if p.Rules.SkipReportGate != nil {
 		out.SkipReportGate = *p.Rules.SkipReportGate
 	}
+	// F2：收尾闸档位 / 阈值 / 截图 / 严格版式 / 提交块字段。
+	if t := strings.TrimSpace(p.Rules.CheckTier); t != "" {
+		out.CheckTier = t
+	}
+	if len(p.Rules.CheckThresholds) > 0 {
+		merged := make(map[string]int, len(out.CheckThresholds)+len(p.Rules.CheckThresholds))
+		for k, v := range out.CheckThresholds {
+			merged[k] = v
+		}
+		for k, v := range p.Rules.CheckThresholds {
+			merged[k] = v
+		}
+		out.CheckThresholds = merged
+	}
+	if p.Rules.RequireScreenshots {
+		out.RequireScreenshots = true
+	}
+	if p.Rules.StrictLayout {
+		out.StrictLayout = true
+	}
+	if p.Rules.MaxRecordsRead > 0 {
+		out.MaxRecordsRead = p.Rules.MaxRecordsRead
+	}
+	if p.Rules.EgressIP != "" {
+		out.EgressIP = p.Rules.EgressIP
+	}
+	if p.Rules.TestAccounts != "" {
+		out.TestAccounts = p.Rules.TestAccounts
+	}
+	if len(p.Rules.Redlines) > 0 {
+		out.PlatformRedlines = append(append([]string(nil), out.PlatformRedlines...), p.Rules.Redlines...)
+	}
 	return out
+}
+
+// NoAutomationRules 把"平台禁止自动化扫描"编译成命令级规则。
+// 只在项目显式开启时生效：非平台系目标仍按全量档测（技能 §0.1 明确"非平台系不打折"）。
+func (p *Program) NoAutomationRules() []ProgramRule {
+	if !p.Rules.NoAutomation {
+		return nil
+	}
+	return []ProgramRule{
+		{Label: "平台禁止自动化扫描器（只允许手工测试）",
+			Pattern: `(?i)(^|[;&|]\s*)(\S*[/\\])?(nuclei|acunetix|awvs|nessus|openvas|masscan|zmap|sqlmap)(\s|$)`, Regex: true},
+		{Label: "平台禁止全端口/高强度扫描",
+			Pattern: `(?i)nmap\s+[^\n]*(-p\s*-|--top-ports|--min-rate|--max-rate|--script)`, Regex: true},
+		{Label: "平台禁止字典爆破",
+			Pattern: `(?i)(ffuf|dirsearch|gobuster|dirb|feroxbuster|wfuzz)\b[^\n]*(-w|--wordlist|--wordlists)`, Regex: true},
+	}
 }
 
 // PlatformLevel 把内部等级映射成平台等级（没配映射时原样返回）。

@@ -4,6 +4,37 @@
 
 ## [Unreleased]
 
+### SRC 覆盖的第二层：收尾闸 + N/A 语义 + 红线 + 交付校验（F1–F4）
+
+把 src-dig 技能的范围约束从"文档口径"落成工程约束。技能的一句话是"缺项 = 没测"：
+`src_cells` 只回答"这个风险面测过没有"，本次补上"测够没有"。
+
+- **F1 收尾闸**：新表 `src_checks`（任务 × 资产 × 收尾项，只存 `done/na/budget_stop`），8 项目录
+  （JS 抽全 / 路径枚举 / 非 404 复测 / 方法矩阵 / 参数变体 / 防护对照 / 判死三条件 / 截图），
+  `done` 必须带达标数字与证据节点，数字不够时错误直接写"`paths=37 < 200`"。
+  新工具 `src_mark_check` + `POST /api/tasks/{id}/src/checks` + 任务页「收尾闸」卡片。
+- **N/A 语义**：`src_cells.na_code` + 11 个理由码的按面白名单（`no_input` / `no_exec_sink` /
+  `no_login_entry` …），把"没这个面"和"没测"分开；理由码填错面直接拒绝。
+- **类型矩阵**：按技能补细分项（HQL·SpEL / ES DSL / XPath·LDAP / 对象图 / reset·rebind·2FA /
+  privilege·money / template·expression·ws-exec…），app/service 必做面补 `ssrf`、`rce`（四件套齐全），
+  新增可选 `csrf` 面；CORS 明确不进矩阵。
+- **F2 红线**：内建会话红线（禁 `/logout`、`/signout`、`/revoke`）编译成命令级策略规则，所有 SRC 任务自动带；
+  最小伤害 8 条进 planner/worker 提示词。平台项目新增 `check_tier`、`check_thresholds`、`no_automation`
+  （禁扫描器/全端口/字典爆破的命令规则）、`redlines`、`max_records_read`、`require_screenshots`、
+  `strict_layout`、`egress_ip`、`test_accounts`；平台档把"路径 ≥200"换成"手工清单 ≥1"。
+- **F3 交付校验**：唯一标识头收紧为按请求唯一的 7 个（去掉 `traceparent`/`b3`/`amzn` 这类链级头，
+  原实现会误报）；新增超长签名头截断检测；`ValidateTitle`（≤25 汉字 / ≤50 字母 / ≤100 字、禁链接/编号/
+  路径开头/METHOD 形式）；`CheckReportMarkdown` 对成品再查 Host、整行省略号、跨块重复 id、包长；
+  正文没内联时补 `[中间无关请求内容已省略]`、超 100k 自动中段缩减；`.md` 导出 CRLF；
+  绑定项目时正文前生成【提交信息】块。
+- **F4 节奏**：`Report.focus_asset`（一种子闭环：先把当前资产清零）与 `suspicious_na`
+  （四件套全 N/A 计数）进态势与提示词，只影响排序/告警，不新增阻塞。
+
+> 行为变化：app/service 必做面 8 → 10；`na` 必须给理由码；新任务在收尾项清零前不能 done
+> （出口仍是 `skip_check_gate`、`check_tier=off` 与人工 force-finish）。
+> 仍未验证：DB 集成测试（本机无 PostgreSQL）、截图生成、定级自动判定——见
+> [docs/src-dig范围约束融合.md](docs/src-dig范围约束融合.md) §11。
+
 ### 文档：src-dig 范围约束融合方案
 
 把 `~/.claude/skills/src-dig/` 里**可判定**的范围约束对齐进 BLADEPRO 的 SRC 模式，落成实现契约：

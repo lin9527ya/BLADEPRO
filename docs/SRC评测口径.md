@@ -26,6 +26,9 @@
 |---|---|---|
 | 覆盖格完成率 | `cells_terminal / cells_total` | `/api/tasks/{id}/src` → `summary` |
 | 实测率 | `cells_measured / cells_total`（只算 tested_*） | 同上 |
+| **收尾闸完成率** | `checks_done / checks_total`（JS 抽全/路径枚举/复测/方法矩阵/参数变体/防护对照/判死/截图） | 同上（F1 起） |
+| **收尾项数字质量** | 各项 `metrics` 分布（如 `paths` 中位数、`retested` 是否 ≥2） | `src_state.checks[].metrics` |
+| **N/A 占比** | `na` 格数 ÷ 终态格数；四件套全 N/A 的资产数（`suspicious_na`） | `summary` + 矩阵 |
 | 缺口清零时长 | 首次 `finishable=true` 的时间 − `first_run_at` | `summary` + 任务 DTO |
 | 有效发现数 | 台账里 `severity in (critical,high,medium)` 且 `status in (ready,submitted,accepted,paid)` | `/api/src/submissions` |
 | 报告可提交率 | `findings_report_ready / findings_medium_plus` | `/api/src/stats` |
@@ -38,6 +41,10 @@
 
 - **B 的覆盖格完成率应显著高于 A**（这是模式的核心假设）。若没有差异，先查
   `graph_overview.src` 是否真的进了 planner 的提示词、收尾门是否在拦 done；
+- **收尾闸完成率与覆盖格完成率要一起看**：格子满了但收尾闸低，说明"每个面都点过、但只读了首页"——
+  这正是技能里 `dm.xjoycity.com` 的教训（接口从 3 涨到 31）。`paths` 中位数远低于 200 时同判；
+- **N/A 占比突然变高**要抽检：`na_code` 保证了"有依据才能标"，但依据本身可能是错的（例如把 WAF 拦
+  当成"无入口"）。`suspicious_na > 0` 的资产必须人看；
 - **B 的"有效发现数 ÷ token"不应低于 A 太多**：SRC 是广度换深度，单条成本会上升，
   但"每条可提交件的成本"应该可接受；
 - **报告可提交率 < 80%** 说明交付门在起作用但 agent 没跟上——看 `src_state` 的

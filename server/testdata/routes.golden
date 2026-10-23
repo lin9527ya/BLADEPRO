@@ -296,6 +296,7 @@ POST /api/tasks/{id}/policy/preview	server.(*Server).previewTaskPolicy-fm
 POST /api/tasks/{id}/policy/prune	server.(*Server).pruneTaskPolicy-fm
 POST /api/tasks/{id}/scope	server.(*Server).taskScopeAdd-fm
 POST /api/tasks/{id}/src/cells	server.(*Server).postTaskSrcCell-fm
+POST /api/tasks/{id}/src/checks	server.(*Server).postTaskSrcCheck-fm
 POST /api/tasks/{id}/src/force-finish	server.(*Server).postTaskSrcForceFinish-fm
 POST /api/tools/custom	server.(*Server).pgCreateCustomTool-fm
 POST /api/tools/custom/test	server.(*Server).pgTestCustomTool-fm

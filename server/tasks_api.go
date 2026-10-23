@@ -465,7 +465,13 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	policyDoc, err := s.newTaskPolicy(programPolicyFloor(req.ExplorationPolicy, program))
+	// SRC 任务的探索策略多一层内建红线（禁登出/注销/吊销）：它不依赖 program，
+	// 是挖洞动作本身的边界；编译成命令门规则后，说了不算、拦得住才算。
+	floor := programPolicyFloor(req.ExplorationPolicy, program)
+	if strings.TrimSpace(req.Mode) == srcmode.ModeSrc {
+		floor = srcBuiltinPolicyFloor(floor)
+	}
+	policyDoc, err := s.newTaskPolicy(floor)
 	if err != nil {
 		writeErr(w, 400, err.Error())
 		return

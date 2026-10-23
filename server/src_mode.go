@@ -86,6 +86,7 @@ func (s *Server) postTaskSrcCell(w http.ResponseWriter, r *http.Request) {
 		Area           string `json:"area"`
 		Item           string `json:"item"`
 		State          string `json:"state"`
+		NACode         string `json:"na_code"`
 		Reason         string `json:"reason"`
 		EvidenceNodeID int64  `json:"evidence_node_id"`
 		FindingID      int64  `json:"finding_id"`
@@ -101,7 +102,8 @@ func (s *Server) postTaskSrcCell(w http.ResponseWriter, r *http.Request) {
 	store := s.m.PG().Src()
 	cell := db.SrcCell{
 		TaskID: taskID, AssetID: req.AssetID, Area: strings.TrimSpace(req.Area), Item: item,
-		State: strings.TrimSpace(req.State), Reason: strings.TrimSpace(req.Reason),
+		State: strings.TrimSpace(req.State), NACode: strings.TrimSpace(req.NACode),
+		Reason:         strings.TrimSpace(req.Reason),
 		EvidenceNodeID: req.EvidenceNodeID, FindingID: req.FindingID, UpdatedBy: "human",
 	}
 	if err := srcmode.ValidateCell(r.Context(), store, taskID, doc, cell); err != nil {
@@ -164,4 +166,59 @@ func (s *Server) postTaskSrcForceFinish(w http.ResponseWriter, r *http.Request) 
 		Metadata: meta,
 		Summary:  "人工放行收尾：尚有 " + strconv.Itoa(rep.GapsTotal) + " 个缺口未清零，理由：" + reason})
 	writeJSON(w, 200, map[string]any{"ok": true, "status": "done", "gaps_total": rep.GapsTotal})
+}
+
+// postTaskSrcCheck lets a human mark one收尾闸 (JS 抽全/路径枚举/…). The same
+// validator as src_mark_check runs: done 需要达标数字 + 证据节点，na 需要理由码。
+// 没有这个接口，人在 UI 上就只能 force-finish 才能过门——那等于把工程约束又变回人工自觉。
+func (s *Server) postTaskSrcCheck(w http.ResponseWriter, r *http.Request) {
+	t, doc, taskID, ok := s.srcTask(w, r)
+	if t == nil {
+		return
+	}
+	if !ok {
+		writeErr(w, 400, "该任务不是 SRC 挖掘模式")
+		return
+	}
+	var req struct {
+		AssetID        int64          `json:"asset_id"`
+		CheckKey       string         `json:"check_key"`
+		State          string         `json:"state"`
+		NACode         string         `json:"na_code"`
+		Reason         string         `json:"reason"`
+		Metrics        map[string]int `json:"metrics"`
+		EvidenceNodeID int64          `json:"evidence_node_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, 400, "bad json: "+err.Error())
+		return
+	}
+	store := s.m.PG().Src()
+	check := db.SrcCheck{
+		TaskID: taskID, AssetID: req.AssetID, CheckKey: strings.TrimSpace(req.CheckKey),
+		State: strings.TrimSpace(req.State), NACode: strings.TrimSpace(req.NACode),
+		Reason: strings.TrimSpace(req.Reason), Metrics: req.Metrics,
+		EvidenceNodeID: req.EvidenceNodeID, UpdatedBy: "human",
+	}
+	if err := srcmode.ValidateCheck(r.Context(), store, taskID, doc, check); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	saved, err := store.UpsertSrcCheck(r.Context(), &check)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	s.engine.emitActivity(t, db.Activity{Worker: "system", Kind: "src_gate",
+		Summary: "人工标记收尾项：" + check.CheckKey + " → " + check.State})
+	rep, err := srcmode.CheckFinish(r.Context(), store, taskID, doc)
+	if err != nil {
+		writeJSON(w, 200, map[string]any{"check": saved})
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"check": saved, "gaps_total": rep.GapsTotal,
+		"checks_total": rep.ChecksTotal, "checks_done": rep.ChecksDone,
+		"finishable": rep.Finishable,
+	})
 }

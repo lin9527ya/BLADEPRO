@@ -67,6 +67,25 @@ func TestCheckSatisfiedThresholds(t *testing.T) {
 	if ok, why := checkSatisfied(paths, doc, map[string]int{"manual_paths": 12}); ok {
 		t.Fatalf("覆盖后的门槛 30 应拒绝 12：%s", why)
 	}
+
+	// 显式覆盖也可以降低门槛（平台档常把 paths 降到 0，改走 manual_paths）。
+	doc.CheckTier = CheckTierFull
+	doc.CheckThresholds = map[string]int{"paths": 0}
+	if ok, why := checkSatisfied(paths, doc, map[string]int{"paths": 0}); !ok {
+		t.Fatalf("paths:0 覆盖后 0 条应通过：%s", why)
+	}
+
+	// 判死三条件：本地不可达也是条件，不能只报外部出口与 DNS。
+	doc = DefaultDoc()
+	unreachable := mustCheck(t, "unreachable_proof")
+	if ok, why := checkSatisfied(unreachable, doc, map[string]int{"external_exits": 2, "dns_resolvers": 2}); ok {
+		t.Fatalf("缺 local_unreachable 不该通过：%s", why)
+	}
+	if ok, _ := checkSatisfied(unreachable, doc, map[string]int{
+		"local_unreachable": 1, "external_exits": 2, "dns_resolvers": 2,
+	}); !ok {
+		t.Fatal("三条件齐全应通过")
+	}
 }
 
 func TestCheckSatisfiedSpecialShapes(t *testing.T) {

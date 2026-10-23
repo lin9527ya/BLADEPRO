@@ -65,6 +65,9 @@ type ModeDoc struct {
 	TestAccounts string `json:"test_accounts,omitempty"`
 	// MaxRecordsRead 是越权读取上限（合规提示用；0 = 用内建默认 5）。
 	MaxRecordsRead int `json:"max_records_read,omitempty"`
+	// TimeWindow 是平台项目的作业时间窗快照（"HH:MM-HH:MM"，逗号分段，允许跨夜）。
+	// 空 = 不限；guard 会在窗口外直接拦下动作（不只是提示词约束）。
+	TimeWindow string `json:"time_window,omitempty"`
 	// PlatformRedlines 是平台原始红线（逐条进提示词，不自动编译成规则）。
 	PlatformRedlines []string `json:"platform_redlines,omitempty"`
 }

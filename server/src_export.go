@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	"github.com/lin9527ya/bladepro/db"
 	"github.com/lin9527ya/bladepro/evidence"
 	"github.com/lin9527ya/bladepro/report"
+	"github.com/lin9527ya/bladepro/srcmode"
 )
 
 // 交付面（P11）：把一条发现导出成 src-dig 报告规范的可提交件。
@@ -82,6 +84,16 @@ func (s *Server) buildSrcInput(ctx context.Context, f *db.DBFinding) (report.Src
 		if d := strings.TrimSpace(sub.Fix); d != "" {
 			in.Fix = d
 		}
+	}
+
+	// 【提交信息】块：单条导出、批量包、交付准备共用同一份，平台等级优先。
+	if f.TaskID != nil && *f.TaskID > 0 {
+		doc := s.srcDocForTask(*f.TaskID)
+		label := report.SrcSeverityLabel(f.Severity)
+		if lv, _ := s.srcPlatformInfo(ctx, *f.TaskID, f.Severity); lv != "" {
+			label = lv
+		}
+		in.SubmitBlock = srcmode.SubmitInfo(doc, label)
 	}
 
 	// 目标 URL：优先锚定资产的展示标签，其次绑定流量里的 URL。
@@ -164,6 +176,28 @@ func (s *Server) buildSrcInput(ctx context.Context, f *db.DBFinding) (report.Src
 	}
 	in.Notes = append(notes, in.Notes...)
 	return in, warnings
+}
+
+// srcExportIssues 是导出前的正文/成品校验：标题/描述/危害/修复是否写全、报文是否
+// 可复现。导出不阻断（交不交由人决定），但问题必须跟着文件走——否则占位符报告会
+// 被原样贴到平台，审核阶段才被打回。
+func srcExportIssues(in report.SrcInput) []string {
+	issues := append([]string{}, srcmode.ValidateReportText(in.Title, in.Description, in.Impact, in.Fix)...)
+	if md := report.SrcMarkdown(in); strings.TrimSpace(md) != "" {
+		for _, p := range srcmode.CheckReportMarkdown(md) {
+			issues = append(issues, "报文格式："+p)
+		}
+	}
+	return issues
+}
+
+// appendExportIssues 把校验问题写进备注区（导出物自带告警），并返回清单。
+func appendExportIssues(in *report.SrcInput) []string {
+	issues := srcExportIssues(*in)
+	for _, is := range issues {
+		in.Notes = append(in.Notes, "⚠ "+is)
+	}
+	return issues
 }
 
 // srcWarnings 是「交付证据门」的唯一实现（P19 起）：每条发现导出前缺什么。
@@ -268,6 +302,9 @@ func (s *Server) getFindingSrcReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in, _ := s.buildSrcInput(r.Context(), f)
+	if issues := appendExportIssues(&in); len(issues) > 0 {
+		log.Printf("[src] 发现 #%d 导出正文校验：%s", f.ID, strings.Join(issues, "；"))
+	}
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(report.SrcFilename(in.Title, ".md")))
 	w.WriteHeader(http.StatusOK)
@@ -280,6 +317,9 @@ func (s *Server) getFindingSrcReportDocx(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	in, _ := s.buildSrcInput(r.Context(), f)
+	if issues := appendExportIssues(&in); len(issues) > 0 {
+		log.Printf("[src] 发现 #%d 导出正文校验：%s", f.ID, strings.Join(issues, "；"))
+	}
 	blob, err := report.SrcDOCX(in)
 	if err != nil {
 		writeErr(w, 500, err.Error())
@@ -301,6 +341,7 @@ func (s *Server) getFindingSrcReportCheck(w http.ResponseWriter, r *http.Request
 		return
 	}
 	in, warnings := s.buildSrcInput(r.Context(), f)
+	warnings = append(warnings, srcExportIssues(in)...)
 	if warnings == nil {
 		warnings = []string{}
 	}

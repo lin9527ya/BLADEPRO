@@ -15,7 +15,6 @@ import (
 
 	"github.com/lin9527ya/bladepro/db"
 	"github.com/lin9527ya/bladepro/report"
-	"github.com/lin9527ya/bladepro/srcmode"
 )
 
 // P19 批量交付：一次交付一个任务的全部发现。
@@ -284,7 +283,9 @@ func (s *Server) buildSrcZip(ctx context.Context, t *Task, plan *srcBatchPlan) (
 		if doc.StrictLayout {
 			in.Notes = warningNotes(in.Notes)
 		}
-		in.SubmitBlock = srcmode.SubmitInfo(doc, report.SrcSeverityLabel(in.Severity))
+		if issues := appendExportIssues(&in); len(issues) > 0 {
+			log.Printf("[src] 交付包：发现 #%d 正文校验 %d 条", f.ID, len(issues))
+		}
 		md := report.SrcMarkdown(in)
 		if err := add(base+".md", []byte(crlfText(md))); err != nil {
 			return nil, err

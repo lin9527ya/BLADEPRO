@@ -353,8 +353,10 @@ func cmdOutDir(dir string) string { return filepath.Join(dir, "cmd-output") }
 // 宿主生命周期、也可能挂在 tmpfs 上（重启即失）。
 func taskOutDir(dir string) string { return filepath.Join(dir, "task-output") }
 
-func workerSystem(proxyAddr, caCert, dataDir, runDir string) string {
-	body := renderSystem("worker", workerDefaultTmpl, WorkerVars{ProxyAddr: proxyAddr, DataDir: dataDir, Now: nowStr()})
+func workerSystem(proxyAddr, caCert, dataDir, runDir, workerName string) string {
+	body := renderSystem("worker", workerDefaultTmpl, WorkerVars{
+		ProxyAddr: proxyAddr, WorkerName: workerName, DataDir: dataDir, Now: nowStr(),
+	})
 	// caCert is present only when the recording MITM is on, which is exactly when
 	// the traffic_* tools are registered — so it gates the traffic-tool note.
 	// Optional finding guidance is added for every role after tool resolution.
@@ -486,7 +488,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// inherit a parent run's background into the action reviewer.
 	ctx = intercept.WithReviewContext(ctx, runDir, intercept.ReviewBackground{})
 	overview := renderWorkerGraphOverview(tsx.graphOverviewData())
-	sysBody := workerSystem(w.proxyAddr, w.proxyCACert, w.workDir, runDir)
+	sysBody := workerSystem(w.proxyAddr, w.proxyCACert, w.workDir, runDir, name)
 	if w.wantConstraints() {
 		sysBody += constraintBlock(ts) // 操作约束(若有)注入系统提示,worker 执行时严格遵守
 	}
@@ -495,6 +497,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	sysBody += policyBlock(pol)
 	// SRC 模式：worker 是点格的人，纪律段必须与 planner 的"补格"目标一致。
 	if tsx.SrcMode() {
+		sysBody = srcmode.SrcPrecedenceNote() + sysBody
 		sysBody += srcmode.WorkerOverlay(tsx.SrcDoc())
 	}
 	// 意图块 → 意图锚定资产块 → 启动指令，依次追加到 system 尾部（与 constraintBlock 同一套追加法）。

@@ -226,6 +226,9 @@ func (p *Program) ApplyToModeDoc(doc ModeDoc) ModeDoc {
 	if p.Rules.MaxRecordsRead > 0 {
 		out.MaxRecordsRead = p.Rules.MaxRecordsRead
 	}
+	if p.TimeWindow != "" {
+		out.TimeWindow = p.TimeWindow
+	}
 	if p.Rules.EgressIP != "" {
 		out.EgressIP = p.Rules.EgressIP
 	}
@@ -294,6 +297,9 @@ func (p *Program) Describe() string {
 	if p.TimeWindow != "" {
 		parts = append(parts, "作业时间窗 "+p.TimeWindow)
 	}
+	if p.Rules.MaxRecordsRead > 0 {
+		parts = append(parts, fmt.Sprintf("越权读取 ≤ %d 组记录", p.Rules.MaxRecordsRead))
+	}
 	if s := strings.TrimSpace(p.ScopeNote); s != "" {
 		parts = append(parts, "范围说明："+oneLineText(s, 200))
 	}
@@ -346,7 +352,18 @@ func parseHHMM(raw string) (hour, minute int, err error) {
 
 // InWindow 判断一个时刻是否落在作业时间窗内（空窗口 = 不限）。跨夜窗口按"或"处理。
 func (p *Program) InWindow(at time.Time) bool {
-	raw := strings.TrimSpace(p.TimeWindow)
+	return TimeWindowAllows(p.TimeWindow, at)
+}
+
+// InWindow 是 ModeDoc 上的同一判定：guard 用任务快照里的窗口做硬拦截。
+func (d ModeDoc) InWindow(at time.Time) bool {
+	return TimeWindowAllows(d.TimeWindow, at)
+}
+
+// TimeWindowAllows 判断 at 是否落在 raw 时间窗内。空 = 不限；任何一段解析失败
+// 都按"不允许"处理（fail-closed：宁可不动作，也不要越过平台窗口）。
+func TimeWindowAllows(raw string, at time.Time) bool {
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return true
 	}

@@ -584,6 +584,7 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	wk.SetExecService(s.m.Executions())                  // P13 长任务托管执行(活过 run;nil=工具显式报未接线)
 	wk.SetPolicyResolver(s.policyResolver(tidOfTask(t))) // P20 探索策略(每 run 现读;改策略下一轮生效)
 	pl := agent.NewPlanner(plannerRuntime, "task-router", s.m.dir, tx, plannerRuntime.CompactionWindow(), s.agentMaxTurns("planner"))
+	pl.SetGuard(t.Guard) // 规划者也有 Bash/run_execution：与 worker/main 走同一道门
 	pl.SetFindingRecorder(s.evidenceStore())
 	pl.SetSrcPreparer(s.prepareSrcSubmission) // SRC 交付准备：覆盖格清完后把中危以上发现收口成可提交件
 	pl.SetCompactionWindowResolver(plannerRuntime.CompactionWindow)

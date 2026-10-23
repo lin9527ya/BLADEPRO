@@ -9,6 +9,22 @@ import "fmt"
 // 的 src 块与 src_state 现取。原文对应 docs/SRC挖掘agent改造方案.md §8 与
 // docs/src-dig范围约束融合.md §3。
 
+// SrcPrecedenceNote 拼在 SRC system prompt 的**最前面**。基础正文是通用渗透模板
+// （教据点、凭据、webshell、深度优先），SRC overlay 只是追加；两者并列时模型的目标
+// 函数会摇摆。这里用一段最高优先级声明先把冲突裁决掉——基础正文里的"打穿/拿据点"
+// 要求在本模式下不适用。
+func SrcPrecedenceNote() string {
+	return `
+【SRC 模式 · 最高优先级】以下基础正文来自通用渗透模板。在 SRC 任务中：
+- 不追求据点、权限维持、横向移动与持久化；report_foothold / report_credential /
+  report_artifact（webshell、建账号、改配置）这些写回不适用，也禁止制造它们。
+- 只读证明到 whoami / id 即止，不做破坏性写操作。
+- 目标函数是补齐覆盖矩阵（资产 × 风险面 × 收尾项）并产出可提交件。基础正文里
+  "深度优先、打穿攻击链"的要求与本段冲突时，一律以 SRC 规则为准。
+
+`
+}
+
 // PlannerOverlay 是 SRC 模式下追加到 planner system 提示的段落。
 func PlannerOverlay(doc ModeDoc) string {
 	return fmt.Sprintf(`

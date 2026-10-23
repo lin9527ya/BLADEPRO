@@ -18,6 +18,33 @@
 - 回归：`TestSettleStatusFor`、`TestCheckFinishWithoutInScopeAssets`，以及台账用例新增的
   两条拒绝路径；`srcmode`/`db` 集成测试在干净 PostgreSQL 测试库上通过。
 
+### 修复：SRC 判定 / 交付的第二批门漏
+
+- **阈值覆盖可降档**：`check_thresholds` 现在有显式覆盖就生效（此前只允许抬高，
+  平台档承诺的 `paths:0` 静默失效）；判死三条件补上 `local_unreachable=1`。
+- **规划者也过拦截面**：`Planner.SetGuard` 接线，规划者的 Bash / `run_execution`
+  与 worker/main 一样走 RoE 范围门、拦截规则与 LLM 裁判。
+- **收尾进度真正写回**：`srcFinishGate` 判定后调用 `SetSrcProgress`，任务列表的
+  `tasks.src_*` 不再恒为 0。
+- **平台等级进提交件**：`【提交信息】`优先展示 `severity_map` 映射后的等级；单条
+  导出也补上提交块（此前只有交付准备与批量包有）。
+- **提示词变量对齐**：`WorkerName` 真正传入 worker；`AssetSummary` 在 agent 实例上
+  **只算一次**后注入（每轮变化会击穿 prompt cache），实时态势仍由 graph_overview 提供；
+  移除从未提供数据的 `FindingsSummary` 目录项；模板渲染失败改为打日志，不再静默回退。
+- **导出跑正文校验**：单条 md/docx/check 与批量 zip 都会跑 `ValidateReportText` /
+  `CheckReportMarkdown`，问题以 `⚠` 写入文件备注（不阻断，交给人工）。
+- **SRC 冲突裁决**：system prompt 最前面加最高优先级声明，明确基础渗透正文里的
+  据点/凭据/持久化要求与“深度优先”在 SRC 模式下不适用。
+- **每资产意图上限落地**：`max_intents_per_asset` 不再是提示词约定——`add_intent` 会
+  数本任务已派到该资产的意图，吃满预算直接拒绝（继承的只读意图不占额度）。
+- **平台作业时间窗硬执行**：`time_window` 写进 `mode_doc` 快照；guard 在每次受管工具
+  调用前检查，窗口外直接拒绝 Bash / `run_execution` / WebFetch / `shell_*` / 写文件，
+  不再只是提示词约束。空窗口 = 不限；坏快照 fail-closed。
+- **越权读取上限进提示词**：`max_records_read` 写进平台规则说明（仍是提示级约束，
+  未做流量级硬拦）。
+- 回归：阈值降档/判死三条件单测、`TestPlannerGuardHooks`、提示词变量渲染、
+  导出正文校验；`go test -p 1 ./agent ./srcmode ./db` 在干净测试库通过。
+
 ### 优化：src_state 摘要视图、收尾进度上列表、docx 提交块
 
 - `src_state` 默认返回摘要（计数 + top20 缺口 + 每资产进度），`detail=true` 才给逐格矩阵；

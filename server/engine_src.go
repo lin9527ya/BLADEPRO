@@ -48,6 +48,15 @@ func (e *Engine) srcFinishGate(ctx context.Context, t *Task, taskID int64) bool 
 			Summary: "SRC 收尾门查询失败，本次按放行处理：" + err.Error()})
 		return true
 	}
+	// 列表页读的是这次判定的快照（tasks.src_*），不是实时重算；写库失败只记录，
+	// 不影响门本身。
+	e.m.SetSrcProgress(t, db.SrcProgress{
+		CellsTotal:  rep.CellsTotal,
+		CellsDone:   rep.CellsTerminal,
+		ChecksTotal: rep.ChecksTotal,
+		ChecksDone:  rep.ChecksDone,
+		GapsTotal:   rep.GapsTotal,
+	})
 	if rep.Finishable {
 		e.resetSrcGate(t.ID)
 		return true

@@ -3,6 +3,7 @@ package guard
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/lin9527ya/Norma/hook"
@@ -37,3 +38,21 @@ func TestPreToolUsePassthrough(t *testing.T) {
 }
 
 var _ = hook.PreToolUse
+
+// TestWindowCheckBlocks工具Calls 钉住任务级作业时间窗：窗口外，即使没有任何
+// intercept 规则，受管工具也必须被拦下。
+func TestWindowCheckBlocksTools(t *testing.T) {
+	g := New()
+	g.SetWindowCheck(func() (bool, string) { return false, "不在平台作业时间窗 09:00-18:00 内" })
+	input, _ := json.Marshal(map[string]string{"command": "curl https://acme.com/"})
+	blocked, msg, _ := g.Hooks().PreToolUse(context.Background(), "Bash", input)
+	if !blocked || !strings.Contains(msg, "时间窗") {
+		t.Fatalf("窗口外必须拦下：blocked=%v msg=%q", blocked, msg)
+	}
+
+	g.SetWindowCheck(func() (bool, string) { return true, "" })
+	blocked, _, _ = g.Hooks().PreToolUse(context.Background(), "Bash", input)
+	if blocked {
+		t.Fatal("窗口内不应拦截")
+	}
+}

@@ -8,11 +8,13 @@ import (
 	"sync"
 
 	"github.com/lin9527ya/Norma/agentcore"
+	"github.com/lin9527ya/Norma/hook"
 	"github.com/lin9527ya/Norma/llm"
 	"github.com/lin9527ya/Norma/permission"
 	actool "github.com/lin9527ya/Norma/tool"
 	"github.com/lin9527ya/Norma/transcript"
 	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/guard"
 	"github.com/lin9527ya/bladepro/intercept"
 	"github.com/lin9527ya/bladepro/policy"
 	"github.com/lin9527ya/bladepro/srcmode"
@@ -44,7 +46,14 @@ type Planner struct {
 	execService ExecService
 	// policyFn（P20）解析本任务的探索策略（nil = 无策略）。每个 run 现读：
 	// 改策略下一轮生效，无需重建 agent。
-	policyFn     func() *policy.Effective
+	policyFn func() *policy.Effective
+	// guard 是任务自带的拦截面：planner 手里也有 Bash / run_execution，不挂 guard
+	// 就等于 RoE 范围门、拦截规则与 LLM 裁判对规划者全部失效。
+	guard *guard.Guard
+	// assetSummary 是任务开局时的资产摘要，只算一次：它渲染进 system prompt，
+	// 每轮变化会让 prompt cache 全部失效。
+	summaryOnce  sync.Once
+	assetSummary string
 	noaEnabledFn func() bool // resolver: use experimental noa compaction? (nil = off)
 	maxTokensFn  func() int  // resolver: per-reply output cap (nil/0 = send no cap)
 	compactor    *Compactor  // cold-node compaction (§7); nil = disabled
@@ -62,6 +71,18 @@ func NewPlanner(prov llm.Provider, model, workDir string, tx *transcript.Store, 
 }
 
 func (p *Planner) SetCompactionWindowResolver(fn func() int) { p.windowFn = fn }
+
+// SetGuard wires the owning task's Guard (nil = no guard: tests / unscoped).
+func (p *Planner) SetGuard(g *guard.Guard) { p.guard = g }
+
+// guardHooks 返回本次 run 要挂的 hooks（nil = 不挂）。与 mainagent 的同名方法
+// 一致：这条接线断掉时不会有任何报错，所以用方法把不变量钉住。
+func (p *Planner) guardHooks() *hook.Registry {
+	if p.guard == nil {
+		return nil
+	}
+	return p.guard.Hooks()
+}
 
 // SetCompactor wires the cold-node compactor (cold-digest §7). Called each
 // planner wake-up to advance the round counter, maintain cold stamps, and
@@ -413,8 +434,10 @@ const plannerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
 
 不重复、不硬凑；但目标未达成、又有未覆盖且更深的打法时，该派就派。简洁、聚焦、高效。`
 
-func plannerSystem(goal, dataDir, workDir string) string {
-	body := renderSystem("planner", plannerDefaultTmpl, PlannerVars{Goal: goal, DataDir: dataDir, Now: nowStr()})
+func plannerSystem(goal, dataDir, workDir, assetSummary string) string {
+	body := renderSystem("planner", plannerDefaultTmpl, PlannerVars{
+		Goal: goal, AssetSummary: assetSummary, DataDir: dataDir, Now: nowStr(),
+	})
 	return body + artifactSpec(workDir)
 }
 
@@ -478,7 +501,8 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	// 本任务的工作目录 <workDir>/tasks/<taskID>，先建好。
 	taskDir := ensureRunDir(p.workDir, taskID, 0)
 	ctx = intercept.WithReviewContext(ctx, taskDir, intercept.ReviewBackground{})
-	sysBody := plannerSystem(goal, p.workDir, taskDir)
+	p.summaryOnce.Do(func() { p.assetSummary = assetSummaryForTask(as, taskID) })
+	sysBody := plannerSystem(goal, p.workDir, taskDir, p.assetSummary)
 	if p.wantConstraints() {
 		sysBody += constraintBlock(ts) // 操作约束(若有)注入系统提示,框定探索边界
 	}
@@ -486,6 +510,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	sysBody += policyBlock(pol)
 	// SRC 模式：让 planner 的目标函数从"打深"切到"补格"（静态段，不含本轮态势）。
 	if tsx.SrcMode() {
+		sysBody = srcmode.SrcPrecedenceNote() + sysBody
 		sysBody += srcmode.PlannerOverlay(tsx.SrcDoc())
 	}
 	system, boundary := deferredSystem(sysBody, def)
@@ -531,6 +556,9 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 		Settlement:   settle,
 		NonStreaming: p.nonStreaming(), // 该 profile 选非流式时走 Provider.Complete
 		MaxTokens:    p.maxTokens(),    // 0 = 不发上限,由服务端默认值决定
+	}
+	if h := p.guardHooks(); h != nil {
+		opts.Hooks = h
 	}
 	if p.tx != nil { // persist raw LLM conversation; one accumulating file per task's planner
 		opts.Transcript = p.tx

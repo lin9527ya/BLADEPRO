@@ -23,6 +23,24 @@ import (
 	"github.com/lin9527ya/bladepro/srcmode"
 )
 
+// srcPlatformInfo 返回任务绑定的平台项目与映射后的等级：level 为空表示没有
+// severity_map 命中；programID=0 表示任务没绑项目。提交块与台账共用这一份口径，
+// 避免"报告写高危、台账记 critical"。
+func (s *Server) srcPlatformInfo(ctx context.Context, taskID int64, severity string) (level string, programID int64) {
+	if taskID <= 0 {
+		return "", 0
+	}
+	row, err := s.m.PG().Src().SrcProgramForTask(ctx, taskID)
+	if err != nil || row == nil {
+		return "", 0
+	}
+	p, err := srcProgramFromRow(row)
+	if err != nil || p == nil {
+		return "", 0
+	}
+	return p.PlatformLevel(severity), p.ID
+}
+
 func (s *Server) registerSrcDelivery(mux routeRegistrar) {
 	mux.HandleFunc("POST /api/findings/{id}/src-submission", s.postFindingSrcSubmission)
 	mux.HandleFunc("PATCH /api/findings/{id}/src-dedupe", s.patchFindingSrcDedupe)
@@ -104,7 +122,14 @@ func (s *Server) prepareSrcSubmission(ctx context.Context, req agent.SrcPrepareR
 		// 但**交付告警不能丢**——"缺 proof 绑定 / 包被截断"正是审核打回的原因。
 		in.Notes = warningNotes(in.Notes)
 	}
-	in.SubmitBlock = srcmode.SubmitInfo(doc, report.SrcSeverityLabel(f.Severity))
+	// 提交块里的危害等级优先用平台映射后的等级（严重/高危 vs critical/high），
+	// 没有映射时回落到内部等级的交付用语。
+	platformLevel, programID := s.srcPlatformInfo(ctx, req.TaskID, f.Severity)
+	submitLabel := report.SrcSeverityLabel(f.Severity)
+	if platformLevel != "" {
+		submitLabel = platformLevel
+	}
+	in.SubmitBlock = srcmode.SubmitInfo(doc, submitLabel)
 	markdown := report.SrcMarkdown(in)
 
 	var issues []string
@@ -135,19 +160,7 @@ func (s *Server) prepareSrcSubmission(ctx context.Context, req agent.SrcPrepareR
 		status = db.SrcSubReady
 	}
 
-	// P3：绑定平台项目时，提交台账同时记 program 与"平台等级"（severity_map 映射）。
-	var program *srcmode.Program
-	if row, err := store.SrcProgramForTask(ctx, req.TaskID); err == nil && row != nil {
-		if p, perr := srcProgramFromRow(row); perr == nil {
-			program = p
-		}
-	}
-	platformLevel := ""
-	programID := int64(0)
-	if program != nil {
-		programID = program.ID
-		platformLevel = program.PlatformLevel(f.Severity)
-	}
+	// P3：programID/platformLevel 已在上方算好（提交块与台账共用同一口径）。
 
 	sub, meta, err := store.PrepareSrcSubmission(ctx, db.SrcSubmissionInput{
 		TaskID: req.TaskID, FindingID: f.ID, Platform: req.Platform,

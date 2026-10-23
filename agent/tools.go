@@ -1432,6 +1432,29 @@ type intentItem struct {
 //     仍在手(active)的战果；这条边是「哪些战果还没被推进过」的唯一依据。
 //
 // 挂上目标后不再写 origin 兜底边——意图经目标仍可回溯任务起点（README/链路图的形状）。
+// checkIntentAssetCap 落实 mode_doc 的每资产意图上限：只数本任务的意图（继承的
+// 只读意图不占预算）。查询失败时放行，避免一次统计失败把 planner 卡死。
+func (t *ToolSet) checkIntentAssetCap(anchors []int64) error {
+	pairs, err := t.as.IntentAssets(t.taskID)
+	if err != nil {
+		return nil
+	}
+	counts := map[int64]int{}
+	for _, p := range pairs {
+		if p.Inherited {
+			continue
+		}
+		counts[p.AssetID]++
+	}
+	for _, aid := range anchors {
+		if counts[aid] >= t.srcDoc.MaxIntentsPerAsset {
+			return fmt.Errorf("资产 %d 已用掉 %d/%d 条意图（max_intents_per_asset）：先把已派意图收口（src_mark_cell / budget_stop），或换资产；不要换措辞重派",
+				aid, counts[aid], t.srcDoc.MaxIntentsPerAsset)
+		}
+	}
+	return nil
+}
+
 func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, error) {
 	if strings.TrimSpace(it.Summary) == "" {
 		return 0, "", fmt.Errorf("summary 不能为空")
@@ -1508,6 +1531,13 @@ func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, er
 				fmt.Fprintf(&b, "\n - %s", h.Describe())
 			}
 			return 0, "", fmt.Errorf("%s", b.String())
+		}
+	}
+	// SRC 的 max_intents_per_asset 此前只写在 mode_doc 与提示词里，没有执行点；
+	// 这里落成硬门：同一资产吃满预算后，必须先把已派意图收口或换资产。
+	if t.srcMode && t.srcDoc.MaxIntentsPerAsset > 0 && t.as != nil && len(anchors) > 0 {
+		if err := t.checkIntentAssetCap(anchors); err != nil {
+			return 0, "", err
 		}
 	}
 	payload := map[string]any{"summary": it.Summary, "risk_area": db.NormalizeRiskArea(it.RiskArea)}

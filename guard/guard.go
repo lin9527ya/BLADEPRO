@@ -38,6 +38,9 @@ type Guard struct {
 	reg         *hook.Registry
 	interceptor *intercept.Interceptor // optional; nil disables user-configured rules
 	taskID      int64                  // RoE scope-gate context; 0 = unscoped (no enforcement)
+	// windowCheck（可选）是任务级作业时间窗：返回 false 时直接拦下所有受管工具调用。
+	// nil = 不限（普通任务 / 未绑定平台窗口）。
+	windowCheck func() (ok bool, reason string)
 }
 
 // New creates a Guard without user-configured intercept rules (used for pentest
@@ -58,6 +61,10 @@ func newGuard(ic *intercept.Interceptor, taskID int64) *Guard {
 
 // Hooks returns the hook registry to attach to an agent session.
 func (g *Guard) Hooks() *hook.Registry { return g.reg }
+
+// SetWindowCheck installs a task-level work-window check. It runs before any
+// intercept rule and blocks all gated tools while it returns false.
+func (g *Guard) SetWindowCheck(fn func() (bool, string)) { g.windowCheck = fn }
 
 func (g *Guard) preToolUse(ctx context.Context, ev hook.Event) hook.Result {
 	// Extract the shell-command surface for the audit log: Bash + the interactive-shell
@@ -86,6 +93,13 @@ func (g *Guard) preToolUse(ctx context.Context, ev hook.Event) hook.Result {
 // applyIntercept evaluates user-configured intercept rules against the tool call.
 // Both rules and the fallback judge receive the complete tool input.
 func (g *Guard) applyIntercept(ctx context.Context, ev hook.Event) hook.Result {
+	// 任务级作业时间窗：先于一切规则。窗口外不做任何动作（包括未配置 intercept
+	// 规则的任务）——这是平台封号的硬边界，不是提示词建议。
+	if g.windowCheck != nil {
+		if ok, reason := g.windowCheck(); !ok {
+			return g.block(ev.ToolName, systemBlockMessage(reason), "")
+		}
+	}
 	if g.interceptor == nil {
 		return hook.Result{}
 	}

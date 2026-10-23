@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/lin9527ya/Norma/agentcore"
 	"github.com/lin9527ya/Norma/hook"
@@ -44,6 +45,9 @@ type MainAgent struct {
 	// nil = 不挂、无任何拦截。接线方式与 ChatAgent 一致——任务内的人在环路同样能执行命令，
 	// 而且这里拿得到任务的**真实 id**，所以范围门本就该生效（此前漏挂，见下）。
 	guard *guard.Guard
+	// assetSummary 同样只算一次（开局态势），避免每条消息都换一份 system 前缀。
+	summaryOnce  sync.Once
+	assetSummary string
 }
 
 // SetGuard attaches a guard (intercept rules + LLM judge + RoE scope gate) to this
@@ -151,8 +155,10 @@ const mainAgentDefaultTmpl = `你是一个授权渗透测试系统的"主 agent"
 
 不要编造发现；只根据工具返回的真实数据回答。`
 
-func mainAgentSystem(goal, dataDir, workDir string) string {
-	body := renderSystem("mainagent", mainAgentDefaultTmpl, MainVars{Goal: goal, DataDir: dataDir, Now: nowStr()})
+func mainAgentSystem(goal, dataDir, workDir, assetSummary string) string {
+	body := renderSystem("mainagent", mainAgentDefaultTmpl, MainVars{
+		Goal: goal, AssetSummary: assetSummary, DataDir: dataDir, Now: nowStr(),
+	})
 	return body + artifactSpec(workDir)
 }
 
@@ -199,7 +205,8 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 	// 本任务的工作目录 <workDir>/tasks/<taskID>，先建好。
 	mainDir := ensureRunDir(m.workDir, taskID, 0)
 	ctx = intercept.WithReviewWorkingDirectory(ctx, mainDir)
-	system, boundary := deferredSystem(mainAgentSystem(goal, m.workDir, mainDir), def)
+	m.summaryOnce.Do(func() { m.assetSummary = assetSummaryForTask(as, taskID) })
+	system, boundary := deferredSystem(mainAgentSystem(goal, m.workDir, mainDir, m.assetSummary), def)
 	opts := agentcore.Options{
 		Provider:        m.prov,
 		SystemPrompt:    system,

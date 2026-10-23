@@ -139,8 +139,8 @@ var CheckDefs = []CheckDef{
 			{Key: "external_exits", Label: "外部出口数"},
 			{Key: "dns_resolvers", Label: "DNS 解析器数"},
 		},
-		MinFull:         map[string]int{"external_exits": 2, "dns_resolvers": 2},
-		MinPlatform:     map[string]int{"external_exits": 2, "dns_resolvers": 2},
+		MinFull:         map[string]int{"local_unreachable": 1, "external_exits": 2, "dns_resolvers": 2},
+		MinPlatform:     map[string]int{"local_unreachable": 1, "external_exits": 2, "dns_resolvers": 2},
 		NaCodes:         []string{"reachable"},
 		RequireEvidence: true,
 	},
@@ -312,7 +312,9 @@ func checkSatisfied(def CheckDef, doc ModeDoc, metrics map[string]int) (bool, st
 	}
 	var missing []string
 	for key, min := range need {
-		if v := doc.Threshold(key); v > min {
+		// 显式覆盖可以抬高**也可以降低**门槛（平台档常把 paths 降到 0，改走
+		// manual_paths）；只允许抬高会让 UI/文档里承诺的降档静默失效。
+		if v, ok := doc.CheckThresholds[key]; ok {
 			min = v
 		}
 		if metrics[key] < min {

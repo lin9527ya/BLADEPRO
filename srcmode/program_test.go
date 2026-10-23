@@ -169,8 +169,9 @@ func TestProgramSeverityLevel(t *testing.T) {
 
 func TestProgramDescribe(t *testing.T) {
 	p := &Program{Name: "vendor", Platform: "src", RateLimit: 3, TimeWindow: "09:00-18:00", ScopeNote: "只测 web\n不碰生产库"}
+	p.Rules.MaxRecordsRead = 5
 	got := p.Describe()
-	for _, want := range []string{"【平台规则】", "平台：src", "项目：vendor", "3 请求/秒", "09:00-18:00", "只测 web 不碰生产库"} {
+	for _, want := range []string{"【平台规则】", "平台：src", "项目：vendor", "3 请求/秒", "09:00-18:00", "越权读取 ≤ 5 组记录", "只测 web 不碰生产库"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("说明里缺 %q：%s", want, got)
 		}
@@ -250,5 +251,31 @@ func TestProgramValidateRejectsBadTier(t *testing.T) {
 	p.Rules.EgressIP = "1.2.3.4 5.6.7.8"
 	if err := p.Validate(); err == nil {
 		t.Fatal("带空格的 egress_ip 应被拒绝")
+	}
+}
+
+// TestProgramTimeWindowCompiledIntoModeDoc 钉住平台时间窗进任务快照：guard 靠
+// mode_doc 里的 TimeWindow 做硬拦截，不能只留在 Program 行上。
+func TestProgramTimeWindowCompiledIntoModeDoc(t *testing.T) {
+	p := &Program{Name: "window", TimeWindow: "22:00-02:00"}
+	if err := p.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	doc := p.ApplyToModeDoc(DefaultDoc())
+	if doc.TimeWindow != "22:00-02:00" {
+		t.Fatalf("time_window 未编译进 mode_doc：%+v", doc)
+	}
+	at := func(h, m int) time.Time { return time.Date(2026, 1, 1, h, m, 0, 0, time.Local) }
+	if !doc.InWindow(at(23, 30)) || !doc.InWindow(at(1, 30)) {
+		t.Fatal("跨夜窗口内应放行")
+	}
+	if doc.InWindow(at(12, 0)) {
+		t.Fatal("窗口外应拒绝")
+	}
+	if !(ModeDoc{}).InWindow(at(12, 0)) {
+		t.Fatal("空窗口 = 不限")
+	}
+	if (ModeDoc{TimeWindow: "not-a-window"}).InWindow(at(12, 0)) {
+		t.Fatal("坏快照应 fail-closed")
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/lin9527ya/bladepro/enrich"
 	"github.com/lin9527ya/bladepro/guard"
 	"github.com/lin9527ya/bladepro/intercept"
+	"github.com/lin9527ya/bladepro/srcmode"
 	"github.com/lin9527ya/bladepro/traffic"
 )
 
@@ -1008,6 +1009,20 @@ func unixNanoOrZero(t *time.Time) int64 {
 }
 
 func taskFromPG(pt *pgdb.Task, store *pgdb.ExplorationStore, ic *intercept.Interceptor) *Task {
+	g := guard.NewWithInterceptor(ic, pt.ID)
+	// 平台项目的作业时间窗：写进 mode_doc 快照后由 guard 硬拦。窗口外所有受管
+	// 工具调用（Bash/run_execution/WebFetch/shell_*/写文件）都会被拒绝。
+	if pt.Mode == srcmode.ModeSrc {
+		doc := srcmode.Parse(pt.ModeDoc)
+		if doc.TimeWindow != "" {
+			g.SetWindowCheck(func() (bool, string) {
+				if doc.InWindow(time.Now()) {
+					return true, ""
+				}
+				return false, "当前不在平台作业时间窗（" + doc.TimeWindow + "）内：等窗口开启后再动作"
+			})
+		}
+	}
 	return &Task{
 		ID: strconv.FormatInt(pt.ID, 10), ExpID: pt.ExplorationID,
 		Name:       pt.Name,
@@ -1034,7 +1049,7 @@ func taskFromPG(pt *pgdb.Task, store *pgdb.ExplorationStore, ic *intercept.Inter
 		SrcChecksDone:     pt.SrcChecksDone,
 		SrcGapsTotal:      pt.SrcGapsTotal,
 		FirstRunAt:        unixOrZero(pt.FirstRunAt), DeadlineAt: unixOrZero(pt.DeadlineAt),
-		Store: store, Guard: guard.NewWithInterceptor(ic, pt.ID), notify: make(chan struct{}, 1),
+		Store: store, Guard: g, notify: make(chan struct{}, 1),
 	}
 }
 

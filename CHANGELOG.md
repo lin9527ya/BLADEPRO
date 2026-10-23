@@ -33,8 +33,9 @@
   移除从未提供数据的 `FindingsSummary` 目录项；模板渲染失败改为打日志，不再静默回退。
 - **导出跑正文校验**：单条 md/docx/check 与批量 zip 都会跑 `ValidateReportText` /
   `CheckReportMarkdown`，问题以 `⚠` 写入文件备注（不阻断，交给人工）。
-- **SRC 冲突裁决**：system prompt 最前面加最高优先级声明，明确基础渗透正文里的
-  据点/凭据/持久化要求与“深度优先”在 SRC 模式下不适用。
+- **SRC 冲突裁决**：system prompt 最前面加最高优先级声明；同时从基础正文里删掉
+  「拿到据点 / 读到凭据 / 留在目标上的东西」三条与「深度优先于覆盖度」，收尾词前置
+  SRC 纪律（不写据点/凭据/webshell；gaps 未清零不 prove_goal）。
 - **每资产意图上限落地**：`max_intents_per_asset` 不再是提示词约定——`add_intent` 会
   数本任务已派到该资产的意图，吃满预算直接拒绝（继承的只读意图不占额度）。
 - **平台作业时间窗硬执行**：`time_window` 写进 `mode_doc` 快照；guard 在每次受管工具

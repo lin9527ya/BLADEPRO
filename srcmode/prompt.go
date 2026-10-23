@@ -1,6 +1,9 @@
 package srcmode
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Prompt overlay：SRC 模式对 planner / worker / reporter 的**静态**追加段。
 //
@@ -23,6 +26,62 @@ func SrcPrecedenceNote() string {
   "深度优先、打穿攻击链"的要求与本段冲突时，一律以 SRC 规则为准。
 
 `
+}
+
+// StripPentestOnly 从通用渗透基础正文里删掉在 SRC 模式下明确不适用的整段：
+// 据点 / 凭据 / 留在目标上的东西（webshell、建账号、持久化），以及 planner 的
+// "深度优先于覆盖度"。只按种子正文的稳定前缀匹配；用户改过的模板则由
+// SrcPrecedenceNote 兜底（冲突时以 SRC 为准）。
+func StripPentestOnly(text string) string {
+	if text == "" {
+		return ""
+	}
+	bulletPrefixes := []string{
+		"- **拿到据点 → report_foothold",
+		"- **读到凭据 → report_credential",
+		"- **留在目标上的东西 → report_artifact",
+		"- **深度优先于覆盖度**",
+	}
+	isDrop := func(t string) bool {
+		for _, p := range bulletPrefixes {
+			if strings.HasPrefix(t, p) {
+				return true
+			}
+		}
+		return false
+	}
+	lines := strings.Split(text, "\n")
+	out := make([]string, 0, len(lines))
+	droppingCont := false
+	for _, ln := range lines {
+		t := strings.TrimSpace(ln)
+		if droppingCont {
+			// 被删 bullet 的缩进说明行（"· ..."）一并删掉，避免留下孤儿。
+			if strings.HasPrefix(t, "·") {
+				continue
+			}
+			droppingCont = false
+		}
+		if isDrop(t) {
+			droppingCont = true
+			continue
+		}
+		out = append(out, ln)
+	}
+	return strings.Join(out, "\n")
+}
+
+// SrcWrapupNote / SrcPlannerWrapupNote 是收尾阶段注入的 SRC 纪律。收尾词是
+// admin 可编辑的，不能整段替换；用前置声明把"不要写据点/凭据/webshell"和
+// "gaps 没清零不要 prove_goal"说在最前面。
+func SrcWrapupNote() string {
+	return "【SRC 模式·收尾】只写事实/发现与覆盖格：insert_assets、record_fact、report_finding、" +
+		"src_mark_cell、src_mark_check。不要写据点/凭据/webshell/建账号/持久化；只读证明到 whoami/id 即止。"
+}
+
+func SrcPlannerWrapupNote() string {
+	return "【SRC 模式·收尾】优先把本轮已测结果写成 src_mark_cell / src_mark_check；" +
+		"gaps_total > 0 时不要 prove_goal（engine 会拒绝 done 并注入缺口）。"
 }
 
 // PlannerOverlay 是 SRC 模式下追加到 planner system 提示的段落。

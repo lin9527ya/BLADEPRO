@@ -510,7 +510,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	sysBody += policyBlock(pol)
 	// SRC 模式：让 planner 的目标函数从"打深"切到"补格"（静态段，不含本轮态势）。
 	if tsx.SrcMode() {
-		sysBody = srcmode.SrcPrecedenceNote() + sysBody
+		sysBody = srcmode.SrcPrecedenceNote() + srcmode.StripPentestOnly(sysBody)
 		sysBody += srcmode.PlannerOverlay(tsx.SrcDoc())
 	}
 	system, boundary := deferredSystem(sysBody, def)
@@ -518,6 +518,9 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	// 任务到点时进收尾(因超时→任务超时词,因步数→per-run 词)。
 	maxDur, clamped := clampMaxDuration(tc.DeadlineUnix, 0)
 	settle := wrapupSettlement("planner", nil)
+	if tsx.SrcMode() {
+		settle.Prompt = srcmode.SrcPlannerWrapupNote() + "\n" + settle.Prompt
+	}
 	if tc.DeadlineUnix > 0 {
 		settle = wrapupSettlementForTask("planner", nil, clamped)
 	}

@@ -497,7 +497,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	sysBody += policyBlock(pol)
 	// SRC 模式：worker 是点格的人，纪律段必须与 planner 的"补格"目标一致。
 	if tsx.SrcMode() {
-		sysBody = srcmode.SrcPrecedenceNote() + sysBody
+		sysBody = srcmode.SrcPrecedenceNote() + srcmode.StripPentestOnly(sysBody)
 		sysBody += srcmode.WorkerOverlay(tsx.SrcDoc())
 	}
 	// 意图块 → 意图锚定资产块 → 启动指令，依次追加到 system 尾部（与 constraintBlock 同一套追加法）。
@@ -528,6 +528,9 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// 收尾阶段不再起新长任务（run_execution 收起），但 wait/get/cancel_execution
 	// 保留：收尾恰恰要把在跑的执行交代清楚（等它、读它的部分输出、或明确取消）。
 	settle := wrapupSettlement("worker", []string{"Bash", "run_execution"})
+	if tsx.SrcMode() {
+		settle.Prompt = srcmode.SrcWrapupNote() + "\n" + settle.Prompt
+	}
 	if tc.DeadlineUnix > 0 {
 		settle = wrapupSettlementForTask("worker", []string{"Bash", "run_execution"}, clamped)
 	}

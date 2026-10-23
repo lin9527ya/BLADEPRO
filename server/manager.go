@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -62,16 +63,22 @@ type Task struct {
 	// 由 /policy 接口写入并同步到这里，供 DTO 与 UI 展示；执行点走 DB 现读（policyResolver）。
 	ExplorationPolicy json.RawMessage `json:"exploration_policy,omitempty"`
 	// Mode 是任务模式（""=普通渗透，"src"=SRC 挖掘），创建时定死；ModeDoc 是其快照。
-	Mode         string                 `json:"mode,omitempty"`
-	ModeDoc      json.RawMessage        `json:"mode_doc,omitempty"`
-	SrcProgramID *int64                 `json:"src_program_id,omitempty"` // SRC 平台项目（P3）
-	FirstRunAt   int64                  `json:"first_run_at,omitempty"`
-	DeadlineAt   int64                  `json:"deadline_at,omitempty"`
-	Store        *pgdb.ExplorationStore `json:"-"`
-	Guard        *guard.Guard           `json:"-"`
-	notify       chan struct{}
-	lifecycleMu  sync.RWMutex
-	llmMu        sync.RWMutex
+	Mode         string          `json:"mode,omitempty"`
+	ModeDoc      json.RawMessage `json:"mode_doc,omitempty"`
+	SrcProgramID *int64          `json:"src_program_id,omitempty"` // SRC 平台项目（P3）
+	// SRC 进度冗余：最近一次收尾门判定的快照（列表页直接读，不重算）。
+	SrcCellsTotal  int                    `json:"src_cells_total,omitempty"`
+	SrcCellsDone   int                    `json:"src_cells_done,omitempty"`
+	SrcChecksTotal int                    `json:"src_checks_total,omitempty"`
+	SrcChecksDone  int                    `json:"src_checks_done,omitempty"`
+	SrcGapsTotal   int                    `json:"src_gaps_total,omitempty"`
+	FirstRunAt     int64                  `json:"first_run_at,omitempty"`
+	DeadlineAt     int64                  `json:"deadline_at,omitempty"`
+	Store          *pgdb.ExplorationStore `json:"-"`
+	Guard          *guard.Guard           `json:"-"`
+	notify         chan struct{}
+	lifecycleMu    sync.RWMutex
+	llmMu          sync.RWMutex
 
 	// pendingTriggers accumulates the concrete changes (worker done / finding) that
 	// fired planning rounds since the last one consumed them. The debounce coalesces
@@ -1021,6 +1028,11 @@ func taskFromPG(pt *pgdb.Task, store *pgdb.ExplorationStore, ic *intercept.Inter
 		Mode:              pt.Mode,
 		ModeDoc:           append(json.RawMessage(nil), pt.ModeDoc...),
 		SrcProgramID:      cloneInt64Ptr(pt.SrcProgramID),
+		SrcCellsTotal:     pt.SrcCellsTotal,
+		SrcCellsDone:      pt.SrcCellsDone,
+		SrcChecksTotal:    pt.SrcChecksTotal,
+		SrcChecksDone:     pt.SrcChecksDone,
+		SrcGapsTotal:      pt.SrcGapsTotal,
 		FirstRunAt:        unixOrZero(pt.FirstRunAt), DeadlineAt: unixOrZero(pt.DeadlineAt),
 		Store: store, Guard: guard.NewWithInterceptor(ic, pt.ID), notify: make(chan struct{}, 1),
 	}
@@ -2048,4 +2060,24 @@ func (t *Task) drainTriggers() []agent.TriggerEvent {
 	ev := t.pendingTriggers
 	t.pendingTriggers = nil
 	return ev
+}
+
+// SetSrcProgress 把一次收尾门判定结果写回 tasks 并同步缓存里的 Task（列表页读的是缓存/DB
+// 里的冗余计数，不重算覆盖）。写库失败只记录、不打断收尾门——进度条不该成为新的失败点。
+func (m *Manager) SetSrcProgress(t *Task, p pgdb.SrcProgress) {
+	if t == nil {
+		return
+	}
+	n, err := strconv.ParseInt(t.ID, 10, 64)
+	if err != nil || n <= 0 {
+		return
+	}
+	if err := m.pg.SetTaskSrcProgress(context.Background(), n, p); err != nil {
+		log.Printf("[src] 任务 %s 写回 SRC 进度失败: %v", t.ID, err)
+	}
+	m.mu.Lock()
+	t.SrcCellsTotal, t.SrcCellsDone = p.CellsTotal, p.CellsDone
+	t.SrcChecksTotal, t.SrcChecksDone = p.ChecksTotal, p.ChecksDone
+	t.SrcGapsTotal = p.GapsTotal
+	m.mu.Unlock()
 }

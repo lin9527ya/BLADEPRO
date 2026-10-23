@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+### 优化：src_state 摘要视图、收尾进度上列表、docx 提交块
+
+- `src_state` 默认返回摘要（计数 + top20 缺口 + 每资产进度），`detail=true` 才给逐格矩阵；
+  按资产/面过滤时同时裁 `cells`/`checks`/`gaps`，并保留 `summary`/`finishable`/`doc`（之前会丢）。
+- `graph_overview.src` 补 `focus_asset`、`checks_total/done`、`checks_by_key`、`suspicious_na`——
+  提示词里让 planner "先清零 focus_asset"，静态上下文里终于有这个字段了。
+- 收尾门把「面 x/y、闸 x/y、缺口数」写回 `tasks.src_*`，任务列表零成本显示收尾进度。
+- 【提交信息】块改为 `SrcInput.SubmitBlock` 统一渲染，md 与 docx 同源；严格版式只丢元数据备注、
+  保留交付告警。
+- 新增测试：`src_checks` 存储层与收尾门集成（PG，CI 真跑）、摘要/过滤形状、docx 提交块同源。
+
 ### SRC 覆盖的第二层：收尾闸 + N/A 语义 + 红线 + 交付校验（F1–F4）
 
 把 src-dig 技能的范围约束从"文档口径"落成工程约束。技能的一句话是"缺项 = 没测"：

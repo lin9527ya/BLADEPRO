@@ -85,6 +85,15 @@ func docxDocument(in SrcInput) string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` + "\n")
 	b.WriteString(`<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>`)
+	if block := strings.TrimSpace(in.SubmitBlock); block != "" {
+		// 提交块与 markdown 同源：docx 交出去时不用手抄平台表单字段。
+		for _, line := range strings.Split(block, "\n") {
+			if t := strings.TrimSpace(line); t != "" {
+				b.WriteString(docxMeta(t))
+			}
+		}
+		b.WriteString(docxRule())
+	}
 	b.WriteString(docxPara("SrcTitle", nz(in.Title, "（待补：谁的站、做成了啥）")))
 	b.WriteString(docxMeta("目标网站URL：" + nz(in.TargetURL, "（待补）")))
 	b.WriteString(docxSeverity(SrcSeverityLabel(in.Severity)))

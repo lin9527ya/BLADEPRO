@@ -43,9 +43,12 @@ export interface Task {
   coverage_enabled?: boolean; // 资产覆盖度功能开关(创建时定,默认开)；false=不计算/不展示覆盖度
   // SRC 挖掘模式：''/缺省=普通渗透，'src'=按「站点 × 风险面」补格收尾。
   mode?: TaskMode;
-  src_gaps?: number; // 收尾门剩余缺口；普通渗透任务后端不返回
-  src_cells?: number;
-  src_done?: number;
+  /** 最近一次收尾门判定的冗余计数（不是列表页实时重算）。 */
+  src_gaps?: number; // 上次判定的缺口总数
+  src_cells?: number; // 应有格数
+  src_done?: number; // 已有终态的格数
+  src_checks?: number; // 应收尾项数
+  src_checks_done?: number; // 已终态的收尾项数
   /** P3：本任务绑定的 SRC 平台项目；未绑定则不返回。 */
   src_program_id?: number;
   // P20 探索策略限制摘要（列表角标用）；明细走 GET /api/tasks/{id}/policy。

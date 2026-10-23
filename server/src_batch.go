@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"sort"
@@ -273,17 +274,18 @@ func (s *Server) buildSrcZip(ctx context.Context, t *Task, plan *srcBatchPlan) (
 		if err != nil || f == nil {
 			return nil, fmt.Errorf("读取发现 #%d 失败: %v", e.ID, err)
 		}
-		in, _ := s.buildSrcInput(ctx, f)
+		in, warnings := s.buildSrcInput(ctx, f)
+		if len(warnings) > 0 {
+			log.Printf("[src] 交付包：发现 #%d 告警 %d 条", f.ID, len(warnings))
+		}
 		base := fmt.Sprintf("findings/%d-%s", e.ID, srcFileSlug(e.Title, e.VulnClass))
 		// 交付包与"准备交付件"用同一份成品口径：提交块 + 严格版式 + CRLF。
 		doc := s.srcDocForTask(parseIntDefault(t.ID))
 		if doc.StrictLayout {
-			in.Notes = nil
+			in.Notes = warningNotes(in.Notes)
 		}
+		in.SubmitBlock = srcmode.SubmitInfo(doc, report.SrcSeverityLabel(in.Severity))
 		md := report.SrcMarkdown(in)
-		if block := srcmode.SubmitInfo(doc, report.SrcSeverityLabel(in.Severity)); block != "" {
-			md = block + "\n" + md
-		}
 		if err := add(base+".md", []byte(crlfText(md))); err != nil {
 			return nil, err
 		}

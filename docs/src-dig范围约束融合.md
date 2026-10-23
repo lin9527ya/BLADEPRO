@@ -334,3 +334,19 @@ F1–F4 已实现并推送。这一节记"实际落了什么、和设计有什�
 - DB 集成测试仍未在真库跑过（本机无 PostgreSQL），`src_checks` 的 SQL 只经过编译期检查。
 - 截图不生成，只登记；定级不自动判定（机器只搬运等级）。
 - `max_records_read` 只在合规提示层，没有硬拦"第 6 组读取"——那需要流量级计数，超出本轮范围。
+
+### 优化批次（2026-10-23 晚）
+
+- **`src_state` 默认摘要**：一次调用不再返回"每个资产 × 每面 × 每收尾项"的全部行；默认只给
+  计数、top20 缺口与每资产进度，`detail=true` 才给逐格矩阵。过滤（`asset_id`/`area`）现在同时裁
+  `cells`/`checks`/`gaps`，并保留 `summary`/`finishable`/`doc`——之前过滤会把这些任务级判定丢掉。
+- **`graph_overview.src` 补 `focus_asset` / `checks_total/done` / `checks_by_key` / `suspicious_na`**：
+  F4 的"先清零 focus_asset"之前只写在提示词里，planner 的静态上下文里并没有这个字段。
+- **收尾进度冗余**：收尾门每次判定把 `面 x/y、闸 x/y、缺口数` 写回 `tasks.src_*`，任务列表页零成本展示
+  （读的是最近一次判定的快照，不是实时重算）。
+- **docx 与 md 同源**：`【提交信息】`由 `SrcInput.SubmitBlock` 渲染，两边一致；严格版式下只丢元数据备注、
+  保留交付告警（"缺 proof 绑定/包被截断"）。
+- **测试**：`db/src_checks_integration_test.go`（幂等、evidence COALESCE、分组）、
+  `srcmode/checks_integration_test.go`（缺项 → 缺口 → 数字不达标 → 达标放行）、
+  `agent/tools_src_view_test.go`（摘要形状与过滤完整性）、`report/src_submit_block_test.go`（两格式同源）。
+  这些 PG 用例在 CI 的 Postgres 上真跑，本机无库时按既有约定 skip。

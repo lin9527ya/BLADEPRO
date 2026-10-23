@@ -68,10 +68,13 @@ type TaskDTO struct {
 	PolicyCustom     int      `json:"policy_custom,omitempty"`
 	PolicyMaxIntents int      `json:"policy_max_intents,omitempty"`
 	// SRC 挖掘模式：mode 为 "" 时以下字段全部省略（普通渗透任务的 DTO 一个字节都不变）。
-	Mode     string `json:"mode,omitempty"`
-	SrcGaps  int    `json:"src_gaps,omitempty"`
-	SrcCells int    `json:"src_cells,omitempty"`
-	SrcDone  int    `json:"src_done,omitempty"`
+	Mode string `json:"mode,omitempty"`
+	// 进度来自「最近一次收尾门判定」的冗余计数（tasks.src_*，不是列表页实时重算）。
+	SrcCells      int `json:"src_cells,omitempty"`       // 应有格数
+	SrcDone       int `json:"src_done,omitempty"`        // 已有终态的格数
+	SrcChecks     int `json:"src_checks,omitempty"`      // 应收尾项数
+	SrcChecksDone int `json:"src_checks_done,omitempty"` // 已终态的收尾项数
+	SrcGaps       int `json:"src_gaps,omitempty"`        // 上次判定的缺口总数
 	// SrcProgramID 是本任务绑定的 SRC 平台项目（P3）。
 	SrcProgramID *int64 `json:"src_program_id,omitempty"`
 }
@@ -158,6 +161,11 @@ func taskDTO(t *Task, status string) TaskDTO {
 		PolicyCustom:       polCustom,
 		PolicyMaxIntents:   polMax,
 		Mode:               t.Mode,
+		SrcCells:           t.SrcCellsTotal,
+		SrcDone:            t.SrcCellsDone,
+		SrcChecks:          t.SrcChecksTotal,
+		SrcChecksDone:      t.SrcChecksDone,
+		SrcGaps:            t.SrcGapsTotal,
 		SrcProgramID:       t.SrcProgramID,
 	}
 }

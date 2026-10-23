@@ -340,3 +340,17 @@ func crlfText(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	return strings.ReplaceAll(s, "\n", "\r\n")
 }
+
+// warningNotes 只留"⚠"开头的交付告警（严格版式下丢掉元数据备注，但告警必须留）。
+func warningNotes(notes []string) []string {
+	out := make([]string, 0, len(notes))
+	for _, n := range notes {
+		if strings.HasPrefix(strings.TrimSpace(n), "⚠") {
+			out = append(out, n)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}

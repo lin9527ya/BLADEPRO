@@ -364,7 +364,6 @@ var omissionMarkers = []string{
 	"……(中段省略)",
 }
 
-
 // CheckReportMarkdown 对**成品 markdown** 再查一遍报文层的问题：
 // 请求行缺 Host、整行省略号占位、跨块重复的唯一标识头、Content-Length 与正文不符。
 // 与 CheckCompliance 的分工：那边看快照（精确字节数），这边看交出去的文本（防导出被改坏）。

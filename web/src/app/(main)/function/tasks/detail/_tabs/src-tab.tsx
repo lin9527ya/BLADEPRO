@@ -54,6 +54,8 @@ const AREA_TITLES: Record<string, string> = {
   takeover: "子域接管",
   // P2 交付面：不是站点风险面，而是"这条发现还没准备好可提交件"。
   delivery: "交付",
+  // F1 收尾闸：缺口里的伪风险面（JS 抽全/路径枚举/方法矩阵…）。
+  closure: "收尾闸",
 };
 
 // 台账状态 → 中文 + 下一步合法流转（与服务端状态机一致；UI 只是少给错选项，
@@ -153,6 +155,7 @@ const GAP_KIND_LABELS: Record<string, string> = {
   unknown_asset_type: "未配置必做面",
   report_missing: "缺可提交件",
   duplicate: "疑似重复",
+  missing_check: "收尾项未做",
 };
 
 function gapKindLabel(kind: string): string {
@@ -612,7 +615,9 @@ export function SrcTab({ taskId }: { taskId: string }) {
                       </span>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
-                      {(row.items ?? []).map((item) => (
+                      {[...(row.items ?? [])]
+                        .sort((a, b) => Number(Boolean(a.state)) - Number(Boolean(b.state)))
+                        .map((item) => (
                         <button
                           key={item.key}
                           type="button"

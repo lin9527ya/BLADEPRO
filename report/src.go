@@ -35,6 +35,8 @@ type SrcInput struct {
 	Endpoints   []SrcEndpoint
 	Steps       []SrcStep
 	Fix         string // 空 → 规范占位
+	// SubmitBlock 是【提交信息】块（平台表单直填），渲染在正文之前；空 = 不绑定平台项目。
+	SubmitBlock string
 	// Notes 走文件末尾备注区（发现 id / 证据版本 / 生成时间 / 撤回警告），不进 8 块正文。
 	Notes []string
 }
@@ -60,6 +62,14 @@ func SrcSeverityLabel(sev string) string {
 // （禁止半角 #）；复现步骤每条一步、步间一行＃；不出现多余空行。
 func SrcMarkdown(in SrcInput) string {
 	var b strings.Builder
+	// 提交块在最前：平台表单是照着它抄的，放在标题前不会破坏 8 块版式（它不属于正文）。
+	if block := strings.TrimSpace(in.SubmitBlock); block != "" {
+		b.WriteString(block)
+		if !strings.HasSuffix(block, "\n") {
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
 	fmt.Fprintf(&b, "漏洞标题：%s\n", nz(in.Title, "（待补：谁的站、做成了啥）"))
 	fmt.Fprintf(&b, "目标网站URL：%s\n", nz(in.TargetURL, "（待补）"))
 	fmt.Fprintf(&b, "漏洞等级：%s\n", SrcSeverityLabel(in.Severity))

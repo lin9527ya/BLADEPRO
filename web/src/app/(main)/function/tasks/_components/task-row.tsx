@@ -270,6 +270,15 @@ export const TaskRow = React.memo(function TaskRow({
             SRC
           </span>
         )}
+        {task.mode === "src" && ((task.src_cells ?? 0) > 0 || (task.src_checks ?? 0) > 0) && (
+          <span
+            className="text-muted-foreground ml-1.5 rounded border px-1 py-0.5 text-[10px] tabular-nums"
+            title="最近一次收尾门判定：覆盖格 / 收尾闸 / 未清零缺口。点进任务看明细。"
+          >
+            面 {task.src_done ?? 0}/{task.src_cells ?? 0} · 闸 {task.src_checks_done ?? 0}/{task.src_checks ?? 0}
+            {(task.src_gaps ?? 0) > 0 ? ` · 缺 ${task.src_gaps}` : ""}
+          </span>
+        )}
         {(task.policy_techniques?.length ?? 0) + (task.policy_writes?.length ?? 0) + (task.policy_custom ?? 0) > 0 && (
           <span
             className="text-muted-foreground ml-1.5 rounded border px-1 py-0.5 text-[10px]"

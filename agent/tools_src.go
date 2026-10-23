@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	actool "github.com/lin9527ya/Norma/tool"
@@ -39,6 +40,15 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 一次遍历建索引：大任务下把 O(资产 × 项 × 全量 cells) 的嵌套扫描降成 O(cells)。
+	// 键是 assetID|area|item；同一格理论上只有一行（唯一约束），这里保留第一条也更稳。
+	cellIndex := make(map[string]db.SrcCell, len(cells))
+	for _, c := range cells {
+		k := srcCellKey(c.AssetID, c.Area, c.Item)
+		if _, ok := cellIndex[k]; !ok {
+			cellIndex[k] = c
+		}
+	}
 	matrix := make([]map[string]any, 0, len(assets))
 	for _, a := range assets {
 		areas := t.srcDoc.RequiredFor(a.Type)
@@ -49,14 +59,7 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 				items = hard
 			}
 			for _, item := range items {
-				cell := db.SrcCell{}
-				found := false
-				for _, c := range cells {
-					if c.AssetID == a.ID && c.Area == area && c.Item == item {
-						cell, found = c, true
-						break
-					}
-				}
+				cell, found := cellIndex[srcCellKey(a.ID, area, item)]
 				entry := map[string]any{
 					"area": area, "item": item, "title": srcmode.AreaTitle(area),
 					"weight": srcmode.AreaWeight(area),
@@ -198,9 +201,16 @@ func (t *ToolSet) srcOverviewBlock(ctx context.Context) (map[string]any, error) 
 		"finishable":            rep.Finishable,
 		"blocked_finish":        !rep.Finishable,
 		"blocked_reason":        rep.BlockedReason,
+		"focus_asset":           rep.FocusAsset,
+		"focus_asset_id":        rep.FocusAssetID,
+		"checks_total":          rep.ChecksTotal,
+		"checks_done":           rep.ChecksDone,
+		"checks_by_key":         rep.ChecksByKey,
+		"suspicious_na":         rep.SuspiciousNA,
 		"allow_budget_stop":     t.srcDoc.AllowBudgetStop,
 		"max_attempts_per_cell": t.srcDoc.MaxAttemptsPerCell,
-		"note":                  "SRC 模式：本轮只派能点亮空格、或把 tested_clear 变 tested_found 的意图；gaps_total>0 时不要 prove_goal。",
+		"note": "SRC 模式：本轮只派能点亮空格、或把 tested_clear 变 tested_found、或做实收尾项的意图；" +
+			"gaps_total>0 时不要 prove_goal。focus_asset 是当前最该清零的资产。",
 	}, nil
 }
 
@@ -212,64 +222,173 @@ func (t *ToolSet) srcState() actool.CoreTool {
 			"已点亮的终态格(cells)、以及收尾门结论(finishable)。派意图前先看 gaps_by_area 与 top_gaps。"+
 			"终态语义：tested_found(有洞，挂 finding)/tested_clear(测了没洞)/na(不适用)/budget_stop(预算用尽)。",
 		obj(map[string]any{
-			"asset_id": intp("只看某个资产的格（可选）"),
+			"asset_id": intp("只看某个资产（可选，配合 detail 用）"),
 			"area":     str("只看某个风险面（可选）"),
+			"detail":   map[string]any{"type": "boolean", "description": "true = 返回逐格矩阵与全部 cells（默认 false：摘要视图，只给计数与缺口）"},
 		}),
 		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			if !t.srcReady() {
 				return actool.Errorf("src_state 仅在 SRC 模式（tasks.mode='src'）的任务内可用"), nil
 			}
-			var filter struct {
+			var req struct {
 				AssetID int64  `json:"asset_id"`
 				Area    string `json:"area"`
+				Detail  bool   `json:"detail"`
 			}
-			_ = json.Unmarshal(in, &filter)
+			_ = json.Unmarshal(in, &req)
 			snap, err := t.srcSnapshot(ctx)
 			if err != nil {
 				return actool.Errorf(err.Error()), nil
 			}
-			if filter.AssetID <= 0 && filter.Area == "" {
-				return jsonResult(snap)
+			// 默认摘要：一次调用把"每个资产 × 每个面 × 每项收尾"全塞回去，大任务能到几百 KB，
+			// 而 planner 真正要的是"还差多少、差在哪"。要逐格看时显式 detail=true。
+			if !req.Detail {
+				snap = summaryView(snap)
 			}
-			out := map[string]any{"mode": srcmode.ModeSrc}
-			if assets, ok := snap["assets"].([]map[string]any); ok {
-				kept := make([]map[string]any, 0, len(assets))
-				for _, a := range assets {
-					if filter.AssetID > 0 && a["asset_id"] != filter.AssetID {
-						continue
+			if req.AssetID > 0 || strings.TrimSpace(req.Area) != "" {
+				snap = filterSnapshot(snap, req.AssetID, strings.TrimSpace(req.Area))
+			}
+			return jsonResult(snap)
+		})
+}
+
+// srcCellKey 是矩阵查找键（assetID|area|item）。
+func srcCellKey(assetID int64, area, item string) string {
+	return strconv.FormatInt(assetID, 10) + "|" + area + "|" + item
+}
+
+// summaryView 把完整快照压成决策视图：只留计数、缺口与每资产进度，不含逐格行。
+// 任务级字段（summary/finishable/doc/legend/submissions）原样保留——它们才是"能不能收"的依据。
+func summaryView(snap map[string]any) map[string]any {
+	out := make(map[string]any, len(snap)+2)
+	for k, v := range snap {
+		out[k] = v
+	}
+	delete(out, "cells") // 逐格行只在 detail 视图里给
+	if assets, ok := snap["assets"].([]map[string]any); ok {
+		brief := make([]map[string]any, 0, len(assets))
+		for _, a := range assets {
+			total, done := 0, 0
+			if cells, ok := a["cells"].([]map[string]any); ok {
+				total = len(cells)
+				for _, c := range cells {
+					if c["state"] != nil && c["state"] != "" {
+						done++
 					}
-					if filter.Area != "" {
-						if cells, ok := a["cells"].([]map[string]any); ok {
-							only := make([]map[string]any, 0, len(cells))
-							for _, c := range cells {
-								if c["area"] == filter.Area {
-									only = append(only, c)
-								}
-							}
-							a["cells"] = only
+				}
+			}
+			brief = append(brief, map[string]any{
+				"asset_id": a["asset_id"], "asset": a["asset"], "asset_type": a["asset_type"],
+				"cells_total": total, "cells_done": done,
+			})
+		}
+		out["assets"] = brief
+	}
+	if rows, ok := snap["checks"].([]map[string]any); ok {
+		brief := make([]map[string]any, 0, len(rows))
+		for _, row := range rows {
+			items, _ := row["items"].([]map[string]any)
+			done := 0
+			missing := make([]string, 0, 4)
+			for _, it := range items {
+				if it["state"] != nil && it["state"] != "" {
+					done++
+					continue
+				}
+				if key, ok := it["key"].(string); ok {
+					missing = append(missing, key)
+				}
+			}
+			brief = append(brief, map[string]any{
+				"asset_id": row["asset_id"], "asset": row["asset"],
+				"checks_total": len(items), "checks_done": done, "missing": missing,
+			})
+		}
+		out["checks"] = brief
+	}
+	if gaps, ok := snap["gaps"].([]srcmode.Gap); ok && len(gaps) > maxSummaryGaps {
+		out["gaps"] = gaps[:maxSummaryGaps]
+		out["gaps_truncated"] = true
+	}
+	out["view"] = "summary"
+	out["hint"] = "这是摘要；需要逐格矩阵/全部 cells 时传 detail=true，可再用 asset_id/area 收窄"
+	return out
+}
+
+// maxSummaryGaps 是摘要视图里缺口的上限（完整清单在矩阵页签与 detail 视图里）。
+const maxSummaryGaps = 20
+
+// filterSnapshot 按资产/风险面裁剪快照。任务级信息（summary/finishable/doc/legend/
+// submissions）必须保留：过滤只是"看局部"，不是"换一个任务"。
+func filterSnapshot(snap map[string]any, assetID int64, area string) map[string]any {
+	out := make(map[string]any, len(snap))
+	for k, v := range snap {
+		out[k] = v
+	}
+	if assets, ok := snap["assets"].([]map[string]any); ok {
+		kept := make([]map[string]any, 0, len(assets))
+		for _, a := range assets {
+			if assetID > 0 {
+				if id, ok := a["asset_id"].(int64); !ok || id != assetID {
+					continue
+				}
+			}
+			if area != "" {
+				if cells, ok := a["cells"].([]map[string]any); ok {
+					only := make([]map[string]any, 0, len(cells))
+					for _, c := range cells {
+						if c["area"] == area {
+							only = append(only, c)
 						}
 					}
-					kept = append(kept, a)
-				}
-				out["assets"] = kept
-			}
-			gaps := make([]srcmode.Gap, 0, 16)
-			if all, ok := snap["gaps"].([]srcmode.Gap); ok {
-				for _, g := range all {
-					if filter.AssetID > 0 && g.AssetID != filter.AssetID {
-						continue
-					}
-					if filter.Area != "" && g.Area != filter.Area {
-						continue
-					}
-					gaps = append(gaps, g)
+					a["cells"] = only
 				}
 			}
-			out["gaps"] = gaps
-			out["gaps_total"] = len(gaps)
-			out["legend"] = snap["legend"]
-			return jsonResult(out)
-		})
+			kept = append(kept, a)
+		}
+		out["assets"] = kept
+	}
+	if cells, ok := snap["cells"].([]db.SrcCell); ok {
+		kept := make([]db.SrcCell, 0, len(cells))
+		for _, c := range cells {
+			if assetID > 0 && c.AssetID != assetID {
+				continue
+			}
+			if area != "" && c.Area != area {
+				continue
+			}
+			kept = append(kept, c)
+		}
+		out["cells"] = kept
+	}
+	if rows, ok := snap["checks"].([]map[string]any); ok {
+		kept := make([]map[string]any, 0, len(rows))
+		for _, row := range rows {
+			if assetID > 0 {
+				if id, ok := row["asset_id"].(int64); !ok || id != assetID {
+					continue
+				}
+			}
+			kept = append(kept, row)
+		}
+		out["checks"] = kept
+	}
+	if gaps, ok := snap["gaps"].([]srcmode.Gap); ok {
+		kept := make([]srcmode.Gap, 0, len(gaps))
+		for _, g := range gaps {
+			if assetID > 0 && g.AssetID != assetID {
+				continue
+			}
+			if area != "" && g.Area != area {
+				continue
+			}
+			kept = append(kept, g)
+		}
+		out["gaps"] = kept
+		out["gaps_total"] = len(kept)
+	}
+	out["filter"] = map[string]any{"asset_id": assetID, "area": area}
+	return out
 }
 
 // srcFinishCheck 是收尾门的只读预检：planner 判 met 前先问一句"还差哪些格"。

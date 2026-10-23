@@ -61,6 +61,12 @@ type Task struct {
 	Mode string `json:"mode,omitempty"`
 	// ModeDoc 是模式快照（JSONB，创建时解析，运行中只读）。mode="" 时为空。
 	ModeDoc json.RawMessage `json:"mode_doc,omitempty"`
+	// SRC 进度冗余（最新一次收尾门判定写回）：列表页零成本读到「面 x/y、闸 x/y、缺口数」。
+	SrcCellsTotal  int `json:"src_cells_total,omitempty"`
+	SrcCellsDone   int `json:"src_cells_done,omitempty"`
+	SrcChecksTotal int `json:"src_checks_total,omitempty"`
+	SrcChecksDone  int `json:"src_checks_done,omitempty"`
+	SrcGapsTotal   int `json:"src_gaps_total,omitempty"`
 	// SrcProgramID 是本任务所属的 SRC 平台项目（P3；nil = 未绑定）。
 	SrcProgramID *int64 `json:"src_program_id,omitempty"`
 }
@@ -388,11 +394,11 @@ func insertTaskLLMProfiles(tx *sql.Tx, taskID int64, profileIDs []int64) error {
 
 const taskCols = `id, COALESCE(name,''), category_id,
 COALESCE((SELECT category.name FROM task_categories category WHERE category.id=tasks.category_id),''),
-description, goal, exploration_id, status, paused, queued, queued_at, COALESCE(queue_mode,''), llm_profile_id, active_llm_profile_id, COALESCE(parent_ref,''), pinned_at, created_at, completed_at, COALESCE(timeout_seconds,0), COALESCE(plan_heartbeat_seconds,300), COALESCE(coverage_enabled,true), first_run_at, deadline_at, COALESCE(exploration_policy,'{}'::jsonb), COALESCE(mode,''), COALESCE(mode_doc,'{}'::jsonb), src_program_id`
+description, goal, exploration_id, status, paused, queued, queued_at, COALESCE(queue_mode,''), llm_profile_id, active_llm_profile_id, COALESCE(parent_ref,''), pinned_at, created_at, completed_at, COALESCE(timeout_seconds,0), COALESCE(plan_heartbeat_seconds,300), COALESCE(coverage_enabled,true), first_run_at, deadline_at, COALESCE(exploration_policy,'{}'::jsonb), COALESCE(mode,''), COALESCE(mode_doc,'{}'::jsonb), src_program_id, COALESCE(src_cells_total,0), COALESCE(src_cells_done,0), COALESCE(src_checks_total,0), COALESCE(src_checks_done,0), COALESCE(src_gaps_total,0)`
 
 func scanTask(sc interface{ Scan(...any) error }) (*Task, error) {
 	var t Task
-	if err := sc.Scan(&t.ID, &t.Name, &t.CategoryID, &t.CategoryName, &t.Description, &t.Goal, &t.ExplorationID, &t.Status, &t.Paused, &t.Queued, &t.QueuedAt, &t.QueueMode, &t.LLMProfileID, &t.ActiveLLMProfileID, &t.ParentRef, &t.PinnedAt, &t.CreatedAt, &t.CompletedAt, &t.TimeoutSeconds, &t.PlanHeartbeatSeconds, &t.CoverageEnabled, &t.FirstRunAt, &t.DeadlineAt, &t.ExplorationPolicy, &t.Mode, &t.ModeDoc, &t.SrcProgramID); err != nil {
+	if err := sc.Scan(&t.ID, &t.Name, &t.CategoryID, &t.CategoryName, &t.Description, &t.Goal, &t.ExplorationID, &t.Status, &t.Paused, &t.Queued, &t.QueuedAt, &t.QueueMode, &t.LLMProfileID, &t.ActiveLLMProfileID, &t.ParentRef, &t.PinnedAt, &t.CreatedAt, &t.CompletedAt, &t.TimeoutSeconds, &t.PlanHeartbeatSeconds, &t.CoverageEnabled, &t.FirstRunAt, &t.DeadlineAt, &t.ExplorationPolicy, &t.Mode, &t.ModeDoc, &t.SrcProgramID, &t.SrcCellsTotal, &t.SrcCellsDone, &t.SrcChecksTotal, &t.SrcChecksDone, &t.SrcGapsTotal); err != nil {
 		return nil, err
 	}
 	t.Pinned = t.PinnedAt != nil

@@ -1839,3 +1839,11 @@ CREATE INDEX IF NOT EXISTS idx_src_checks_task ON src_checks(task_id, asset_id);
 DROP TRIGGER IF EXISTS trg_src_checks_upd ON src_checks;
 CREATE TRIGGER trg_src_checks_upd BEFORE UPDATE ON src_checks
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- SRC 进度冗余：收尾门每轮判定后写回，任务列表页零成本读「面 x/y、闸 x/y、缺口数」。
+-- 语义是"最近一次判定的快照"，不是实时值（任务没再跑过时可能滞后）。
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS src_cells_total  INT NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS src_cells_done   INT NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS src_checks_total INT NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS src_checks_done  INT NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS src_gaps_total   INT NOT NULL DEFAULT 0;

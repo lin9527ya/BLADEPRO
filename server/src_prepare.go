@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -89,20 +90,22 @@ func (s *Server) prepareSrcSubmission(ctx context.Context, req agent.SrcPrepareR
 	// 八段正文先渲染：后面的报文级校验与提交块都要看成品。
 	// 接口清单/复现整包仍由证据生成（与导出面同一份 buildSrcInput），
 	// 描述/危害/修复用本次写清的三段覆盖。
-	in, _ := s.buildSrcInput(ctx, f)
+	in, warnings := s.buildSrcInput(ctx, f)
+	if len(warnings) > 0 {
+		log.Printf("[src] 发现 #%d 交付告警 %d 条：%s", f.ID, len(warnings), strings.Join(warnings, "；"))
+	}
 	in.Title = title
 	in.Description = description
 	in.Impact = impact
 	in.Fix = fix
 	doc := s.srcDocForTask(req.TaskID)
 	if doc.StrictLayout {
-		// 严格版式：备注不进退稿风险最高的正文（发现 id / 证据版本由台账承担）。
-		in.Notes = nil
+		// 严格版式：备注不进退稿风险最高的正文（发现 id / 证据版本由台账承担），
+		// 但**交付告警不能丢**——"缺 proof 绑定 / 包被截断"正是审核打回的原因。
+		in.Notes = warningNotes(in.Notes)
 	}
+	in.SubmitBlock = srcmode.SubmitInfo(doc, report.SrcSeverityLabel(f.Severity))
 	markdown := report.SrcMarkdown(in)
-	if block := srcmode.SubmitInfo(doc, report.SrcSeverityLabel(f.Severity)); block != "" {
-		markdown = block + "\n" + markdown
-	}
 
 	var issues []string
 	for _, is := range srcmode.CheckCompliance(f.Severity, steps) {

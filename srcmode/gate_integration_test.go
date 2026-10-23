@@ -28,6 +28,8 @@ func TestCheckFinishAgainstRealCells(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
+	// 本用例只验证「格」这条线；收尾闸那一层由 TestCheckFinishChecksGate 覆盖。
+	doc.SkipCheckGate = true
 	task, err := d.CreateTaskWithOptions("src-gate-test", "把覆盖格清零", db.TaskCreateOptions{
 		Mode: ModeSrc, ModeDoc: raw,
 	})

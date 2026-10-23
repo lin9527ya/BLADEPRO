@@ -170,7 +170,7 @@ ALTER TABLE src_cells ADD COLUMN IF NOT EXISTS na_code TEXT NOT NULL DEFAULT '';
 | `method_matrix` | app/service/endpoint | `methods ≥ 7` | `state_methods ≥ 1` | 否 | 20 |
 | `param_variants` | app/service/endpoint | `variants ≥ 4` | 同左 | 是：`no_business_param` / `no_object` | 25 |
 | `defense_contrast` | app/service | `contrasts ≥ 1` | 同左 | 是：`no_defense_claim` | 20 |
-| `unreachable_proof` | 任意 | `external_exits≥2 && dns_resolvers≥2 && local_unreachable=1` | 同左 | 是：`reachable` | 15 |
+| `unreachable_proof` | ip / 根域 / 子域 | `external_exits≥2 && dns_resolvers≥2 && local_unreachable=1` | 同左 | 是：`reachable` | 15 |
 | `screenshots` | app/service | 证据节点指向截图产物 | 同左 | 是：`platform_not_required` | 10 |
 
 硬要求：**`done` 必须带 `evidence_node_id`**（技能："每一项都要有执行记录"）。

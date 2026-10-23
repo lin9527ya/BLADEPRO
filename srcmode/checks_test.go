@@ -167,8 +167,13 @@ func TestValidateCheckNA(t *testing.T) {
 
 func TestChecksForAssetType(t *testing.T) {
 	app := ChecksFor("app")
-	if len(app) != len(CheckDefs) {
-		t.Fatalf("app 应适用全部收尾项，got %d", len(app))
+	if len(app) != len(CheckDefs)-1 {
+		t.Fatalf("app 适用除判死之外的全部收尾项，got %d", len(app))
+	}
+	for _, def := range app {
+		if def.Key == "unreachable_proof" {
+			t.Fatal("判死三条件只用于 IP/根域/子域，不该压给 app 资产")
+		}
 	}
 	ip := ChecksFor("ip")
 	if len(ip) != 1 || ip[0].Key != "unreachable_proof" {
@@ -249,4 +254,19 @@ func mustCheck(t *testing.T, key string) CheckDef {
 		t.Fatalf("缺收尾项 %s", key)
 	}
 	return def
+}
+
+func TestScreenshotsRequiredByProgram(t *testing.T) {
+	doc := DefaultDoc()
+	chk := db.SrcCheck{
+		AssetID: 1, AssetType: "app", CheckKey: "screenshots", State: db.SrcCheckNA,
+		NACode: "platform_not_required", Reason: "平台不要求",
+	}
+	if err := ValidateCheck(t.Context(), nil, 1, doc, chk); err != nil {
+		t.Fatalf("平台不要求截图时应允许 na：%v", err)
+	}
+	doc.RequireScreenshots = true
+	if err := ValidateCheck(t.Context(), nil, 1, doc, chk); err == nil {
+		t.Fatal("项目要求截图时 screenshots 不该允许 na")
+	}
 }

@@ -133,7 +133,7 @@ var CheckDefs = []CheckDef{
 	{
 		Key: "unreachable_proof", Title: "判死三条件",
 		Hint:       "只有不可达资产需要：本地不可达 + ≥2 个外部出口复测 + ≥2 个公共 DNS 解析器核对。可达资产填 na(reachable)。",
-		AssetTypes: []string{"app", "service", "endpoint", "ip", "root_domain", "subdomain"}, Weight: 15,
+		AssetTypes: []string{"ip", "root_domain", "subdomain"}, Weight: 15,
 		Metrics: []MetricDef{
 			{Key: "local_unreachable", Label: "本地不可达(1=是)"},
 			{Key: "external_exits", Label: "外部出口数"},
@@ -245,6 +245,9 @@ func ValidateCheck(ctx context.Context, store *db.SrcStore, taskID int64, doc Mo
 	case db.SrcCheckNA:
 		if strings.TrimSpace(check.Reason) == "" {
 			return fmt.Errorf("%s 标 na 必须写 reason", def.Title)
+		}
+		if def.Key == "screenshots" && doc.RequireScreenshots {
+			return fmt.Errorf("该项目要求关键步骤截图：%s 不能标 na，请把截图登记成证据节点", def.Title)
 		}
 		if len(def.NaCodes) == 0 {
 			return fmt.Errorf("%s 不接受 na：它没有「无入口」这种情形，必须实际做完", def.Title)

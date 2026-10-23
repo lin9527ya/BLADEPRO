@@ -1190,6 +1190,20 @@ export interface SrcProgramRules {
   max_attempts_per_cell?: number;
   max_intents_per_asset?: number;
   required_areas?: Record<string, string[]>;
+  /** 收尾闸档位：full（默认）/ platform（手工等价物）/ off。 */
+  check_tier?: "full" | "platform" | "off";
+  /** 按指标名覆盖内建门槛（如 { paths: 0, manual_paths: 1 }）。 */
+  check_thresholds?: Record<string, number>;
+  /** 平台禁止自动化扫描：编译成命令级规则。 */
+  no_automation?: boolean;
+  /** 平台原始红线（逐条进提示词）。 */
+  redlines?: string[];
+  /** 越权读取上限（合规提示用）。 */
+  max_records_read?: number;
+  require_screenshots?: boolean;
+  strict_layout?: boolean;
+  egress_ip?: string;
+  test_accounts?: string;
 }
 
 export interface SrcProgram {

@@ -203,6 +203,17 @@ interface ProgramDraft {
   allowBudgetStop: boolean;
   skipReportGate: boolean;
   commandRules: string;
+  // F2：收尾闸档位与平台红线；F3：提交块字段。
+  checkTier: "" | "full" | "platform" | "off";
+  pathsMin: string;
+  manualPathsMin: string;
+  noAutomation: boolean;
+  redlines: string;
+  maxRecordsRead: string;
+  requireScreenshots: boolean;
+  strictLayout: boolean;
+  egressIP: string;
+  testAccounts: string;
 }
 
 function emptyDraft(): ProgramDraft {
@@ -223,6 +234,16 @@ function emptyDraft(): ProgramDraft {
     allowBudgetStop: false,
     skipReportGate: false,
     commandRules: "",
+    checkTier: "",
+    pathsMin: "",
+    manualPathsMin: "",
+    noAutomation: false,
+    redlines: "",
+    maxRecordsRead: "",
+    requireScreenshots: false,
+    strictLayout: false,
+    egressIP: "",
+    testAccounts: "",
   };
 }
 
@@ -250,6 +271,16 @@ function draftFromProgram(p: SrcProgram): ProgramDraft {
     allowBudgetStop: rules.allow_budget_stop === true,
     skipReportGate: rules.skip_report_gate === true,
     commandRules: commandRulesText(rules.command_rules),
+    checkTier: (rules.check_tier ?? "") as "" | "full" | "platform" | "off",
+    pathsMin: countText(rules.check_thresholds?.paths),
+    manualPathsMin: countText(rules.check_thresholds?.manual_paths),
+    noAutomation: rules.no_automation === true,
+    redlines: (rules.redlines ?? []).join("\n"),
+    maxRecordsRead: countText(rules.max_records_read),
+    requireScreenshots: rules.require_screenshots === true,
+    strictLayout: rules.strict_layout === true,
+    egressIP: rules.egress_ip ?? "",
+    testAccounts: rules.test_accounts ?? "",
   };
 }
 
@@ -643,6 +674,18 @@ function ProgramsTab() {
         allow_budget_stop: draft.allowBudgetStop,
         skip_report_gate: draft.skipReportGate,
         command_rules: parseCommandRules(draft.commandRules),
+        check_tier: draft.checkTier || undefined,
+        check_thresholds: buildThresholds(draft.pathsMin, draft.manualPathsMin),
+        no_automation: draft.noAutomation,
+        redlines: draft.redlines
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean),
+        max_records_read: toCount(draft.maxRecordsRead),
+        require_screenshots: draft.requireScreenshots,
+        strict_layout: draft.strictLayout,
+        egress_ip: draft.egressIP.trim(),
+        test_accounts: draft.testAccounts.trim(),
       },
       rate_limit: toCount(draft.rateLimit),
       time_window: timeWindow,
@@ -939,6 +982,121 @@ function ProgramsTab() {
               </div>
 
               <details className="rounded-md border p-3">
+                <summary className="cursor-pointer text-sm font-medium">收尾闸与平台档（F2）</summary>
+                <div className="grid gap-4 pt-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="program-check-tier">收尾闸档位</Label>
+                    <Select
+                      value={draft.checkTier || "default"}
+                      onValueChange={(v) =>
+                        patch({ checkTier: (v === "default" ? "" : v) as "" | "full" | "platform" | "off" })
+                      }
+                    >
+                      <SelectTrigger id="program-check-tier" className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectItem value="default">跟随任务默认（full）</SelectItem>
+                          <SelectItem value="full">full：路径枚举 ≥200 条等全量门槛</SelectItem>
+                          <SelectItem value="platform">platform：手工清单替代批量枚举（平台档案档）</SelectItem>
+                          <SelectItem value="off">off：关掉收尾闸（应急）</SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-muted-foreground text-xs">
+                      platform 档只豁免"会产生批量流量的枚举手段"，JS 抽全 / 参数变体 / 防护对照仍然必做。
+                    </p>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="grid gap-2">
+                      <Label htmlFor="program-paths-min">路径枚举门槛</Label>
+                      <Input
+                        id="program-paths-min"
+                        type="number"
+                        min={0}
+                        value={draft.pathsMin}
+                        placeholder="默认 200"
+                        onChange={(e) => patch({ pathsMin: e.target.value })}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="program-manual-paths">手工路径门槛</Label>
+                      <Input
+                        id="program-manual-paths"
+                        type="number"
+                        min={0}
+                        value={draft.manualPathsMin}
+                        placeholder="platform 档默认 1"
+                        onChange={(e) => patch({ manualPathsMin: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="program-redlines">平台红线（一行一条，进提示词）</Label>
+                    <Textarea
+                      id="program-redlines"
+                      className="min-h-24"
+                      value={draft.redlines}
+                      placeholder={"越权读取不超过 5 组\nAK/SK 只提交不深挖\n禁内网渗透/横向"}
+                      onChange={(e) => patch({ redlines: e.target.value })}
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <ToggleChip
+                      on={draft.noAutomation}
+                      label="禁自动化扫描器"
+                      title="编译成命令规则：禁 nuclei/awvs/nmap -p-/ffuf -w 等"
+                      onClick={() => patch({ noAutomation: !draft.noAutomation })}
+                    />
+                    <ToggleChip
+                      on={draft.requireScreenshots}
+                      label="必须截图"
+                      title="收尾项 screenshots 不再允许 na"
+                      onClick={() => patch({ requireScreenshots: !draft.requireScreenshots })}
+                    />
+                    <ToggleChip
+                      on={draft.strictLayout}
+                      label="严格 8 块版式"
+                      title="导出时备注区退出正文"
+                      onClick={() => patch({ strictLayout: !draft.strictLayout })}
+                    />
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <div className="grid gap-2">
+                      <Label htmlFor="program-max-records">越权读取上限</Label>
+                      <Input
+                        id="program-max-records"
+                        type="number"
+                        min={0}
+                        value={draft.maxRecordsRead}
+                        placeholder="5"
+                        onChange={(e) => patch({ maxRecordsRead: e.target.value })}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="program-egress">测试源 IP</Label>
+                      <Input
+                        id="program-egress"
+                        value={draft.egressIP}
+                        placeholder="1.2.3.4（提交块用）"
+                        onChange={(e) => patch({ egressIP: e.target.value })}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="program-accounts">测试账号</Label>
+                      <Input
+                        id="program-accounts"
+                        value={draft.testAccounts}
+                        placeholder="越权类必填"
+                        onChange={(e) => patch({ testAccounts: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </details>
+
+              <details className="rounded-md border p-3">
                 <summary className="cursor-pointer text-sm font-medium">高级规则（额度 / 预算停 / 命令级规则）</summary>
                 <div className="grid gap-4 pt-4">
                   <div className="grid gap-4 sm:grid-cols-2">
@@ -1066,4 +1224,14 @@ export default function SrcWorkbenchPage() {
       </TabsContent>
     </Tabs>
   );
+}
+
+/** 收尾闸门槛：只写用户填了的项（空 = 用档位默认）。 */
+function buildThresholds(pathsMin: string, manualPathsMin: string): Record<string, number> | undefined {
+  const out: Record<string, number> = {};
+  const p = Math.floor(Number(pathsMin) || 0);
+  const m = Math.floor(Number(manualPathsMin) || 0);
+  if (p > 0) out.paths = p;
+  if (m > 0) out.manual_paths = m;
+  return Object.keys(out).length > 0 ? out : undefined;
 }

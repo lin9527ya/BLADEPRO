@@ -24,8 +24,7 @@ web/next-env.d.ts
 *.swp
 *.swo
 
-# docs
-/docs/
+# docs 纳入版本库（SRC 设计/评测/平台模板都在这里）
 
 # os
 .DS_Store

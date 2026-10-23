@@ -42,15 +42,17 @@ func IsSrcState(state string) bool {
 
 // SrcCell is one terminal (asset × area × item) coverage cell of a task.
 type SrcCell struct {
-	ID             int64     `json:"id"`
-	TaskID         int64     `json:"task_id"`
-	AssetID        int64     `json:"asset_id"`
-	Asset          string    `json:"asset,omitempty"` // 资产标签（url/domain/ip…），只读展示用
-	AssetType      string    `json:"asset_type,omitempty"`
-	Area           string    `json:"area"`
-	Item           string    `json:"item"`
-	State          string    `json:"state"`
-	Reason         string    `json:"reason,omitempty"`
+	ID        int64  `json:"id"`
+	TaskID    int64  `json:"task_id"`
+	AssetID   int64  `json:"asset_id"`
+	Asset     string `json:"asset,omitempty"` // 资产标签（url/domain/ip…），只读展示用
+	AssetType string `json:"asset_type,omitempty"`
+	Area      string `json:"area"`
+	Item      string `json:"item"`
+	State     string `json:"state"`
+	Reason    string `json:"reason,omitempty"`
+	// NACode 是 na 的理由码（srcmode 的白名单）：把"没这个面"和"没测"分开。
+	NACode         string    `json:"na_code,omitempty"`
 	EvidenceNodeID int64     `json:"evidence_node_id,omitempty"`
 	FindingID      int64     `json:"finding_id,omitempty"`
 	Attempts       int       `json:"attempts"`
@@ -104,14 +106,14 @@ func (s *SrcStore) TaskMode(ctx context.Context, taskID int64) (string, json.Raw
 
 const srcCellCols = `c.id, c.task_id, c.asset_id,
 COALESCE(a.url, a.domain, a.ip, a.app_name, a.root_domain, ''), COALESCE(a.type,''),
-c.area, c.item, c.state, c.reason,
+c.area, c.item, c.state, c.reason, c.na_code,
 COALESCE(c.evidence_node_id,0), COALESCE(c.finding_id,0),
 c.attempts, c.updated_by, c.created_at, c.updated_at`
 
 func scanSrcCell(sc interface{ Scan(...any) error }) (*SrcCell, error) {
 	var c SrcCell
 	if err := sc.Scan(&c.ID, &c.TaskID, &c.AssetID, &c.Asset, &c.AssetType,
-		&c.Area, &c.Item, &c.State, &c.Reason,
+		&c.Area, &c.Item, &c.State, &c.Reason, &c.NACode,
 		&c.EvidenceNodeID, &c.FindingID,
 		&c.Attempts, &c.UpdatedBy, &c.CreatedAt, &c.UpdatedAt); err != nil {
 		return nil, err
@@ -142,16 +144,17 @@ func (s *SrcStore) UpsertSrcCell(ctx context.Context, c *SrcCell) (*SrcCell, err
 		find = c.FindingID
 	}
 	row := s.db.QueryRowContext(ctx, `
-INSERT INTO src_cells(task_id, asset_id, area, item, state, reason, evidence_node_id, finding_id, attempts, updated_by)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,1,$9)
+INSERT INTO src_cells(task_id, asset_id, area, item, state, reason, na_code, evidence_node_id, finding_id, attempts, updated_by)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,1,$10)
 ON CONFLICT (task_id, asset_id, area, item) DO UPDATE SET
     state            = EXCLUDED.state,
     reason           = EXCLUDED.reason,
+    na_code          = EXCLUDED.na_code,
     evidence_node_id = COALESCE(EXCLUDED.evidence_node_id, src_cells.evidence_node_id),
     finding_id       = COALESCE(EXCLUDED.finding_id, src_cells.finding_id),
     attempts         = src_cells.attempts + 1,
     updated_by       = EXCLUDED.updated_by
-RETURNING id`, c.TaskID, c.AssetID, c.Area, item, c.State, c.Reason, ev, find, c.UpdatedBy)
+RETURNING id`, c.TaskID, c.AssetID, c.Area, item, c.State, c.Reason, c.NACode, ev, find, c.UpdatedBy)
 	var id int64
 	if err := row.Scan(&id); err != nil {
 		return nil, err

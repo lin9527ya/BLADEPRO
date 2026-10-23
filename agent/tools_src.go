@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	actool "github.com/lin9527ya/Norma/tool"
 	"github.com/lin9527ya/bladepro/db"
@@ -79,12 +80,56 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 			"required_areas": areas, "cells": row,
 		})
 	}
+	// 收尾闸（F1）：每个资产 × 适用收尾项，连定义（门槛/理由码）一起给，
+	// 这样 agent 不用猜"怎样才算做完"，UI 也能直接渲染。
+	checksByAsset, err := t.srcStore.SrcChecksByAsset(ctx, t.taskID)
+	if err != nil {
+		return nil, err
+	}
+	checkRows := make([]map[string]any, 0, len(assets))
+	for _, a := range assets {
+		defs := srcmode.ChecksFor(a.Type)
+		if t.srcDoc.SkipCheckGate || t.srcDoc.Tier() == srcmode.CheckTierOff || len(defs) == 0 {
+			continue
+		}
+		items := make([]map[string]any, 0, len(defs))
+		for _, def := range defs {
+			entry := map[string]any{
+				"key": def.Key, "title": def.Title, "hint": def.Hint,
+				"weight": def.Weight, "require_evidence": def.RequireEvidence,
+			}
+			fields := make([]map[string]any, 0, len(def.Metrics))
+			for _, m := range def.Metrics {
+				fields = append(fields, map[string]any{
+					"key": m.Key, "label": m.Label, "min": t.srcDoc.Threshold(m.Key),
+				})
+			}
+			entry["metrics_fields"] = fields
+			if na := def.CheckNACodes(); len(na) > 0 {
+				entry["na_codes"] = na
+			}
+			if c, ok := checksByAsset[a.ID][def.Key]; ok {
+				entry["state"] = c.State
+				entry["na_code"] = c.NACode
+				entry["reason"] = c.Reason
+				entry["metrics"] = c.Metrics
+				if c.EvidenceNodeID > 0 {
+					entry["evidence_node_id"] = c.EvidenceNodeID
+				}
+			}
+			items = append(items, entry)
+		}
+		checkRows = append(checkRows, map[string]any{
+			"asset_id": a.ID, "asset": a.Label, "asset_type": a.Type, "items": items,
+		})
+	}
 	return map[string]any{
 		"mode":         srcmode.ModeSrc,
 		"summary":      rep,
 		"gaps":         rep.Gaps,
 		"gaps_total":   rep.GapsTotal,
 		"gaps_by_area": rep.GapsByArea,
+		"checks":       checkRows,
 		"cells":        cells,
 		"assets":       matrix,
 		"finishable":   rep.Finishable,
@@ -94,6 +139,10 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 			"max_intents_per_asset": t.srcDoc.MaxIntentsPerAsset,
 			"platform":              t.srcDoc.Platform,
 			"program":               t.srcDoc.Program,
+			"check_tier":            t.srcDoc.Tier(),
+			"require_screenshots":   t.srcDoc.RequireScreenshots,
+			"checks_total":          rep.ChecksTotal,
+			"checks_done":           rep.ChecksDone,
 		},
 		"legend": srcmode.AreaLegend(),
 		// 交付面（P2）：台账随快照一起给，agent 与 UI 看的是同一份"交到哪一步"。
@@ -252,7 +301,7 @@ func (t *ToolSet) srcMarkCell() actool.CoreTool {
 			"state 取值与要求：\n"+
 			"  tested_found  —— 测出洞：必须带 finding_id（先 report_finding 拿到 id）；\n"+
 			"  tested_clear  —— 测了没洞：带 evidence_node_id（record_fact 返回的节点 id）或写清 reason；\n"+
-			"  na            —— 该面不适用：必须写 reason；\n"+
+			"  na            —— 该面不适用：必须写 reason + na_code（可选值见 src_state 的 na_codes）；\n"+
 			"  budget_stop   —— 预算/时间用尽没测完：必须写 reason。\n"+
 			"area 只能是："+srcmode.AreaLegend()+"；item 用 \"*\" 表示整组，或用该面的细分项（如 injection/sql、paths/enum-200）。\n"+
 			"同一格尝试次数超过上限后只能用 budget_stop 收口。",
@@ -262,6 +311,7 @@ func (t *ToolSet) srcMarkCell() actool.CoreTool {
 			"item":             str("细分项，默认 \"*\"（整组）"),
 			"state":            str("终态：tested_found | tested_clear | na | budget_stop"),
 			"reason":           str("结论说明（na/budget_stop 必填；tested_clear 无证据节点时必填）"),
+			"na_code":          str("na 的理由码（只在该面允许的码里选，见 src_state）"),
 			"evidence_node_id": intp("tested_clear 的证据节点 id（一条 fact，可选但推荐）"),
 			"finding_id":       intp("tested_found 对应的 findings.id（必填）"),
 		}),
@@ -275,6 +325,7 @@ func (t *ToolSet) srcMarkCell() actool.CoreTool {
 				Item           string `json:"item"`
 				State          string `json:"state"`
 				Reason         string `json:"reason"`
+				NACode         string `json:"na_code"`
 				EvidenceNodeID int64  `json:"evidence_node_id"`
 				FindingID      int64  `json:"finding_id"`
 			}
@@ -287,7 +338,7 @@ func (t *ToolSet) srcMarkCell() actool.CoreTool {
 			}
 			cell := db.SrcCell{
 				TaskID: t.taskID, AssetID: req.AssetID, Area: req.Area, Item: item,
-				State: req.State, Reason: req.Reason,
+				State: req.State, Reason: req.Reason, NACode: req.NACode,
 				EvidenceNodeID: req.EvidenceNodeID, FindingID: req.FindingID,
 				UpdatedBy: t.worker,
 			}
@@ -308,6 +359,97 @@ func (t *ToolSet) srcMarkCell() actool.CoreTool {
 				"gaps_total":   rep.GapsTotal,
 				"gaps_by_area": rep.GapsByArea,
 				"finishable":   rep.Finishable,
+			})
+		})
+}
+
+// srcMarkCheck 点亮一项收尾闸（写工具）。收尾闸回答"测够没有"：
+// JS 抽全、路径枚举、非 404 复测、方法矩阵、参数变体、防护对照、判死三条件、截图。
+// 与 src_mark_cell 一样，终态校验在 srcmode.ValidateCheck：done 必须有达标的数字与
+// 证据节点，na 必须给理由码，budget_stop 必须写原因。
+func (t *ToolSet) srcMarkCheck() actool.CoreTool {
+	metrics := map[string]any{
+		"type":        "object",
+		"description": "做完的量（数字）。按 check_key 填对应项，见参数说明与 src_state。",
+		"properties": map[string]any{
+			"js_inline":         intp("内联脚本数"),
+			"js_external":       intp("外链 JS 数"),
+			"js_chunks":         intp("异步 chunk 数"),
+			"sourcemap":         intp("sourcemap 数"),
+			"degraded":          intp("JS 抽取降级(1=是，须在 reason 写原因)"),
+			"paths":             intp("枚举路径条数（full 档 ≥200）"),
+			"manual_paths":      intp("手工整理的真实路径数（platform 档用）"),
+			"non404":            intp("扫出的非 404 响应数"),
+			"retested":          intp("已慢速复测条数（≥2）"),
+			"methods":           intp("已测 HTTP 方法数（full 档 ≥7）"),
+			"state_methods":     intp("状态变更端点已测方法数（platform 档用）"),
+			"variants":          intp("做过的参数变体类型数（≥4：换值/补参/去参/重复）"),
+			"contrasts":         intp("防护对照实验数（≥1）"),
+			"local_unreachable": intp("本地不可达(1=是)"),
+			"external_exits":    intp("外部出口复测数（≥2）"),
+			"dns_resolvers":     intp("公共 DNS 解析器数（≥2）"),
+		},
+		"additionalProperties": map[string]any{"type": "integer"},
+	}
+	return writeTool(
+		"src_mark_check",
+		"【SRC 模式】登记一项收尾闸（asset_id + check_key）的终态。它与 src_mark_cell 是两层：\n"+
+			"  cell  = 这个风险面测过没有；\n"+
+			"  check = 测够没有（JS 抽全 / 路径枚举 / 非 404 复测 / 方法矩阵 / 参数变体 / 防护对照 / 判死三条件 / 截图）。\n"+
+			"收尾门两层都要清零。check_key 只能是："+strings.Join(srcmode.CheckKeys(), " / ")+"。\n"+
+			"done 必须有达标的数字（metrics）与 evidence_node_id（先 record_fact 记下命令与结果）；\n"+
+			"na 必须写 reason + na_code（只在 src_state 给出的该 check 的 na_codes 里选）；\n"+
+			"budget_stop 必须写 reason。数字不达标会被拒绝并告诉你还差多少。",
+		obj(map[string]any{
+			"asset_id":         intp("资产 id（来自 src_state / list_assets）"),
+			"check_key":        str("收尾项：" + strings.Join(srcmode.CheckKeys(), " / ")),
+			"state":            str("终态：done | na | budget_stop"),
+			"na_code":          str("na 的理由码（工具描述与 src_state 里给出可选值）"),
+			"reason":           str("结论说明（na/budget_stop 必填；降级也要写原因）"),
+			"metrics":          metrics,
+			"evidence_node_id": intp("证据节点 id（record_fact 返回；done 必填）"),
+		}),
+		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
+			if !t.srcReady() {
+				return actool.Errorf("src_mark_check 仅在 SRC 模式的任务内可用"), nil
+			}
+			var req struct {
+				AssetID        int64          `json:"asset_id"`
+				CheckKey       string         `json:"check_key"`
+				State          string         `json:"state"`
+				NACode         string         `json:"na_code"`
+				Reason         string         `json:"reason"`
+				Metrics        map[string]int `json:"metrics"`
+				EvidenceNodeID int64          `json:"evidence_node_id"`
+			}
+			if err := json.Unmarshal(in, &req); err != nil {
+				return actool.Errorf("参数解析失败：" + err.Error()), nil
+			}
+			chk := db.SrcCheck{
+				TaskID: t.taskID, AssetID: req.AssetID, CheckKey: req.CheckKey,
+				State: req.State, NACode: req.NACode, Reason: req.Reason,
+				Metrics: req.Metrics, EvidenceNodeID: req.EvidenceNodeID,
+				UpdatedBy: t.worker,
+			}
+			if err := srcmode.ValidateCheck(ctx, t.srcStore, t.taskID, t.srcDoc, chk); err != nil {
+				return actool.Errorf(err.Error()), nil
+			}
+			saved, err := t.srcStore.UpsertSrcCheck(ctx, &chk)
+			if err != nil {
+				return actool.Errorf("写收尾项失败：" + err.Error()), nil
+			}
+			rep, err := srcmode.CheckFinish(ctx, t.srcStore, t.taskID, t.srcDoc)
+			if err != nil {
+				return jsonResult(map[string]any{"check": saved})
+			}
+			return jsonResult(map[string]any{
+				"check":         saved,
+				"gaps_total":    rep.GapsTotal,
+				"gaps_by_area":  rep.GapsByArea,
+				"checks_total":  rep.ChecksTotal,
+				"checks_done":   rep.ChecksDone,
+				"checks_by_key": rep.ChecksByKey,
+				"finishable":    rep.Finishable,
 			})
 		})
 }

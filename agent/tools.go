@@ -237,12 +237,13 @@ func (t *ToolSet) AppendSrcTools(tools []actool.CoreTool, role string) []actool.
 	}
 	switch role {
 	case "planner":
-		return append(tools, t.srcState(), t.srcFinishCheck(), t.srcMarkCell(),
+		return append(tools, t.srcState(), t.srcFinishCheck(), t.srcMarkCell(), t.srcMarkCheck(),
 			t.srcPrepareSubmission(), t.srcDedupe())
 	case "worker":
-		return append(tools, t.srcMarkCell(), t.srcState(), t.srcPrepareSubmission(), t.srcDedupe())
+		return append(tools, t.srcMarkCell(), t.srcMarkCheck(), t.srcState(),
+			t.srcPrepareSubmission(), t.srcDedupe())
 	case "main":
-		// 主 agent 只读 + 可交付/定案；点格仍归 planner/worker，避免绕过覆盖判定。
+		// 主 agent 只读 + 可交付/定案；点格/点收尾项仍归 planner/worker，避免绕过覆盖判定。
 		return append(tools, t.srcState(), t.srcPrepareSubmission(), t.srcDedupe())
 	default:
 		return tools

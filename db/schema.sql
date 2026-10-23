@@ -1809,3 +1809,33 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS src_program_id BIGINT REFERENCES src_
 ALTER TABLE src_submissions ADD COLUMN IF NOT EXISTS program_id BIGINT REFERENCES src_programs(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_tasks_src_program ON tasks(src_program_id) WHERE src_program_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_src_submissions_program ON src_submissions(program_id) WHERE program_id IS NOT NULL;
+
+-- =====================================================================
+-- SRC 收尾闸（F1）：src-dig 的 site-close-checklist 落成数据。
+--
+-- src_cells 回答"这个风险面测过没有"，src_checks 回答"测够没有"：JS 抽全、路径枚举
+-- 条数、非 404 复测、方法矩阵、参数变体、防护对照、判死三条件、截图。两者都只存终态，
+-- 空格靠计算；两者都进收尾门（缺一项 = 没测）。
+-- =====================================================================
+ALTER TABLE src_cells ADD COLUMN IF NOT EXISTS na_code TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS src_checks (
+    id               BIGSERIAL PRIMARY KEY,
+    task_id          BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    asset_id         BIGINT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    check_key        TEXT NOT NULL,
+    state            TEXT NOT NULL CHECK (state IN ('done','na','budget_stop')),
+    na_code          TEXT NOT NULL DEFAULT '',
+    reason           TEXT NOT NULL DEFAULT '',
+    evidence_node_id BIGINT REFERENCES exploration_nodes(id) ON DELETE SET NULL,
+    -- metrics 是"数字"不是形容词：{js_external:3,paths:214,non404:6,retested:6,...}
+    metrics          JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_by       TEXT NOT NULL DEFAULT '',
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (task_id, asset_id, check_key)
+);
+CREATE INDEX IF NOT EXISTS idx_src_checks_task ON src_checks(task_id, asset_id);
+DROP TRIGGER IF EXISTS trg_src_checks_upd ON src_checks;
+CREATE TRIGGER trg_src_checks_upd BEFORE UPDATE ON src_checks
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();

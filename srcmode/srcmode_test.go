@@ -87,11 +87,11 @@ func TestParseToleratesBadSnapshot(t *testing.T) {
 
 func TestRequiredFor(t *testing.T) {
 	doc := DefaultDoc()
-	if got := doc.RequiredFor("app"); len(got) != 8 {
-		t.Fatalf("app 必做面应有 8 个，got %v", got)
+	if got := doc.RequiredFor("app"); len(got) != 10 {
+		t.Fatalf("app 必做面应有 10 个（含四件套），got %v", got)
 	}
-	if got := doc.RequiredFor("endpoint"); len(got) != 5 {
-		t.Fatalf("endpoint 必做面应有 5 个，got %v", got)
+	if got := doc.RequiredFor("endpoint"); len(got) != 7 {
+		t.Fatalf("endpoint 必做面应有 7 个（含四件套），got %v", got)
 	}
 	if got := doc.RequiredFor("ip"); len(got) != 2 {
 		t.Fatalf("ip 必做面应有 2 个，got %v", got)

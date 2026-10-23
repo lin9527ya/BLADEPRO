@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-// ModeSrc 是 SRC 挖掘的模式标识；tasks.mode=” 表示普通渗透（行为与改造前一致）。
+// ModeSrc 是 SRC 挖掘的模式标识；tasks.mode 为空表示普通渗透（行为与改造前一致）。
 const ModeSrc = "src"
 
 // 预算默认值与硬上限。上限存在的意义是防止一条 mode_doc 把任务变成无限循环。
@@ -49,6 +49,22 @@ type ModeDoc struct {
 	// SkipReportGate 关掉"medium+ 发现必须齐备可提交件"这条收尾门（默认**要求**）。
 	// 只给"先跑覆盖、交付另开任务"的用法留出口：关掉后任务可以在报告没写好时收尾。
 	SkipReportGate bool `json:"skip_report_gate,omitempty"`
+	// CheckTier 是收尾闸档位：full（默认，全量门槛）/ platform（平台档案档，
+	// 技能 site-close-checklist §0.1：只豁免批量枚举，不豁免测试深度）/ off（关闸）。
+	CheckTier string `json:"check_tier,omitempty"`
+	// CheckThresholds 按指标名覆盖内建门槛（例如 {"paths":0,"manual_paths":1}）。
+	CheckThresholds map[string]int `json:"check_thresholds,omitempty"`
+	// SkipCheckGate 一刀关掉收尾闸（应急出口；正常项目应当用 check_tier 表达档位）。
+	SkipCheckGate bool `json:"skip_check_gate,omitempty"`
+	// RequireScreenshots 平台要求关键步骤截图时置真：收尾项 screenshots 不再允许 na。
+	RequireScreenshots bool `json:"require_screenshots,omitempty"`
+	// StrictLayout：导出严格 8 块（备注退出正文，挪进台账 note）。
+	StrictLayout bool `json:"strict_layout,omitempty"`
+	// EgressIP / TestAccounts 是提交块字段（vuln-report-format §〇）。
+	EgressIP     string `json:"egress_ip,omitempty"`
+	TestAccounts string `json:"test_accounts,omitempty"`
+	// PlatformRedlines 是平台原始红线（逐条进提示词，不自动编译成规则）。
+	PlatformRedlines []string `json:"platform_redlines,omitempty"`
 }
 
 // DefaultDoc 返回 SRC 模式的默认快照。
@@ -110,6 +126,19 @@ func Resolve(mode string, raw json.RawMessage) (json.RawMessage, ModeDoc, error)
 	for _, item := range doc.HardItems {
 		if _, _, err := SplitItem(item); err != nil {
 			return nil, ModeDoc{}, err
+		}
+	}
+	switch strings.TrimSpace(doc.CheckTier) {
+	case "", CheckTierFull, CheckTierPlatform, CheckTierOff:
+	default:
+		return nil, ModeDoc{}, fmt.Errorf("未知收尾闸档位：%s（full / platform / off）", doc.CheckTier)
+	}
+	for metric, v := range doc.CheckThresholds {
+		if !IsCheckMetric(metric) {
+			return nil, ModeDoc{}, fmt.Errorf("未知收尾闸指标：%s（%s）", metric, strings.Join(CheckMetricKeys(), " / "))
+		}
+		if v < 0 {
+			return nil, ModeDoc{}, fmt.Errorf("收尾闸指标 %s 不能为负", metric)
 		}
 	}
 	out, err := json.Marshal(doc)

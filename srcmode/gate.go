@@ -21,10 +21,12 @@ type Gap struct {
 	Kind      string `json:"kind"`
 	State     string `json:"state,omitempty"`
 	// FindingID 只对交付类缺口（report_missing/duplicate）有意义：缺的是"这条发现"的件。
-	FindingID int64  `json:"finding_id,omitempty"`
-	Reason    string `json:"reason,omitempty"` // 缺口说明（为什么不算过）
-	Attempts  int    `json:"attempts"`
-	Priority  int    `json:"priority"` // 越大越该先补
+	FindingID int64 `json:"finding_id,omitempty"`
+	// EvidenceNodeID 是收尾闸缺口指向的证据节点（做完但数字不达标时用）。
+	EvidenceNodeID int64  `json:"evidence_node_id,omitempty"`
+	Reason         string `json:"reason,omitempty"` // 缺口说明（为什么不算过）
+	Attempts       int    `json:"attempts"`
+	Priority       int    `json:"priority"` // 越大越该先补
 }
 
 // 缺口种类。
@@ -37,6 +39,7 @@ const (
 	GapUnknownAssetType  = "unknown_asset_type" // 资产类型没有必做面定义（配置漏了）
 	GapReportMissing     = "report_missing"     // medium+ 发现没有齐备的可提交件
 	GapDuplicate         = "duplicate"          // 疑似重复未处理（dedupe_of 挂着但没定案）
+	GapMissingCheck      = "missing_check"      // 收尾闸没做/没做完（JS 抽全、路径枚举…）
 )
 
 // Report 是一次收尾门判定的完整结果，同时供 agent 的 src_state 与 UI 使用。
@@ -48,10 +51,20 @@ type Report struct {
 	CellsTerminal int `json:"cells_terminal"`
 	CellsMeasured int `json:"cells_measured"`
 	// 交付面：medium+ 发现数 / 其中报告已齐备的条数（SkipReportGate 时不统计）。
-	FindingsMediumPlus int            `json:"findings_medium_plus"`
-	ReportsReady       int            `json:"reports_ready"`
-	GapsTotal          int            `json:"gaps_total"`
-	GapsByArea         map[string]int `json:"gaps_by_area"`
+	FindingsMediumPlus int `json:"findings_medium_plus"`
+	ReportsReady       int `json:"reports_ready"`
+	// 收尾闸（技能的 site-close-checklist）：应有项 / 已终态项 / 按项统计。
+	ChecksTotal int            `json:"checks_total"`
+	ChecksDone  int            `json:"checks_done"`
+	ChecksByKey map[string]int `json:"checks_by_key,omitempty"` // key → 缺口数
+	// FocusAsset 是当前应集中打的资产（技能"一种子闭环"：一个 host 挖完再换）；
+	// 只影响排序与提示，不新增阻塞条件。
+	FocusAssetID int64  `json:"focus_asset_id,omitempty"`
+	FocusAsset   string `json:"focus_asset,omitempty"`
+	// SuspiciousNA 是"四件套（注入/SSRF/XSS/RCE）全是 na"的资产数：不阻塞，但要人复核。
+	SuspiciousNA int            `json:"suspicious_na,omitempty"`
+	GapsTotal    int            `json:"gaps_total"`
+	GapsByArea   map[string]int `json:"gaps_by_area"`
 	// Gaps 按优先级降序，最多 50 条（完整清单走 UI 的矩阵）。
 	Gaps []Gap `json:"gaps"`
 	// Waived 是 allow_budget_stop=true 时被放行的 budget_stop 格（要在报告备注里写明）。
@@ -78,6 +91,10 @@ func CheckFinish(ctx context.Context, store *db.SrcStore, taskID int64, doc Mode
 		return rep, err
 	}
 	cellsByAsset, err := store.SrcCellsByAsset(ctx, taskID)
+	if err != nil {
+		return rep, err
+	}
+	checksByAsset, err := store.SrcChecksByAsset(ctx, taskID)
 	if err != nil {
 		return rep, err
 	}
@@ -136,6 +153,37 @@ func CheckFinish(ctx context.Context, store *db.SrcStore, taskID int64, doc Mode
 				}
 			}
 		}
+
+		// 四件套全 N/A：不阻塞（na_code 已保证有依据），但要让复核的人看见——
+		// 技能的原话是"四件套全 N/A 原因逐条写清，并满足 N/A 条件"。
+		if fourPieceAllNA(areas, byArea) {
+			rep.SuspiciousNA++
+		}
+
+		// 收尾闸：面之外的第二层。缺项 = 没测，不是"测了没有"。
+		if !doc.SkipCheckGate && doc.Tier() != CheckTierOff {
+			for _, def := range ChecksFor(asset.Type) {
+				rep.ChecksTotal++
+				chk, ok := checksByAsset[asset.ID][def.Key]
+				if !ok {
+					addCheckGap(&gaps, &rep, asset, def, GapMissingCheck, "", "未做："+def.Hint, 0)
+					continue
+				}
+				rep.ChecksDone++
+				switch chk.State {
+				case db.SrcCheckDone:
+					if ok, why := checkSatisfied(def, doc, chk.Metrics); !ok {
+						addCheckGap(&gaps, &rep, asset, def, GapMissingCheck, chk.State, "数字不达标："+why, chk.EvidenceNodeID)
+					}
+				case db.SrcCheckNA:
+					// 写入侧已校验理由码；N/A 是终态，不再报缺口。
+				case db.SrcCheckBudgetStop:
+					if !doc.AllowBudgetStop {
+						addCheckGap(&gaps, &rep, asset, def, GapBudgetStopBlocked, chk.State, chk.Reason, chk.EvidenceNodeID)
+					}
+				}
+			}
+		}
 	}
 
 	// 交付面：格清零只是"测完了"，可提交件齐备才算"能交"。两件事分开算、分开报，
@@ -147,6 +195,8 @@ func CheckFinish(ctx context.Context, store *db.SrcStore, taskID int64, doc Mode
 		rep.FindingsMediumPlus, rep.ReportsReady = mediumPlus, ready
 		gaps = append(gaps, deliveryGaps...)
 	}
+	// 当前该集中打的资产（只影响排序与提示，不阻塞）。
+	rep.FocusAssetID, rep.FocusAsset = focusAsset(gaps)
 	sort.SliceStable(gaps, func(i, j int) bool {
 		if gaps[i].Priority != gaps[j].Priority {
 			return gaps[i].Priority > gaps[j].Priority
@@ -247,6 +297,64 @@ func cellPriority(assetType, area string, attempts int) int {
 	return AssetValue(assetType) * AreaWeight(area) / (attempts + 1)
 }
 
+// addCheckGap 记一条收尾闸缺口（统一填 Area/权重/计数）。
+func addCheckGap(gaps *[]Gap, rep *Report, asset db.SrcAsset, def CheckDef, kind, state, reason string, evidence int64) {
+	if rep.ChecksByKey == nil {
+		rep.ChecksByKey = map[string]int{}
+	}
+	rep.ChecksByKey[def.Key]++
+	priority := checkPriority(asset.Type, def, 0)
+	if kind == GapBudgetStopBlocked {
+		priority += 5
+	}
+	g := Gap{
+		AssetID: asset.ID, Asset: asset.Label, AssetType: asset.Type,
+		Area: ClosureArea, AreaTitle: "收尾闸", Item: def.Key, Kind: kind,
+		State: state, Reason: reason, Priority: priority, EvidenceNodeID: evidence,
+	}
+	*gaps = append(*gaps, g)
+}
+
+// fourPieceAllNA 判断一个资产的注入/SSRF/XSS/RCE 是否"全是 N/A"。
+// 只在四项都是必做面时才判定——否则"没要求"会被误读成"全 N/A"。
+func fourPieceAllNA(areas []string, byArea map[string]map[string]db.SrcCell) bool {
+	for _, a := range []string{"injection", "ssrf", "xss", "rce"} {
+		if !containsStr(areas, a) {
+			return false
+		}
+	}
+	for _, a := range []string{"injection", "ssrf", "xss", "rce"} {
+		cell, ok := byArea[a][AreaAll]
+		if !ok || cell.State != db.SrcStateNA {
+			return false
+		}
+	}
+	return true
+}
+
+// focusAsset 选出"当前最该集中打的资产"（技能的一种子闭环：一host挖完再换）。
+// 只用于排序与提示，不改变门的判定。
+func focusAsset(gaps []Gap) (int64, string) {
+	sum := map[int64]int{}
+	label := map[int64]string{}
+	for _, g := range gaps {
+		if g.AssetID <= 0 {
+			continue // 交付类缺口没有资产
+		}
+		sum[g.AssetID] += g.Priority
+		if g.Asset != "" {
+			label[g.AssetID] = g.Asset
+		}
+	}
+	best, bestSum := int64(0), 0
+	for id, s := range sum {
+		if s > bestSum || (s == bestSum && (best == 0 || id < best)) {
+			best, bestSum = id, s
+		}
+	}
+	return best, label[best]
+}
+
 // ValidateCell 在写库前校验一条终态：结构、终态语义、任务内证据归属。
 // 返回的错误是给人看的中文句子（会原样回给 agent）。
 func ValidateCell(ctx context.Context, store *db.SrcStore, taskID int64, doc ModeDoc, cell db.SrcCell) error {
@@ -268,9 +376,24 @@ func ValidateCell(ctx context.Context, store *db.SrcStore, taskID int64, doc Mod
 		if cell.EvidenceNodeID == 0 && strings.TrimSpace(cell.Reason) == "" {
 			return fmt.Errorf("tested_clear 必须给 evidence_node_id（一条 fact 节点）或写清 reason")
 		}
-	case db.SrcStateNA, db.SrcStateBudgetStop:
+	case db.SrcStateNA:
 		if strings.TrimSpace(cell.Reason) == "" {
-			return fmt.Errorf("%s 必须写 reason", cell.State)
+			return fmt.Errorf("na 必须写 reason")
+		}
+		// N/A 不是自由文本：技能的口径是"只回请登录且没有业务字段才可 N/A"，
+		// 所以理由必须落在该风险面允许的码里——把"没这个面"和"没测"分开。
+		code := strings.TrimSpace(cell.NACode)
+		if code == "" {
+			return fmt.Errorf("na 必须填 na_code（可选：%s）；填不出来的说明还没测，不能记 N/A",
+				strings.Join(AreaNACodes(cell.Area), " / "))
+		}
+		if !NACodeAllowed(cell.Area, code) {
+			return fmt.Errorf("%s 面不接受 na_code=%q（可选：%s）", cell.Area, code,
+				strings.Join(AreaNACodes(cell.Area), " / "))
+		}
+	case db.SrcStateBudgetStop:
+		if strings.TrimSpace(cell.Reason) == "" {
+			return fmt.Errorf("budget_stop 必须写 reason")
 		}
 	}
 	if store == nil {

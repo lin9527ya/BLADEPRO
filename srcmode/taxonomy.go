@@ -12,20 +12,41 @@ type Area struct {
 }
 
 // Areas 是全部合法风险面。顺序即 UI 与提示词里的展示顺序（高风险在前）。
+//
+// 细项对齐 src-dig 的类型矩阵（rules/src-value-hunting.md §3、工具/站点覆盖矩阵模板.md）：
+// 注入按栈分探针（SQL/NoSQL/SSTI/命令/HQL·SpEL/ES DSL/XPath/LDAP），越权分对象图与批量赋值，
+// 认证口分发送会话/重置/改绑/换票/2FA，逻辑分跳步/竞态/提权/金额。
+// CSRF 是"有入口就测、不当主业"的可选面：不在默认必做里，但允许点格留痕。
+// CORS 永久不挖（rules/cors-vuln-report-priority.md），因此**不进矩阵**，只在提示词里写明。
 var Areas = []Area{
-	{Name: "rce", Title: "反序列化 / 上传 getshell / 依赖 RCE", Items: []string{"deser", "upload-chain"}, Weight: 10},
-	{Name: "injection", Title: "SQL / NoSQL / SSTI / 命令 / 表达式注入", Items: []string{"sql", "nosql", "ssti", "cmdi"}, Weight: 9},
-	{Name: "authz", Title: "越权 / IDOR / 批量赋值", Items: []string{"idor", "vertical", "mass-assign"}, Weight: 8},
-	{Name: "upload", Title: "上传 / 路径穿越 / 解析差异", Items: []string{"bypass", "lfi"}, Weight: 8},
-	{Name: "session", Title: "登录 / 重置 / JWT / OAuth / 默认口令", Items: []string{"login-bypass", "jwt"}, Weight: 7},
-	{Name: "logic", Title: "状态机 / 金额 / 竞态", Items: []string{"state-skip", "race"}, Weight: 7},
-	{Name: "ssrf", Title: "SSRF", Items: []string{"url-param", "webhook", "cloud-meta"}, Weight: 6},
-	{Name: "unauth", Title: "未授权 / 未认证可达", Items: []string{"swagger", "actuator", "graphql"}, Weight: 6},
-	{Name: "cred", Title: "凭证 / 密钥 / 会话泄露", Items: []string{"js-hardcoded", "repo-leak"}, Weight: 6},
-	{Name: "xss", Title: "XSS", Items: []string{"reflect", "stored", "dom"}, Weight: 5},
+	{Name: "rce", Title: "反序列化 / 上传 getshell / 命令执行 / 模板", Weight: 10,
+		Items: []string{"deser", "upload-chain", "template", "expression", "ws-exec", "debug-endpoint"}},
+	{Name: "injection", Title: "SQL / NoSQL / SSTI / 命令 / 表达式注入", Weight: 9,
+		Items: []string{"sql", "nosql", "ssti", "cmdi", "hql-spel", "es-dsl", "xpath", "ldap"}},
+	{Name: "authz", Title: "越权 / IDOR / 批量赋值", Weight: 8,
+		Items: []string{"idor", "vertical", "mass-assign", "object-graph"}},
+	{Name: "upload", Title: "上传 / 路径穿越 / 解析差异", Weight: 8,
+		Items: []string{"bypass", "lfi"}},
+	{Name: "session", Title: "登录 / 重置 / 改绑 / JWT / OAuth / 默认口令", Weight: 7,
+		Items: []string{"login-bypass", "jwt", "reset", "rebind", "2fa", "default-cred"}},
+	{Name: "logic", Title: "状态机 / 金额 / 竞态 / 提权", Weight: 7,
+		Items: []string{"state-skip", "race", "privilege", "money"}},
+	{Name: "ssrf", Title: "SSRF", Weight: 6,
+		Items: []string{"url-param", "webhook", "cloud-meta", "oob"}},
+	{Name: "unauth", Title: "未授权 / 未认证可达", Weight: 6,
+		Items: []string{"no-auth-read", "param-completion", "swagger", "actuator", "graphql"}},
+	{Name: "cred", Title: "凭证 / 密钥 / 会话泄露", Weight: 6,
+		Items: []string{"js-hardcoded", "repo-leak", "aksk"}},
+	{Name: "xss", Title: "XSS", Weight: 5,
+		Items: []string{"reflect", "stored", "dom"}},
 	{Name: "takeover", Title: "子域接管", Weight: 5},
-	{Name: "host", Title: "端口 / 服务暴露 / 已知 CVE", Items: []string{"exposed", "cve"}, Weight: 4},
-	{Name: "paths", Title: "敏感路径 / 备份 / 配置", Items: []string{"enum-200", "non404-retest"}, Weight: 3},
+	{Name: "host", Title: "端口 / 服务暴露 / 已知 CVE", Weight: 4,
+		Items: []string{"exposed", "cve"}},
+	{Name: "paths", Title: "敏感路径 / 备份 / 配置", Weight: 3,
+		Items: []string{"enum-200", "non404-retest", "scm", "actuator"}},
+	// 可选面：技能说"有入口仍测，不当主业"，所以不进默认必做，但允许留痕。
+	{Name: "csrf", Title: "CSRF / 鉴权参数", Weight: 3,
+		Items: []string{"no-token", "weak-cookie", "state-change"}},
 }
 
 // AreaAll 是"通配"细分项：表示整组终态。
@@ -40,11 +61,11 @@ var areaByName = func() map[string]Area {
 }()
 
 // defaultRequired 是"资产类型 → 必做面"的默认映射。必做是**下限**不是上限：
-// 矩阵外的面照样能报，只是不占格。
+// 矩阵外的面照样能报，只是不占格。CSRF 不在其中（技能口径：有入口仍测，不当主业）。
 var defaultRequired = map[string][]string{
-	"app":         {"unauth", "authz", "injection", "xss", "paths", "session", "upload", "logic"},
-	"service":     {"unauth", "authz", "injection", "xss", "paths", "session", "upload", "logic"},
-	"endpoint":    {"unauth", "authz", "injection", "ssrf", "logic"},
+	"app":         {"unauth", "authz", "injection", "ssrf", "xss", "rce", "paths", "session", "upload", "logic"},
+	"service":     {"unauth", "authz", "injection", "ssrf", "xss", "rce", "paths", "session", "upload", "logic"},
+	"endpoint":    {"unauth", "authz", "injection", "ssrf", "xss", "rce", "logic"},
 	"ip":          {"host", "cred"},
 	"root_domain": {"takeover", "host", "paths"},
 	"subdomain":   {"takeover", "host", "paths"},
@@ -65,11 +86,8 @@ var AssetTypes = []string{"root_domain", "ip", "subdomain", "app", "service", "e
 
 // IsAssetType reports whether t is a known asset type.
 func IsAssetType(t string) bool {
-	if _, ok := assetValues[t]; ok {
-		return true
-	}
-	// root_domain 等未出现在 assetValues 的类型也要认；assetValues 已覆盖全部六类。
-	return false
+	_, ok := assetValues[t]
+	return ok
 }
 
 // IsArea reports whether name is a known risk area.
@@ -84,6 +102,14 @@ func AreaTitle(name string) string {
 		return a.Title
 	}
 	return name
+}
+
+// AreaItems 返回某风险面的细分项（可能为空）。
+func AreaItems(area string) []string {
+	if a, ok := areaByName[area]; ok {
+		return append([]string(nil), a.Items...)
+	}
+	return nil
 }
 
 // ItemAllowed reports whether item is a legal sub-item of area ('*' 永远合法)。

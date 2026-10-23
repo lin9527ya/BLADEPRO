@@ -40,6 +40,10 @@ const (
 	GapReportMissing     = "report_missing"     // medium+ 发现没有齐备的可提交件
 	GapDuplicate         = "duplicate"          // 疑似重复未处理（dedupe_of 挂着但没定案）
 	GapMissingCheck      = "missing_check"      // 收尾闸没做/没做完（JS 抽全、路径枚举…）
+	// GapNoAssets 是"分母为 0"：任务范围内没有任何站点资产。SRC 的完成判定以
+	// 资产 × 必做面为分母，分母为 0 不是完成，而是范围/资产没准备好（keyword 只是
+	// 给 agent 看的提示，不认领资产，见 db/task_scope.go）。
+	GapNoAssets = "no_assets"
 )
 
 // Report 是一次收尾门判定的完整结果，同时供 agent 的 src_state 与 UI 使用。
@@ -101,6 +105,15 @@ func CheckFinish(ctx context.Context, store *db.SrcStore, taskID int64, doc Mode
 	rep.Assets = len(assets)
 	gaps := make([]Gap, 0, 16)
 	waived := make([]Gap, 0, 4)
+	if len(assets) == 0 {
+		// fail-closed：没有可测资产时必须留一条缺口，不能因为"循环没跑"就 Finishable=true。
+		gaps = append(gaps, Gap{
+			Asset: "任务范围", AssetType: "scope", Area: "scope", AreaTitle: "范围", Item: "*",
+			Kind:     GapNoAssets,
+			Reason:   "任务范围内没有可测站点资产：检查 task_scope、资产导入与公司范围（keyword 仅作提示，不认领资产）",
+			Priority: 100,
+		})
+	}
 
 	for _, asset := range assets {
 		areas := doc.RequiredFor(asset.Type)
@@ -241,8 +254,12 @@ func CheckFinish(ctx context.Context, store *db.SrcStore, taskID int64, doc Mode
 
 	rep.Finishable = rep.GapsTotal == 0
 	if !rep.Finishable {
-		rep.BlockedReason = fmt.Sprintf("还有 %d 个覆盖缺口未清零（共 %d 格，已终态 %d）",
-			rep.GapsTotal, rep.CellsTotal, rep.CellsTerminal)
+		if rep.Assets == 0 {
+			rep.BlockedReason = "任务范围内没有可测站点资产：检查 task_scope 与资产导入"
+		} else {
+			rep.BlockedReason = fmt.Sprintf("还有 %d 个覆盖缺口未清零（共 %d 格，已终态 %d）",
+				rep.GapsTotal, rep.CellsTotal, rep.CellsTerminal)
+		}
 	}
 	return rep, nil
 }

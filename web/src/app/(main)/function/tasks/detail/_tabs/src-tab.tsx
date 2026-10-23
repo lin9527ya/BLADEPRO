@@ -156,6 +156,7 @@ const GAP_KIND_LABELS: Record<string, string> = {
   report_missing: "缺可提交件",
   duplicate: "疑似重复",
   missing_check: "收尾项未做",
+  no_assets: "范围为空",
 };
 
 function gapKindLabel(kind: string): string {

@@ -384,6 +384,13 @@ func (s *SrcStore) UpdateSrcSubmission(ctx context.Context, id int64, patch SrcS
 			return nil, fmt.Errorf("标记为 duplicate 前必须先登记 dedupe_of（它和哪条是同一個洞）")
 		}
 	}
+	// ready 是"可交付"的承诺，submitted 是"已经交出去"：两者都必须建立在真实的
+	// 交付校验之上。否则 PATCH 一条 draft→ready 就能把收尾门的交付缺口清掉。
+	if nextStatus == SrcSubReady || nextStatus == SrcSubSubmitted {
+		if err := s.requireSubmittable(ctx, cur.FindingID); err != nil {
+			return nil, err
+		}
+	}
 	platformLevel := cur.PlatformLevel
 	if patch.PlatformLevel != nil {
 		platformLevel = strings.TrimSpace(*patch.PlatformLevel)
@@ -419,6 +426,31 @@ WHERE id=$1`, id, nextStatus, externalID, platformLevel, reward, note, submitted
 		return nil, err
 	}
 	return s.GetSrcSubmission(ctx, id)
+}
+
+// requireSubmittable 是台账推进到 ready/submitted 前的硬校验：可提交件必须真的过了
+// 交付校验（report_ready），且（有合规记录时）compliance.ok=true。人工想要放行未过校验
+// 的件，正确做法是先补正文/证据并重新准备，而不是改台账状态。
+func (s *SrcStore) requireSubmittable(ctx context.Context, findingID int64) error {
+	meta, err := s.GetSrcFindingMeta(ctx, findingID)
+	if err != nil {
+		return err
+	}
+	if meta == nil || !meta.ReportReady {
+		return fmt.Errorf("发现 #%d 的可提交件还没通过交付校验（report_ready=false）：先补正文/证据并重新 src_prepare_submission", findingID)
+	}
+	if len(meta.Compliance) > 0 {
+		var c struct {
+			OK bool `json:"ok"`
+		}
+		if err := json.Unmarshal(meta.Compliance, &c); err != nil {
+			return fmt.Errorf("发现 #%d 的合规记录无法解析：%v", findingID, err)
+		}
+		if !c.OK {
+			return fmt.Errorf("发现 #%d 的证据合规未通过（compliance.ok=false）：先补齐证据再推进台账", findingID)
+		}
+	}
+	return nil
 }
 
 // GetSrcFindingMeta returns one finding's delivery metadata (nil when missing).

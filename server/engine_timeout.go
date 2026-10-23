@@ -11,6 +11,7 @@ import (
 	"github.com/lin9527ya/bladepro/agent"
 	"github.com/lin9527ya/bladepro/db"
 	"github.com/lin9527ya/bladepro/policy"
+	"github.com/lin9527ya/bladepro/srcmode"
 )
 
 // 任务级超时协调器(见 docs/任务级超时与收尾设计.md §4/§8.5)。
@@ -383,10 +384,9 @@ func (e *Engine) settleTask(ctx context.Context, t *Task, why string, fallback s
 
 	// ⑥ 定终态(带守卫):met → done(completed);否则 timeout。若常规路径已先落 done,
 	// 守卫(SetTaskStatusGuarded)会拒绝覆盖,保留 completed 语义。
-	status := fallback
-	if met {
-		status = "done"
-	}
+	// SRC 任务的 done 由收尾门判定：终局轮说 met 但覆盖格没清零时落 fallback（timeout /
+	// policy_blocked），不能因为"时间到了"就绕过门。
+	status := e.settledStatus(ctx, t, met, fallback)
 	won, err := e.m.SetTaskStatusGuarded(t.ID, status)
 	switch {
 	case err != nil:
@@ -396,6 +396,33 @@ func (e *Engine) settleTask(ctx context.Context, t *Task, why string, fallback s
 	default:
 		log.Printf("[deadline] task %s 收尾时已是终态,保留原状态", t.ID)
 	}
+}
+
+// settledStatus 决定收尾后的终态。普通任务：met → done。SRC 任务：met 只是 planner
+// 的意见，收尾门通过才允许 done；否则落 fallback（超时/预算/策略停摆的原因），把缺口
+// 留在时间线里。isSrc=false 时绝不触碰门，保持 mode="" 的行为不变。
+func (e *Engine) settledStatus(ctx context.Context, t *Task, met bool, fallback string) string {
+	if !met {
+		return fallback
+	}
+	if t == nil || t.Mode != srcmode.ModeSrc {
+		return "done"
+	}
+	taskID, err := strconv.ParseInt(t.ID, 10, 64)
+	if err != nil || taskID <= 0 {
+		// id 解析不了就不敢说完成：fail-closed，交给人工。
+		return fallback
+	}
+	return settleStatusFor(met, true, e.srcFinishGate(ctx, t, taskID), fallback)
+}
+
+// settleStatusFor 是 settledStatus 的纯判定核（便于单测）：只有 met 且（非 SRC 或门
+// 通过）才 done；其余情况保留收尾原因。
+func settleStatusFor(met, src, gatePassed bool, fallback string) string {
+	if met && (!src || gatePassed) {
+		return "done"
+	}
+	return fallback
 }
 
 // runFinalPlannerRound drives exactly ONE terminal planner round with the

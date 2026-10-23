@@ -45,7 +45,8 @@ func TestCheckFinishChecksGate(t *testing.T) {
 
 	as := d.Assets()
 	domain := "src-checks-test.example"
-	if _, err := as.AddAgentScope(task.ID, "root_domain", domain, "集成测试范围", "agent"); err != nil {
+	// 用 subdomain scope 只框住这一条资产（root_domain scope 会连自动补建的根域一起算）。
+	if _, err := as.AddAgentScope(task.ID, "subdomain", "cdn."+domain, "集成测试范围", "agent"); err != nil {
 		t.Fatalf("add scope: %v", err)
 	}
 	assetID, err := as.UpsertSubdomain(db.UpsertSubdomainReq{Domain: "cdn." + domain, TaskID: task.ID})

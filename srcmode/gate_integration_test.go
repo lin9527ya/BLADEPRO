@@ -49,7 +49,9 @@ func TestCheckFinishAgainstRealCells(t *testing.T) {
 
 	as := d.Assets()
 	domain := "src-gate-test.example"
-	if _, err := as.AddAgentScope(task.ID, "root_domain", domain, "集成测试范围", "agent"); err != nil {
+	// 用 subdomain scope 只框住这一条资产：root_domain scope 会同时匹配 UpsertSubdomain
+	// 自动补建的根域资产，让"一格资产"的前提不成立。
+	if _, err := as.AddAgentScope(task.ID, "subdomain", "api."+domain, "集成测试范围", "agent"); err != nil {
 		t.Fatalf("add scope: %v", err)
 	}
 	assetID, err := as.UpsertSubdomain(db.UpsertSubdomainReq{Domain: "api." + domain, TaskID: task.ID})
@@ -183,5 +185,64 @@ func TestSrcCellJSONShape(t *testing.T) {
 		if _, ok := got[key]; !ok {
 			t.Fatalf("SrcCell JSON 缺字段 %q：%s", key, raw)
 		}
+	}
+}
+
+// TestCheckFinishWithoutInScopeAssets 钉住"分母为 0 不是完成"：任务范围内没有资产时，
+// 收尾门必须报 GapNoAssets 并拒绝 done。否则 keyword-only/空 scope 的任务会静默通过。
+func TestCheckFinishWithoutInScopeAssets(t *testing.T) {
+	dsn, _, err := db.DSN()
+	if err != nil {
+		t.Skipf("no postgres configured (%v) — skipping", err)
+	}
+	d, err := db.Open(dsn)
+	if err != nil {
+		t.Skipf("postgres unavailable (%v) — skipping", err)
+	}
+	t.Cleanup(func() { d.Close() })
+
+	raw, doc, err := Resolve(ModeSrc, nil)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	doc.SkipCheckGate = true // 本用例只验"范围内资产为空"这条线
+	task, err := d.CreateTaskWithOptions("src-gate-empty-scope", "范围为空", db.TaskCreateOptions{
+		Mode: ModeSrc, ModeDoc: raw,
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	var expID int64
+	if err := d.QueryRow(`SELECT exploration_id FROM tasks WHERE id=$1`, task.ID).Scan(&expID); err != nil {
+		t.Fatalf("exploration for task: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = d.Exec(`DELETE FROM src_cells WHERE task_id=$1`, task.ID)
+		_, _ = d.Exec(`DELETE FROM tasks WHERE id=$1`, task.ID)
+		_, _ = d.Exec(`DELETE FROM explorations WHERE id=$1`, expID)
+	})
+
+	rep, err := CheckFinish(context.Background(), d.Src(), task.ID, doc)
+	if err != nil {
+		t.Fatalf("CheckFinish: %v", err)
+	}
+	if rep.Assets != 0 {
+		t.Fatalf("新任务不该有范围内资产：assets=%d", rep.Assets)
+	}
+	if rep.Finishable || rep.GapsTotal == 0 {
+		t.Fatalf("范围为空必须拒绝 done：finishable=%v gaps=%d", rep.Finishable, rep.GapsTotal)
+	}
+	found := false
+	for _, g := range rep.Gaps {
+		if g.Kind == GapNoAssets {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("应报 GapNoAssets 缺口：%+v", rep.Gaps)
+	}
+	if rep.BlockedReason == "" {
+		t.Fatal("拒绝时应给出可读原因")
 	}
 }

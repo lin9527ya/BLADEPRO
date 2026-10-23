@@ -95,11 +95,17 @@ func TestSrcSubmissionLedgerRoundTrip(t *testing.T) {
 		t.Fatalf("准备结果不对：sub=%+v meta=%+v", sub, meta)
 	}
 
+	// 未通过交付校验的 draft 不能直接标 ready：那会把收尾门的交付缺口"改"没。
+	if _, err := store.UpdateSrcSubmission(ctx, sub.ID, SrcSubmissionPatch{Status: ptrStr(SrcSubReady)}); err == nil {
+		t.Fatal("report_ready=false 的台账不能 draft→ready")
+	}
+
 	// 重复准备只更新正文，不新增行。
 	again, _, err := store.PrepareSrcSubmission(ctx, SrcSubmissionInput{
 		TaskID: task.ID, FindingID: findingID, Title: "越权读取订单", Severity: "high",
 		Description: "补齐后的描述：我用自己的会话读到了别人租户的订单详情",
 		Impact:      "可读取全部租户订单", Fix: "按 tenant_id 校验归属", Status: SrcSubReady, ReportReady: true,
+		Compliance: []byte(`{"ok":true,"issues":[]}`),
 	})
 	if err != nil {
 		t.Fatalf("re-prepare: %v", err)
@@ -109,6 +115,19 @@ func TestSrcSubmissionLedgerRoundTrip(t *testing.T) {
 	}
 	if again.Status != SrcSubReady {
 		t.Fatalf("重新准备应把 draft 推到 ready，got %s", again.Status)
+	}
+
+	// ready → submitted 同样要求可提交件仍然有效：把 report_ready 改回 false 必须被拒。
+	if _, err := d.Exec(`UPDATE src_finding_meta SET report_ready=false WHERE finding_id=$1`, findingID); err != nil {
+		t.Fatalf("flip report_ready: %v", err)
+	}
+	if _, err := store.UpdateSrcSubmission(ctx, sub.ID, SrcSubmissionPatch{
+		Status: ptrStr(SrcSubSubmitted), ExternalID: ptrStr("SRC-2026-0000"),
+	}); err == nil {
+		t.Fatal("report_ready=false 的台账不能 ready→submitted")
+	}
+	if _, err := d.Exec(`UPDATE src_finding_meta SET report_ready=true WHERE finding_id=$1`, findingID); err != nil {
+		t.Fatalf("restore report_ready: %v", err)
 	}
 
 	// submitted 必须有平台编号。

@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+### 修复：SRC 收尾门的三处绕过
+
+- **超时/预算收尾不再绕过收尾门**：`settleTask` 的终局 planner 轮返回 `met` 时也要过
+  `srcFinishGate`；门不过就落 `timeout`/`policy_blocked` 并保留缺口，不能因为"时间到了"
+  把未清零的 SRC 任务标成 `done`（`server/engine_timeout.go`）。
+- **范围为空不再判完成**：`CheckFinish` 在任务范围内没有任何站点资产时报
+  `no_assets` 缺口并拒绝收尾（`srcmode/gate.go`）。`keyword` 仍只作提示、不认领资产；
+  空 scope / 只有 keyword 的任务会明确显示"范围为空"，而不是静默 `finishable=true`。
+- **台账不能绕过交付校验**：`draft→ready` 与 `ready→submitted` 现在要求
+  `report_ready=true` 且 `compliance.ok=true`；只 PATCH 状态不再能清掉收尾门的交付缺口
+  （`db/src_submissions.go`）。
+- 回归：`TestSettleStatusFor`、`TestCheckFinishWithoutInScopeAssets`，以及台账用例新增的
+  两条拒绝路径；`srcmode`/`db` 集成测试在干净 PostgreSQL 测试库上通过。
+
 ### 优化：src_state 摘要视图、收尾进度上列表、docx 提交块
 
 - `src_state` 默认返回摘要（计数 + top20 缺口 + 每资产进度），`detail=true` 才给逐格矩阵；

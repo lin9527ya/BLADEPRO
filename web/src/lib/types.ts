@@ -990,7 +990,7 @@ export interface SrcGap {
   area: string;
   area_title?: string;
   item: string;
-  kind: "blank" | "missing_reason" | "missing_evidence" | "missing_finding" | "budget_stop" | "unknown_asset_type" | "report_missing" | "duplicate" | string;
+  kind: "blank" | "missing_reason" | "missing_evidence" | "missing_finding" | "budget_stop" | "unknown_asset_type" | "report_missing" | "duplicate" | "missing_check" | "no_assets" | string;
   state?: string;
   reason?: string;
   attempts?: number;

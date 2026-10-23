@@ -40,8 +40,8 @@ RUN chmod +x /app/bladepro /app/start.sh
 COPY skills/ /app/skills/
 # data/（SQLite + jwt.key）持久化点
 VOLUME ["/app/data"]
-EXPOSE 8787 8788
+EXPOSE 9898 9899
 ENTRYPOINT ["/app/start.sh"]
 # 默认只绑 loopback（P42）：容器内监听 127.0.0.1，对外暴露交给宿主端口映射或隧道。
-# 要监听容器全网卡请显式写 "-addr", ":8787"（并确认宿主侧只映射到 127.0.0.1）。
-CMD ["-addr", "127.0.0.1:8787", "-proxy", "127.0.0.1:8788"]
+# 要监听容器全网卡请显式写 "-addr", ":9898"（并确认宿主侧只映射到 127.0.0.1）。
+CMD ["-addr", "127.0.0.1:9898", "-proxy", "127.0.0.1:9899"]

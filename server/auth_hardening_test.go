@@ -92,7 +92,7 @@ func TestLoginGuardGlobalBudget(t *testing.T) {
 	}
 }
 
-// 反代头只在直连方是 loopback 时才可信：直接暴露 8787 时伪造 CF-Connecting-IP
+// 反代头只在直连方是 loopback 时才可信：直接暴露 9898 时伪造 CF-Connecting-IP
 // 不能绕过按来源的节流。
 func TestLoginClientIPTrustsHeadersOnlyFromLoopback(t *testing.T) {
 	cases := []struct {

@@ -149,6 +149,10 @@ type Traffic struct {
 	// requests share the same connection, so this is what lets an exchange be
 	// attributed without threading a task id through every egress path.
 	connTask sync.Map // uuid.UUID → int64
+	// taskBuckets holds optional per-task egress buckets (SetTaskQPS). They are
+	// separate from the global/host governor so a task rate works even when the
+	// global/host limits are off.
+	taskBuckets sync.Map // int64 -> *tokenBucket
 	// fts reports whether the full-text index is available. False on a driver
 	// build without FTS5: recording and metadata search still work, body search
 	// degrades to unsupported rather than erroring.
@@ -494,7 +498,13 @@ func (s *sink) Request(f *mproxy.Flow) {
 	if f == nil || f.Request == nil || f.Request.URL == nil {
 		return
 	}
-	s.t.waitEgress(f.Request.URL.Hostname())
+	taskID := int64(0)
+	if f.ConnContext != nil {
+		if v, ok := s.t.connTask.Load(f.ConnContext.Id()); ok {
+			taskID, _ = v.(int64)
+		}
+	}
+	s.t.waitEgress(f.Request.URL.Hostname(), taskID)
 }
 
 func (s *sink) Response(f *mproxy.Flow) {

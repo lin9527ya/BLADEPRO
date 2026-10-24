@@ -1438,6 +1438,9 @@ type intentItem struct {
 	Priority    int               `json:"priority"`
 	RiskArea    string            `json:"risk_area"`
 	Techniques  []string          `json:"techniques"`
+	// Recon=true 表示这是一条清点意图（抽 JS、枚举路径），在 recon_gate 打开时
+	// 允许先于 payload 意图执行。它不是覆盖格，不需要 src_mark_cell。
+	Recon bool `json:"recon"`
 }
 
 // addOneIntent 创建一条意图节点并连上游血缘，返回 id 与一条可选的目标挂载提示。
@@ -1524,6 +1527,31 @@ func (t *ToolSet) checkAssetTimeBudget(ctx context.Context, anchors []int64) err
 		return fmt.Errorf("资产 %d 的时间预算已用尽（已 %d 分钟 / 上限 %d 分钟，asset_time_budget_minutes）：不要再向该资产派意图；"+
 			"把未完成的格用 src_mark_cell 标 budget_stop，预算让给其他资产；确需继续请提高预算或人工放行",
 			aid, used, t.srcDoc.AssetTimeBudgetMinutes)
+	}
+	return nil
+}
+
+// checkReconGate 落实 mode_doc.recon_gate：app/service 资产的 js_enum/paths_enum
+// 没做完时，只允许 recon=true 的意图先做清点，非侦察意图直接拒绝。判定复用
+// 收尾门的 ReconMissingFor，避免"准入说没做完、收尾门说做完了"的口径漂移。
+func (t *ToolSet) checkReconGate(ctx context.Context, anchors []int64) error {
+	if !t.srcMode || t.srcStore == nil || t.taskID <= 0 || !t.srcDoc.ReconGateEnabled() {
+		return nil
+	}
+	checks, err := t.srcStore.SrcChecksByAsset(ctx, t.taskID)
+	if err != nil {
+		return nil // fail-open：查不动不该把 planner 锁死
+	}
+	for _, aid := range anchors {
+		asset, err := t.srcStore.SrcAssetInScope(ctx, t.taskID, aid)
+		if err != nil || asset == nil {
+			continue
+		}
+		if missing := srcmode.ReconMissingFor(*asset, checks[aid], t.srcDoc); len(missing) > 0 {
+			return fmt.Errorf("资产 %d 还没完成清点（缺 %s）：recon_gate 已开启，先派一条 recon=true 的意图"+
+				"（抽 JS / 枚举路径，用 src_probe 跑 js/paths）并 src_mark_check 落数字；清点完成后再派 payload 意图",
+				aid, strings.Join(missing, " + "))
+		}
 	}
 	return nil
 }
@@ -1624,6 +1652,11 @@ func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, er
 			return 0, "", fmt.Errorf("%s", b.String())
 		}
 	}
+	if t.srcMode && !it.Recon && len(anchors) > 0 {
+		if err := t.checkReconGate(context.Background(), anchors); err != nil {
+			return 0, "", err
+		}
+	}
 	// SRC 的 max_intents_per_asset 此前只写在 mode_doc 与提示词里，没有执行点；
 	// 这里落成硬门：同一资产吃满预算后，必须先把已派意图收口或换资产。
 	if t.srcMode && t.srcDoc.MaxIntentsPerAsset > 0 && t.as != nil && len(anchors) > 0 {
@@ -1656,6 +1689,9 @@ func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, er
 		leasedAssets = anchors
 	}
 	payload := map[string]any{"summary": it.Summary, "risk_area": db.NormalizeRiskArea(it.RiskArea)}
+	if it.Recon {
+		payload["recon"] = true
+	}
 	// 按风险面分层：意图创建时把 tier 写进 payload，worker 执行时据此选模型。
 	// 只对 SRC 模式生效；显式 worker 绑定在宿主侧优先（见 server/agentsForTask）。
 	if t.srcMode {
@@ -1742,6 +1778,7 @@ func (t *ToolSet) addIntent() actool.CoreTool {
 			"goal_id":       idp("【目标归属】本条方向服务的目标 id（graph_overview 的 goals；可选）：挂上后链路图显示「目标→意图」，push 目标进度。省略时若本任务恰有一个未达成(open)目标会自动挂；有多个目标时请指名（不猜）。"),
 			"uses_loot_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "【本方向在动用哪次已得的访问】战果节点 id（graph_overview 的 footholds/credentials；可选，0/1/多个）：这条方向的立足点来自某个据点/某条凭据时**务必传**。它让系统能算出「哪些战果还没被推进过」——不传的话那条战果会一直显示为 outstanding，你也看不出它是否已经被别的意图接手了。"},
 			"priority":      intp("优先级 0-10，默认5"),
+			"recon":         map[string]any{"type": "boolean", "description": "是否是清点意图（抽 JS / 枚举路径）。recon_gate 开启时，未清点资产只接受 recon=true 的意图"},
 			"risk_area":     str("【覆盖矩阵键】本方向要打的风险类：sqli(注入) | xss | rce(命令执行/反序列化) | ssrf | ssti | xxe | idor(对象级越权) | authz(功能级越权) | auth(认证/会话) | logic(业务逻辑/竞态) | upload | traversal | disclosure | cache(缓存投毒/欺骗) | smuggling/desync(请求走私) | oauth(OAuth/OIDC) | graphql(GraphQL) | websocket(实时通道) | supply(第三方/供应链) | other。**尽量填写**——报告与覆盖度按「范围内资产 × 风险类」统计已测/未测成/未触及。"),
 			"techniques":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "【ATT&CK 技术 ID】本方向用到的技术，如 T1190(利用公开漏洞) / T1078(有效账户) / T1552.001(凭据文件) / T1021(远程服务)。可选但**尽量填**——红队交付物按 ATT&CK 组织，报告会据此汇总「本次作业覆盖了哪些技术」；不标就只剩一堆没有共同语言的方向描述。只写 ID（T#### 或 T####.###），不要写技术名。"},
 		}),

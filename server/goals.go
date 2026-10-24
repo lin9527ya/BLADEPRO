@@ -59,6 +59,15 @@ func (s *Server) launchTask(t *Task, seedText string, seedFirstIntent bool) {
 }
 
 func (s *Server) startTaskEngine(t *Task) {
+	// 任务级出站 QPS：SRC 程序规则的 rate_limit 在代理层也生效，与全局/单 host
+	// 令牌桶叠加。任务启动/恢复时重新安装，规则快照不变则幂等。
+	if t != nil && strings.TrimSpace(t.Mode) == srcmode.ModeSrc {
+		if doc := srcmode.Parse(t.ModeDoc); doc.RateLimit > 0 {
+			if tr := s.m.Traffic(); tr != nil {
+				tr.SetTaskQPS(parseIntDefault(t.ID), float64(doc.RateLimit))
+			}
+		}
+	}
 	ctx := s.engine.execContextFor(s.ctx, t.ID)
 	if ctx.Err() != nil || s.engine.IsDeleting(t.ID) {
 		return

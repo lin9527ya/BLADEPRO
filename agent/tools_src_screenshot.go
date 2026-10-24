@@ -21,6 +21,20 @@ type SrcScreenshotRequest struct {
 	Width    int
 	Height   int
 	FullPage bool
+	// Steps 是截图前的关键交互步骤（点按钮、填表单、等待渲染）。只允许固定动作，
+	// 不执行任意 JS——目标页里的脚本已经不可信，再让 agent 注入 JS 等于绕开 RoE。
+	Steps []SrcScreenshotStep
+}
+
+// SrcScreenshotStep is one pre-screenshot interaction. Action is one of:
+// navigate / click / fill / press / wait / scroll.
+type SrcScreenshotStep struct {
+	Action   string `json:"action"`
+	URL      string `json:"url,omitempty"`      // navigate：必须是任务范围内 URL
+	Selector string `json:"selector,omitempty"` // click/fill/press：CSS selector
+	Value    string `json:"value,omitempty"`    // fill 文本 / press 键名
+	WaitMS   int    `json:"wait_ms,omitempty"`  // wait：毫秒（上限 10s）
+	Y        int    `json:"y,omitempty"`        // scroll：纵向像素
 }
 
 type SrcScreenshotResult struct {
@@ -48,14 +62,32 @@ func (t *ToolSet) srcScreenshotTool() actool.CoreTool {
 		"src_screenshot",
 		"【SRC 证据】用 headless 浏览器对资产（或同 host 的指定 URL）截图，保存为证据产物并创建一条 fact 证据节点。\n"+
 			"返回 node_id 可直接作为 src_mark_check 的 evidence_node_id（尤其 screenshots 收尾项）。\n"+
-			"截图走录制代理、校验任务范围与作业时间窗；只渲染页面，不执行登录等写操作（需要登录态请先用浏览器 MCP 建立会话后自行截图并登记）。\n"+
+			"截图走录制代理、校验任务范围与作业时间窗；steps 可做固定交互（填表/点击/等待/滚动）以截到关键步骤，但不执行任意 JS；navigate 目标同样受范围门约束。\n"+
 			"平台要求截图（require_screenshots）时，src_mark_check 的 screenshots done 若未给证据节点，系统会自动截一张。",
 		obj(map[string]any{
-			"asset_id": intp("要截图的资产 id（来自 src_state / list_assets）"),
-			"url":      str("可选：同 host 的具体页面 URL；留空 = 资产主 URL"),
-			"note":     str("截图说明（写进证据节点摘要）"),
-			"width":    intp("视口宽度，默认 1280"),
-			"height":   intp("视口高度，默认 900"),
+			"asset_id":  intp("要截图的资产 id（来自 src_state / list_assets）"),
+			"url":       str("可选：同 host 的具体页面 URL；留空 = 资产主 URL"),
+			"note":      str("截图说明（写进证据节点摘要）"),
+			"width":     intp("视口宽度，默认 1280"),
+			"height":    intp("视口高度，默认 900"),
+			"full_page": map[string]any{"type": "boolean", "description": "true = 截整页（默认只截视口）"},
+			"steps": map[string]any{
+				"type": "array",
+				"description": "截图前的关键交互（最多 20 步）。动作：navigate(url) / click(selector) / fill(selector,value) / " +
+					"press(selector,value=Enter) / wait(wait_ms) / scroll(y)。不执行任意 JS；navigate 目标必须在授权范围内。",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"action":   str("navigate | click | fill | press | wait | scroll"),
+						"url":      str("navigate 的绝对 URL（必须在任务范围内）"),
+						"selector": str("CSS selector"),
+						"value":    str("fill 的文本 / press 的键名"),
+						"wait_ms":  intp("wait 毫秒，上限 10000"),
+						"y":        intp("scroll 纵向像素"),
+					},
+					"required": []any{"action"},
+				},
+			},
 		}, "asset_id"),
 		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			if !t.srcReady() {
@@ -65,11 +97,13 @@ func (t *ToolSet) srcScreenshotTool() actool.CoreTool {
 				return actool.Errorf("src_screenshot 未接线（宿主没有注入截图实现）"), nil
 			}
 			var req struct {
-				AssetID int64  `json:"asset_id"`
-				URL     string `json:"url"`
-				Note    string `json:"note"`
-				Width   int    `json:"width"`
-				Height  int    `json:"height"`
+				AssetID  int64               `json:"asset_id"`
+				URL      string              `json:"url"`
+				Note     string              `json:"note"`
+				Width    int                 `json:"width"`
+				Height   int                 `json:"height"`
+				FullPage bool                `json:"full_page"`
+				Steps    []SrcScreenshotStep `json:"steps"`
 			}
 			if err := json.Unmarshal(in, &req); err != nil {
 				return actool.Errorf("参数解析失败：" + err.Error()), nil
@@ -79,7 +113,7 @@ func (t *ToolSet) srcScreenshotTool() actool.CoreTool {
 			}
 			res, err := t.srcScreenshotter(ctx, SrcScreenshotRequest{
 				TaskID: t.taskID, AssetID: req.AssetID, URL: req.URL, Note: req.Note,
-				Width: req.Width, Height: req.Height,
+				Width: req.Width, Height: req.Height, FullPage: req.FullPage, Steps: req.Steps,
 			})
 			if err != nil {
 				return actool.Errorf("截图失败：" + err.Error()), nil

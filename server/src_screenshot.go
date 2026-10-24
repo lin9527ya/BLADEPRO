@@ -104,38 +104,51 @@ func (s *Server) runSrcScreenshot(ctx context.Context, req agent.SrcScreenshotRe
 		height = 4320
 	}
 
+	if len(req.Steps) > 0 {
+		if err := validateScreenshotSteps(ctx, store, req.TaskID, req.Steps); err != nil {
+			return nil, err
+		}
+	}
 	tmp, err := os.MkdirTemp("", "bladepro-shot-")
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(tmp)
 	out := filepath.Join(tmp, "shot.png")
-	profile := filepath.Join(tmp, "profile")
-	args := []string{
-		"--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run",
-		"--no-default-browser-check", "--disable-dev-shm-usage",
-		"--user-data-dir=" + profile,
-		fmt.Sprintf("--window-size=%d,%d", width, height),
-		"--virtual-time-budget=8000",
-		"--screenshot=" + out,
-	}
-	if os.Geteuid() == 0 {
-		args = append(args, "--no-sandbox")
-	}
-	if addr := strings.TrimSpace(s.m.ProxyAddr()); addr != "" {
-		args = append(args, "--proxy-server=http://"+addr, "--ignore-certificate-errors")
-	}
-	args = append(args, target)
-	runCtx, cancel := context.WithTimeout(ctx, screenshotTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(runCtx, browser, args...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		msg := strings.TrimSpace(string(output))
-		if len(msg) > 800 {
-			msg = msg[:800]
+	if len(req.Steps) > 0 || req.FullPage {
+		runCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
+		if err := captureWithCDP(runCtx, browser, target, out, width, height, req.FullPage, req.Steps, s.m.ProxyAddr()); err != nil {
+			return nil, fmt.Errorf("浏览器截图失败：%w", err)
 		}
-		return nil, fmt.Errorf("浏览器截图失败：%v（%s）", err, msg)
+	} else {
+		profile := filepath.Join(tmp, "profile")
+		args := []string{
+			"--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run",
+			"--no-default-browser-check", "--disable-dev-shm-usage",
+			"--user-data-dir=" + profile,
+			fmt.Sprintf("--window-size=%d,%d", width, height),
+			"--virtual-time-budget=8000",
+			"--screenshot=" + out,
+		}
+		if os.Geteuid() == 0 {
+			args = append(args, "--no-sandbox")
+		}
+		if addr := strings.TrimSpace(s.m.ProxyAddr()); addr != "" {
+			args = append(args, "--proxy-server=http://"+addr, "--ignore-certificate-errors")
+		}
+		args = append(args, target)
+		runCtx, cancel := context.WithTimeout(ctx, screenshotTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(runCtx, browser, args...)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			msg := strings.TrimSpace(string(output))
+			if len(msg) > 800 {
+				msg = msg[:800]
+			}
+			return nil, fmt.Errorf("浏览器截图失败：%v（%s）", err, msg)
+		}
 	}
 	f, err := os.Open(out)
 	if err != nil {

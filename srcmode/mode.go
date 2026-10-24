@@ -97,6 +97,9 @@ type ModeDoc struct {
 	// AreaROI 是按风险面的历史产出率乘子（0.5–1.5，创建任务时按台账快照）。
 	// 用于补格排序：高产出面优先，长期无产出的面降权。缺省 = 1。
 	AreaROI map[string]float64 `json:"area_roi,omitempty"`
+	// ReconGate 要求 app/service 资产先完成清点（js_enum + paths_enum）才允许
+	// 派非侦察意图。nil = 跟随全局设置；false = 本任务显式关闭。
+	ReconGate *bool `json:"recon_gate,omitempty"`
 	// AreaTiers 是按风险面的模型分层（cheap/standard/strong）。空 = 用内建默认
 	// （有输出价值的面 strong，清点/枚举类 cheap）。只有在 llm_auto_tier 打开、
 	// 且任务没有显式 worker 绑定时才生效；显式配置始终优先。
@@ -259,6 +262,9 @@ func Parse(raw json.RawMessage) ModeDoc {
 
 // IsSrc reports whether this snapshot describes the SRC mode.
 func (d ModeDoc) IsSrc() bool { return d.Mode == ModeSrc }
+
+// ReconGateEnabled reports whether payload intents must wait for inventory.
+func (d ModeDoc) ReconGateEnabled() bool { return d.ReconGate != nil && *d.ReconGate }
 
 // PlatformExemptAllowed reports whether the program snapshot explicitly exempts
 // this risk area from testing (the only basis for na_code=platform_exempt).

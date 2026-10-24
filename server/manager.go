@@ -1695,6 +1695,9 @@ func (m *Manager) SetTaskStatusGuarded(id, status string) (won bool, err error) 
 		})
 	}
 	m.mu.Unlock()
+	if m.traffic != nil {
+		m.traffic.ClearTaskQPS(n)
+	}
 	return true, nil
 }
 
@@ -1726,6 +1729,9 @@ func (m *Manager) SetTaskStatus(id, status string) error {
 		})
 	}
 	m.mu.Unlock()
+	if pgdb.IsTerminal(status) && m.traffic != nil {
+		m.traffic.ClearTaskQPS(n)
+	}
 	return nil
 }
 

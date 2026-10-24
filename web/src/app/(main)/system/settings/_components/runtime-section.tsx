@@ -61,6 +61,10 @@ export function RuntimeSection({ s }: { s: ReturnType<typeof useSettingsState> }
     setRequireIsolation,
     savingIsolation,
     saveRequireIsolation,
+    reconGate,
+    setReconGate,
+    savingReconGate,
+    saveReconGate,
     egressGlobalQPS,
     setEgressGlobalQPS,
     egressHostQPS,
@@ -230,6 +234,31 @@ export function RuntimeSection({ s }: { s: ReturnType<typeof useSettingsState> }
                 onChange={(e) => setAssetCostBudget(e.target.value)}
               />
               <Button type="button" onClick={saveAssetCostBudget} disabled={!loaded || savingAssetCostBudget}>
+                保存
+              </Button>
+            </div>
+          </Field>
+        </SubBlock>
+
+        <SubBlock title="SRC 侦察先行闸" icon={<GaugeIcon className="text-muted-foreground size-4" />}>
+          <Field
+            label="清点完成前不允许打 payload"
+            hint={
+              <>
+                开启后，app/service 资产的 <code>js_enum</code> / <code>paths_enum</code> 未完成时，
+                <code>add_intent</code> 只接受 <code>recon=true</code> 的意图；清点完成（src_mark_check 落数字）
+                后才放行其他方向。目标本身没有清点面时，收尾门仍按资产类型判定，不会把 endpoint/ip 锁住。
+              </>
+            }
+          >
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={reconGate}
+                onCheckedChange={setReconGate}
+                disabled={!loaded || savingReconGate}
+                aria-label="开启侦察先行闸"
+              />
+              <Button type="button" onClick={saveReconGate} disabled={!loaded || savingReconGate}>
                 保存
               </Button>
             </div>

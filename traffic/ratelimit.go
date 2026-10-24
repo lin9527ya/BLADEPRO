@@ -147,15 +147,48 @@ func (t *Traffic) SetEgressLimits(l EgressLimits) {
 	t.rate.Store(newEgressGovernor(l))
 }
 
-// waitEgress blocks per the current limits. Nil governor = off, so the proxy is
-// unchanged unless the operator configured a rate.
-func (t *Traffic) waitEgress(host string) {
+// SetTaskQPS installs (or clears, qps<=0) a per-task token bucket. The task rate
+// is applied in addition to the global/host limits, so a noisy task cannot
+// consume a shared host's budget faster than the operator allows.
+func (t *Traffic) SetTaskQPS(taskID int64, qps float64) {
+	if t == nil || taskID <= 0 {
+		return
+	}
+	if qps <= 0 {
+		t.taskBuckets.Delete(taskID)
+		return
+	}
+	t.taskBuckets.Store(taskID, newTokenBucket(qps))
+}
+
+// ClearTaskQPS drops a task's bucket on terminal/delete.
+func (t *Traffic) ClearTaskQPS(taskID int64) {
+	if t == nil || taskID <= 0 {
+		return
+	}
+	t.taskBuckets.Delete(taskID)
+}
+
+// waitEgress blocks per the current limits. Nil governor + no task bucket = off,
+// so the proxy is unchanged unless the operator configured a rate.
+func (t *Traffic) waitEgress(host string, taskID int64) {
 	if t == nil {
 		return
 	}
+	host = strings.ToLower(strings.TrimSpace(host))
 	g := t.rate.Load()
-	if g == nil {
-		return
+	if g != nil {
+		g.wait(host)
 	}
-	g.wait(strings.ToLower(strings.TrimSpace(host)))
+	if taskID > 0 {
+		if v, ok := t.taskBuckets.Load(taskID); ok {
+			deadline := time.Now().Add(defaultEgressMaxWait)
+			if g != nil && g.limits.MaxWait > 0 {
+				deadline = time.Now().Add(g.limits.MaxWait)
+			}
+			if !v.(*tokenBucket).take(deadline) && g != nil {
+				g.waived.Add(1)
+			}
+		}
+	}
 }

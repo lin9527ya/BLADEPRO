@@ -423,6 +423,13 @@ func cellPriority(assetType, area string, attempts int, doc ModeDoc, assetMult f
 // reconCheckKeys 是"先清点再打"的前置收尾项。顺序即建议执行顺序。
 var reconCheckKeys = []string{"js_enum", "paths_enum"}
 
+// ReconMissingFor exposes the same inventory check used by the finish gate to the
+// intent admission path (agent package), so the pre-gate and the finish gate
+// cannot disagree about what "recon done" means.
+func ReconMissingFor(asset db.SrcAsset, checks map[string]db.SrcCheck, doc ModeDoc) []string {
+	return reconMissing(asset, checks, doc)
+}
+
 // reconMissing returns the reconnaissance checks that are not yet done for this
 // asset. Only app/service carry them (see CheckDefs); endpoint/IP/domain assets
 // return nil so the planner is never told to "go enumerate JS" on a bare host.

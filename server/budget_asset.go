@@ -31,6 +31,7 @@ const (
 	settingSrcAreaTiers     = "src_area_tiers"
 	settingSrcRequireIso    = "src_require_isolation"
 	settingAssetCostBudget  = "src_asset_cost_budget_usd"
+	settingSrcReconGate     = "src_recon_gate"
 	// 资产预算扫描节流：llm_usage 是热表，每 15s 一次足够及时且不增加明显负担。
 	assetBudgetSweepInterval = 15 * time.Second
 	maxAssetTokenBudgetValue = int64(1_000_000_000_000)
@@ -328,4 +329,10 @@ func (e *Engine) checkAssetCostBudgets(ctx context.Context, t *Task) {
 		t.trigMu.Unlock()
 		t.Notify()
 	}
+}
+
+// srcReconGate reports the global "inventory before payload" requirement for SRC
+// tasks. A per-task mode_doc.recon_gate overrides it.
+func (s *Server) srcReconGate() bool {
+	return s != nil && s.m != nil && s.m.pg != nil && s.m.pg.GetBool(settingSrcReconGate, false)
 }

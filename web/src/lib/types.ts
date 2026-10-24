@@ -1991,6 +1991,8 @@ export interface Settings {
   src_area_tiers?: Record<string, string>;
   /** 要求 SRC 任务在 agent 降权沙箱中运行（BLADEPRO_AGENT_USER 生效）。 */
   src_require_isolation?: boolean;
+  /** 侦察先行闸：app/service 未清点时只接受 recon 意图。 */
+  src_recon_gate?: boolean;
   // 任务并发上限:同时「运行中」的任务数上限。关闭=不限;开启后新建任务超限则排队,有空位自动启动。
   task_concurrency_enabled?: boolean; // 默认 false
   task_concurrency_limit?: number; // 开启后默认 5

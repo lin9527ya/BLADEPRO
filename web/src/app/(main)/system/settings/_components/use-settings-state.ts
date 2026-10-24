@@ -85,6 +85,8 @@ export function useSettingsState() {
   const [assetCostBudget, setAssetCostBudget] = React.useState("0");
   const [savingAssetCostBudget, setSavingAssetCostBudget] = React.useState(false);
   const [requireIsolation, setRequireIsolation] = React.useState(false);
+  const [reconGate, setReconGate] = React.useState(false);
+  const [savingReconGate, setSavingReconGate] = React.useState(false);
   const [savingIsolation, setSavingIsolation] = React.useState(false);
   // 出站速率治理（录制代理层）：0 = 关闭。
   const [egressGlobalQPS, setEgressGlobalQPS] = React.useState("0");
@@ -165,6 +167,7 @@ export function useSettingsState() {
     setAssetCostBudget(String(s.src_asset_cost_budget_usd ?? 0));
     setAreaTiers(JSON.stringify(s.src_area_tiers ?? {}));
     setRequireIsolation(!!s.src_require_isolation);
+    setReconGate(!!s.src_recon_gate);
     setEgressGlobalQPS(String(s.egress_global_qps ?? 0));
     setEgressHostQPS(String(s.egress_host_qps ?? 0));
     setEgressWaitMS(String(s.egress_max_wait_ms ?? 0));
@@ -440,6 +443,18 @@ export function useSettingsState() {
       })
       .catch((e) => toast.error("保存失败：" + (e as Error).message))
       .finally(() => setSavingAssetCostBudget(false));
+  };
+
+  const saveReconGate = () => {
+    setSavingReconGate(true);
+    api
+      .setSettings({ src_recon_gate: reconGate })
+      .then((s) => {
+        apply(s);
+        toast.success(reconGate ? "已开启侦察先行闸" : "已关闭侦察先行闸");
+      })
+      .catch((e) => toast.error("保存失败：" + (e as Error).message))
+      .finally(() => setSavingReconGate(false));
   };
 
   const saveRequireIsolation = () => {
@@ -850,6 +865,10 @@ export function useSettingsState() {
     setRequireIsolation,
     savingIsolation,
     saveRequireIsolation,
+    reconGate,
+    setReconGate,
+    savingReconGate,
+    saveReconGate,
     egressGlobalQPS,
     setEgressGlobalQPS,
     egressHostQPS,

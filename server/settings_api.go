@@ -92,13 +92,15 @@ func (s *Server) settingsPayload() map[string]any {
 		"src_area_tiers": s.srcAreaTiers(),
 		// SRC 任务要求 agent 降权运行（BLADEPRO_AGENT_USER 实际生效）。
 		"src_require_isolation": s.srcRequireIsolation(),
-		"llm_record":            s.m.LLMRecordEnabled(),
-		"web_search_enabled":    on,
-		"web_search_backend":    backend,
-		"brave_key_set":         strings.TrimSpace(braveKey) != "",
-		"tavily_key_set":        strings.TrimSpace(tavilyKey) != "",
-		"web_search_proxy":      proxy,             // 独立出口代理(http/https/socks5)，空=直连
-		"global_proxy":          s.m.GlobalProxy(), // 全局出口代理(http/https/socks5)，所有目标流量走它，空=直连
+		// SRC 侦察先行闸：未清点的 app/service 资产只接受 recon 意图。
+		"src_recon_gate":     s.srcReconGate(),
+		"llm_record":         s.m.LLMRecordEnabled(),
+		"web_search_enabled": on,
+		"web_search_backend": backend,
+		"brave_key_set":      strings.TrimSpace(braveKey) != "",
+		"tavily_key_set":     strings.TrimSpace(tavilyKey) != "",
+		"web_search_proxy":   proxy,             // 独立出口代理(http/https/socks5)，空=直连
+		"global_proxy":       s.m.GlobalProxy(), // 全局出口代理(http/https/socks5)，所有目标流量走它，空=直连
 		// 出站速率治理（录制代理层）：0 = 关闭。host 桶与全局桶同时生效。
 		"egress_global_qps":        egressGlobal,
 		"egress_host_qps":          egressHost,
@@ -218,6 +220,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		SrcAssetCostBudget  *float64           `json:"src_asset_cost_budget_usd"`     // 美元；0=关
 		SrcAreaTiers        *map[string]string `json:"src_area_tiers"`
 		SrcRequireIsolation *bool              `json:"src_require_isolation"`
+		SrcReconGate        *bool              `json:"src_recon_gate"`
 		LLMRecord           *bool              `json:"llm_record"` // LLM 录制开关（默认关）；即时生效，无需重建 agent
 		// Web search. WebSearchEnabled/Backend toggle the tool + backend; BraveKey/TavilyKey
 		// are optional — omit (null) to leave a stored key untouched, send "" to clear.
@@ -592,6 +595,12 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.m.pg.SetSetting(settingAssetTokenBudget, strconv.FormatInt(v, 10)); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.SrcReconGate != nil {
+		if err := s.m.pg.SetBool(settingSrcReconGate, *req.SrcReconGate); err != nil {
 			writeErr(w, 500, err.Error())
 			return
 		}

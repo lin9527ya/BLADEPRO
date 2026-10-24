@@ -118,3 +118,54 @@ func TestSrcNegativeTool(t *testing.T) {
 		t.Fatalf("clear result=%v", out)
 	}
 }
+
+// TestReconGateBlocksPayloadIntents pins the pre-gate: with recon_gate on, an
+// app/service asset with incomplete inventory rejects payload intents until both
+// closures are done, then allows them.
+func TestReconGateBlocksPayloadIntents(t *testing.T) {
+	d := testDB(t)
+	defer d.Close()
+	root := fmt.Sprintf("recon-%d.example", time.Now().UnixNano())
+	task, err := d.CreateTaskWithOptions("src-recon-gate", "侦察闸", db.TaskCreateOptions{
+		Mode: "src", ScopeRows: []db.TaskScopeInput{{Kind: "root_domain", Domain: root}},
+	})
+	if err != nil {
+		t.Fatalf("task: %v", err)
+	}
+	t.Cleanup(func() { _, _ = d.Exec(`DELETE FROM tasks WHERE id=$1`, task.ID) })
+	as := d.Assets()
+	assetID, err := as.UpsertHTTPService(db.UpsertHTTPServiceReq{URL: "https://shop." + root, TaskID: task.ID})
+	if err != nil {
+		t.Fatalf("service asset: %v", err)
+	}
+	t.Cleanup(func() { _, _ = d.Exec(`DELETE FROM assets WHERE id=$1`, assetID) })
+	if _, err := d.Exec(`INSERT INTO task_scope(task_id, kind, domain, source, reason)
+VALUES ($1,'subdomain',$2,'manual','recon gate test')`, task.ID, "shop."+root); err != nil {
+		t.Fatalf("scope: %v", err)
+	}
+
+	on := true
+	doc := srcmode.DefaultDoc()
+	doc.ReconGate = &on
+	ts := NewToolSet(d.Exploration(task.ExplorationID), "planner")
+	ts.SetTaskID(task.ID)
+	ts.SetAssetStore(as, d.Companies())
+	ts.SetSrcMode(doc, d.Src())
+
+	if err := ts.checkReconGate(context.Background(), []int64{assetID}); err == nil {
+		t.Fatal("incomplete inventory must block payload intents")
+	}
+	// 清点两项都落数字后放行。
+	ctx := context.Background()
+	for _, c := range []db.SrcCheck{
+		{TaskID: task.ID, AssetID: assetID, CheckKey: "js_enum", State: db.SrcCheckDone, Metrics: map[string]int{"js_inline": 1}},
+		{TaskID: task.ID, AssetID: assetID, CheckKey: "paths_enum", State: db.SrcCheckDone, Metrics: map[string]int{"paths": 200}},
+	} {
+		if _, err := d.Src().UpsertSrcCheck(ctx, &c); err != nil {
+			t.Fatalf("upsert %s: %v", c.CheckKey, err)
+		}
+	}
+	if err := ts.checkReconGate(context.Background(), []int64{assetID}); err != nil {
+		t.Fatalf("completed inventory should pass: %v", err)
+	}
+}

@@ -204,6 +204,17 @@ func (s *Server) prepareTaskCreate(ctx context.Context, req createTaskReq) (*pre
 			return nil, taskErr(500, err.Error())
 		}
 	}
+	// 侦察先行闸：mode_doc 显式给了就用自己的；没给则继承全局设置。
+	if srcDoc.IsSrc() && srcDoc.ReconGate == nil {
+		if s.srcReconGate() {
+			on := true
+			srcDoc.ReconGate = &on
+			modeDoc, err = json.Marshal(srcDoc)
+			if err != nil {
+				return nil, taskErr(500, err.Error())
+			}
+		}
+	}
 	// 风险面模型分层（可选）：mode_doc 显式给了就用自己的；没给则继承全局
 	// setting `src_area_tiers`。创建时快照，运行中改全局不影响已建任务。
 	if srcDoc.IsSrc() && len(srcDoc.AreaTiers) == 0 {

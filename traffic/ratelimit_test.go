@@ -63,8 +63,33 @@ func TestSetEgressLimitsOffClearsGovernor(t *testing.T) {
 	}
 	// 关闭时 waitEgress 必须立即返回。
 	start := time.Now()
-	tr.waitEgress("example.com")
+	tr.waitEgress("example.com", 0)
 	if elapsed := time.Since(start); elapsed > 10*time.Millisecond {
 		t.Fatalf("disabled governor waited %v", elapsed)
+	}
+}
+
+// TestTaskQPSBucketLifecycle pins per-task buckets: set creates one, clearing
+// removes it, and a task bucket works even when no global governor is installed.
+func TestTaskQPSBucketLifecycle(t *testing.T) {
+	tr, err := Open(t.TempDir(), "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+	tr.SetTaskQPS(42, 2)
+	if _, ok := tr.taskBuckets.Load(int64(42)); !ok {
+		t.Fatal("task bucket not installed")
+	}
+	// 无全局 governor 时也必须走任务桶；初始 burst=2，两次不阻塞。
+	start := time.Now()
+	tr.waitEgress("example.com", 42)
+	tr.waitEgress("example.com", 42)
+	if time.Since(start) > 500*time.Millisecond {
+		t.Fatalf("initial burst should not block: %v", time.Since(start))
+	}
+	tr.ClearTaskQPS(42)
+	if _, ok := tr.taskBuckets.Load(int64(42)); ok {
+		t.Fatal("task bucket not cleared")
 	}
 }

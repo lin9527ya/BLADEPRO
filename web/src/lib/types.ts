@@ -77,6 +77,12 @@ export interface TaskTemplate {
   goal: string;
   category_id?: number | null; // 预设分类；null/缺省=无
   intercept_rules?: AssetInterceptRuleInput[]; // 预设的任务级拦截/允许规则
+  /** SRC 预设：''=普通渗透，'src'=SRC 挖掘。 */
+  mode?: TaskMode;
+  /** SRC 平台项目（仅 mode=src）。 */
+  src_program_id?: number | null;
+  /** 应用模板时默认开启跨任务覆盖继承。 */
+  inherit_coverage?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -941,6 +947,14 @@ export interface ScheduleTaskSpec {
   plan_heartbeat_seconds?: number;
   coverage_enabled?: boolean;
   seed_first_intent?: boolean;
+  /** 任务级 token 预算覆盖（0/省略 = 全局）。 */
+  token_budget?: number;
+  /** 排队优先级。 */
+  priority?: number;
+  /** SRC 模式与平台项目；mode='' 表示普通渗透。 */
+  mode?: TaskMode;
+  src_program_id?: number;
+  inherit_coverage?: boolean;
 }
 
 export interface TaskSchedule {

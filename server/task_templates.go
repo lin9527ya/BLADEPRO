@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/srcmode"
 )
 
 const maxTaskTemplateRequestBytes = 512 << 10
@@ -24,6 +26,11 @@ type taskTemplateRequest struct {
 	Goal           *string                `json:"goal"`
 	CategoryID     *int64                 `json:"category_id"`
 	InterceptRules []taskInterceptRuleReq `json:"intercept_rules"`
+	// SRC 预设：mode='' 普通渗透 / 'src'；src_program_id 绑定平台项目；
+	// inherit_coverage 应用模板时默认勾选跨任务覆盖继承。
+	Mode            *string `json:"mode"`
+	SrcProgramID    *int64  `json:"src_program_id"`
+	InheritCoverage *bool   `json:"inherit_coverage"`
 }
 
 // decodeTaskTemplateRequest decodes the body into req and returns the set of
@@ -81,6 +88,41 @@ func validateTaskTemplateRequest(req taskTemplateRequest) error {
 	return nil
 }
 
+// validateTaskTemplateSRC checks the SRC preset fields. Program rules are
+// validated at save time so a broken project cannot poison every future apply.
+func (s *Server) validateTaskTemplateSRC(ctx context.Context, req taskTemplateRequest) error {
+	mode := ""
+	if req.Mode != nil {
+		mode = strings.TrimSpace(*req.Mode)
+	}
+	if mode != "" && mode != srcmode.ModeSrc {
+		return fmt.Errorf("mode 只能是 '' 或 'src'")
+	}
+	if req.InheritCoverage != nil && *req.InheritCoverage && mode != srcmode.ModeSrc {
+		return fmt.Errorf("inherit_coverage 仅适用于 SRC 模板（请同时设 mode=src）")
+	}
+	if req.SrcProgramID != nil && *req.SrcProgramID > 0 {
+		if mode != srcmode.ModeSrc {
+			return fmt.Errorf("绑定平台项目需要同时设 mode=src")
+		}
+		row, err := s.m.pg.Src().GetSrcProgram(ctx, *req.SrcProgramID)
+		if err != nil {
+			return err
+		}
+		if row == nil {
+			return fmt.Errorf("SRC 平台项目不存在")
+		}
+		program, err := srcProgramFromRow(row)
+		if err != nil {
+			return fmt.Errorf("该项目的规则配置损坏：%w", err)
+		}
+		if err := program.Validate(); err != nil {
+			return fmt.Errorf("该项目的规则不合法：%w", err)
+		}
+	}
+	return nil
+}
+
 func writeTaskTemplateErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, db.ErrTaskTemplateInvalid):
@@ -125,12 +167,22 @@ func (s *Server) pgCreateTaskTemplate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "拦截/允许规则无效："+err.Error())
 		return
 	}
+	if err := s.validateTaskTemplateSRC(r.Context(), req); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.SrcProgramID != nil && *req.SrcProgramID <= 0 {
+		req.SrcProgramID = nil
+	}
 	template, err := pg.CreateTaskTemplate(db.TaskTemplateInput{
-		Name:           stringValue(req.Name),
-		Description:    stringValue(req.Description),
-		Goal:           stringValue(req.Goal),
-		CategoryID:     req.CategoryID,
-		InterceptRules: rules,
+		Name:            stringValue(req.Name),
+		Description:     stringValue(req.Description),
+		Goal:            stringValue(req.Goal),
+		CategoryID:      req.CategoryID,
+		InterceptRules:  rules,
+		Mode:            stringValue(req.Mode),
+		SrcProgramID:    req.SrcProgramID,
+		InheritCoverage: req.InheritCoverage != nil && *req.InheritCoverage,
 	})
 	if err != nil {
 		writeTaskTemplateErr(w, err)
@@ -160,8 +212,15 @@ func (s *Server) pgUpdateTaskTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	_, catPresent := present["category_id"]
 	_, rulesPresent := present["intercept_rules"]
-	if req.Name == nil && req.Description == nil && req.Goal == nil && !catPresent && !rulesPresent {
-		writeErr(w, http.StatusBadRequest, "至少需要提供 name、description、goal、category_id 或 intercept_rules")
+	_, modePresent := present["mode"]
+	_, programPresent := present["src_program_id"]
+	if req.Name == nil && req.Description == nil && req.Goal == nil && !catPresent && !rulesPresent &&
+		!modePresent && !programPresent && req.InheritCoverage == nil {
+		writeErr(w, http.StatusBadRequest, "至少需要提供 name、description、goal、category_id、intercept_rules、mode、src_program_id 或 inherit_coverage")
+		return
+	}
+	if err := s.validateTaskTemplateSRC(r.Context(), req); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	patch := db.TaskTemplatePatch{Name: req.Name, Description: req.Description, Goal: req.Goal}
@@ -177,6 +236,25 @@ func (s *Server) pgUpdateTaskTemplate(w http.ResponseWriter, r *http.Request) {
 		}
 		patch.SetInterceptRules = true
 		patch.InterceptRules = rules
+	}
+	patch.Mode = req.Mode
+	if req.SrcProgramID != nil && *req.SrcProgramID <= 0 {
+		req.SrcProgramID = nil
+	}
+	if programPresent {
+		patch.SetSrcProgramID = true
+		patch.SrcProgramID = req.SrcProgramID
+	}
+	// 切回普通渗透时顺手清掉 SRC 专属字段，避免模板留下"mode='' 但绑着项目/继承"的矛盾状态。
+	if modePresent && strings.TrimSpace(stringValue(req.Mode)) != srcmode.ModeSrc {
+		if !programPresent {
+			patch.SetSrcProgramID = true
+			patch.SrcProgramID = nil
+		}
+		if req.InheritCoverage == nil {
+			off := false
+			patch.InheritCoverage = &off
+		}
 	}
 	template, err := pg.PatchTaskTemplate(id, patch)
 	if err != nil {

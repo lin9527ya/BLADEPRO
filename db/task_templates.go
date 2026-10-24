@@ -33,17 +33,25 @@ type TaskTemplate struct {
 	Goal           string                   `json:"goal"`
 	CategoryID     *int64                   `json:"category_id"`
 	InterceptRules []TaskInterceptRuleInput `json:"intercept_rules"`
-	CreatedAt      time.Time                `json:"created_at"`
-	UpdatedAt      time.Time                `json:"updated_at"`
+	// SRC 预设：mode='' 普通渗透 / 'src'；src_program_id 绑定平台项目；
+	// inherit_coverage 在应用模板时默认勾选。
+	Mode            string    `json:"mode,omitempty"`
+	SrcProgramID    *int64    `json:"src_program_id,omitempty"`
+	InheritCoverage bool      `json:"inherit_coverage,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // TaskTemplateInput is the create/update payload after normalization.
 type TaskTemplateInput struct {
-	Name           string
-	Description    string
-	Goal           string
-	CategoryID     *int64
-	InterceptRules []TaskInterceptRuleInput
+	Name            string
+	Description     string
+	Goal            string
+	CategoryID      *int64
+	InterceptRules  []TaskInterceptRuleInput
+	Mode            string
+	SrcProgramID    *int64
+	InheritCoverage bool
 }
 
 // TaskTemplatePatch changes only fields flagged as set. Name/Description/Goal use
@@ -57,14 +65,19 @@ type TaskTemplatePatch struct {
 	SetCategoryID     bool
 	InterceptRules    []TaskInterceptRuleInput
 	SetInterceptRules bool
+	Mode              *string
+	SrcProgramID      *int64
+	SetSrcProgramID   bool
+	InheritCoverage   *bool
 }
 
-const taskTemplateCols = `id, name, nkey, description, goal, category_id, intercept_rules, created_at, updated_at`
+const taskTemplateCols = `id, name, nkey, description, goal, category_id, intercept_rules, COALESCE(mode,''), src_program_id, COALESCE(inherit_coverage,false), created_at, updated_at`
 
 func scanTaskTemplate(row interface{ Scan(...any) error }) (TaskTemplate, error) {
 	var t TaskTemplate
 	var rulesRaw []byte
-	if err := row.Scan(&t.ID, &t.Name, &t.NKey, &t.Description, &t.Goal, &t.CategoryID, &rulesRaw, &t.CreatedAt, &t.UpdatedAt); err != nil {
+	if err := row.Scan(&t.ID, &t.Name, &t.NKey, &t.Description, &t.Goal, &t.CategoryID, &rulesRaw,
+		&t.Mode, &t.SrcProgramID, &t.InheritCoverage, &t.CreatedAt, &t.UpdatedAt); err != nil {
 		return t, err
 	}
 	t.InterceptRules = []TaskInterceptRuleInput{}
@@ -112,12 +125,27 @@ func normalizeTaskTemplateInput(in TaskTemplateInput) (TaskTemplateInput, string
 	case utf8.RuneCountInString(in.Goal) > MaxTaskTemplateTextRunes:
 		return in, "", fmt.Errorf("%w: goal exceeds %d characters", ErrTaskTemplateInvalid, MaxTaskTemplateTextRunes)
 	}
+	in.Mode = strings.TrimSpace(in.Mode)
+	if in.Mode != "" && in.Mode != "src" {
+		return in, "", fmt.Errorf("%w: mode must be '' or 'src'", ErrTaskTemplateInvalid)
+	}
+	if in.Mode != "src" && (in.SrcProgramID != nil || in.InheritCoverage) {
+		return in, "", fmt.Errorf("%w: src_program_id/inherit_coverage require mode=src", ErrTaskTemplateInvalid)
+	}
 	return in, taskTemplateNKey(in.Name), nil
 }
 
 func normalizeTaskTemplatePatch(patch TaskTemplatePatch) (TaskTemplatePatch, *string, error) {
-	if patch.Name == nil && patch.Description == nil && patch.Goal == nil && !patch.SetCategoryID && !patch.SetInterceptRules {
+	if patch.Name == nil && patch.Description == nil && patch.Goal == nil && !patch.SetCategoryID && !patch.SetInterceptRules &&
+		patch.Mode == nil && !patch.SetSrcProgramID && patch.InheritCoverage == nil {
 		return patch, nil, fmt.Errorf("%w: no fields supplied", ErrTaskTemplateInvalid)
+	}
+	if patch.Mode != nil {
+		mode := strings.TrimSpace(*patch.Mode)
+		if mode != "" && mode != "src" {
+			return patch, nil, fmt.Errorf("%w: mode must be '' or 'src'", ErrTaskTemplateInvalid)
+		}
+		patch.Mode = &mode
 	}
 	var nkey *string
 	if patch.Name != nil {
@@ -171,10 +199,11 @@ func (d *DB) CreateTaskTemplate(in TaskTemplateInput) (*TaskTemplate, error) {
 		return nil, err
 	}
 	t, err := scanTaskTemplate(d.QueryRow(`
-INSERT INTO task_templates(name, nkey, description, goal, category_id, intercept_rules)
-VALUES ($1,$2,$3,$4,$5,$6)
+INSERT INTO task_templates(name, nkey, description, goal, category_id, intercept_rules, mode, src_program_id, inherit_coverage)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 ON CONFLICT (nkey) DO NOTHING
-RETURNING `+taskTemplateCols, in.Name, nkey, in.Description, in.Goal, in.CategoryID, rulesJSON))
+RETURNING `+taskTemplateCols, in.Name, nkey, in.Description, in.Goal, in.CategoryID, rulesJSON,
+		in.Mode, in.SrcProgramID, in.InheritCoverage))
 	if err == sql.ErrNoRows {
 		return nil, ErrTaskTemplateNameConflict
 	}
@@ -222,6 +251,8 @@ func (d *DB) UpdateTaskTemplate(id int64, in TaskTemplateInput) (*TaskTemplate, 
 	}
 	return d.PatchTaskTemplate(id, TaskTemplatePatch{
 		Name: &in.Name, Description: &in.Description, Goal: &in.Goal,
+		Mode: &in.Mode, SrcProgramID: in.SrcProgramID, SetSrcProgramID: true,
+		InheritCoverage: &in.InheritCoverage,
 	})
 }
 
@@ -243,7 +274,10 @@ SET name=CASE WHEN $2 THEN $3::text ELSE name END,
     description=CASE WHEN $5 THEN $6::text ELSE description END,
     goal=CASE WHEN $7 THEN $8::text ELSE goal END,
     category_id=CASE WHEN $9 THEN $10::bigint ELSE category_id END,
-    intercept_rules=CASE WHEN $11 THEN $12::jsonb ELSE intercept_rules END
+    intercept_rules=CASE WHEN $11 THEN $12::jsonb ELSE intercept_rules END,
+    mode=CASE WHEN $13::boolean THEN $14::text ELSE mode END,
+    src_program_id=CASE WHEN $15::boolean THEN $16::bigint ELSE src_program_id END,
+    inherit_coverage=CASE WHEN $17::boolean THEN $18::boolean ELSE inherit_coverage END
 WHERE id=$1
 RETURNING `+taskTemplateCols,
 		id,
@@ -252,6 +286,9 @@ RETURNING `+taskTemplateCols,
 		patch.Goal != nil, patch.Goal,
 		patch.SetCategoryID, patch.CategoryID,
 		patch.SetInterceptRules, rulesJSON,
+		patch.Mode != nil, patch.Mode,
+		patch.SetSrcProgramID, patch.SrcProgramID,
+		patch.InheritCoverage != nil, patch.InheritCoverage,
 	))
 	if err == sql.ErrNoRows {
 		return nil, ErrTaskTemplateNotFound

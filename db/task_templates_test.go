@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -127,5 +128,51 @@ func TestTaskTemplateDisjointPatchesCompose(t *testing.T) {
 	}
 	if got == nil || got.Description != description || got.Goal != goal {
 		t.Fatalf("disjoint patches lost an update: %+v", got)
+	}
+}
+
+// TestTaskTemplateSRCPresets pins mode / program / inherit_coverage storage and
+// the "switch back to plain pentest clears SRC-only fields" behavior.
+func TestTaskTemplateSRCPresets(t *testing.T) {
+	d, err := Open(testDSN(t))
+	if err != nil {
+		t.Skipf("postgres unavailable (%v) — skipping", err)
+	}
+	defer d.Close()
+	ctx := context.Background()
+	program, err := d.Src().CreateSrcProgram(ctx, SrcProgramInput{
+		Name: fmt.Sprintf("template-src-%d", time.Now().UnixNano()), Platform: "test",
+	})
+	if err != nil {
+		t.Fatalf("program: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Src().DeleteSrcProgram(context.Background(), program.ID) })
+
+	name := fmt.Sprintf("SRC Template %d", time.Now().UnixNano())
+	created, err := d.CreateTaskTemplate(TaskTemplateInput{
+		Name: name, Description: "src preset", Goal: "src goal",
+		Mode: "src", SrcProgramID: &program.ID, InheritCoverage: true,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _, _ = d.DeleteTaskTemplate(created.ID) })
+	if created.Mode != "src" || created.SrcProgramID == nil || *created.SrcProgramID != program.ID || !created.InheritCoverage {
+		t.Fatalf("created=%+v", created)
+	}
+	got, err := d.GetTaskTemplate(created.ID)
+	if err != nil || got == nil || got.Mode != "src" || !got.InheritCoverage {
+		t.Fatalf("get=%+v err=%v", got, err)
+	}
+	plain := ""
+	off := false
+	patched, err := d.PatchTaskTemplate(created.ID, TaskTemplatePatch{
+		Mode: &plain, SetSrcProgramID: true, SrcProgramID: nil, InheritCoverage: &off,
+	})
+	if err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+	if patched.Mode != "" || patched.SrcProgramID != nil || patched.InheritCoverage {
+		t.Fatalf("patched=%+v", patched)
 	}
 }

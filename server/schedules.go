@@ -36,11 +36,18 @@ type scheduleSpec struct {
 	LLMProfileIDs        []int64                `json:"llm_profile_ids,omitempty"`
 	CompanyIDs           []int64                `json:"company_ids,omitempty"`
 	TimeoutSeconds       int                    `json:"timeout_seconds,omitempty"`
+	TokenBudget          int64                  `json:"token_budget,omitempty"` // 0 = 全局
+	Priority             int                    `json:"priority,omitempty"`
 	PlanHeartbeatSeconds int                    `json:"plan_heartbeat_seconds,omitempty"`
 	CoverageEnabled      *bool                  `json:"coverage_enabled,omitempty"`
 	SeedFirstIntent      *bool                  `json:"seed_first_intent,omitempty"`
 	InterceptRules       []taskInterceptRuleReq `json:"intercept_rules,omitempty"`
 	ExplorationPolicy    *policy.Override       `json:"exploration_policy,omitempty"`
+	// SRC：模式 + 平台项目 + 跨任务覆盖继承；与建任务请求同义。
+	Mode            string          `json:"mode,omitempty"`
+	ModeDoc         json.RawMessage `json:"mode_doc,omitempty"`
+	SrcProgramID    *int64          `json:"src_program_id,omitempty"`
+	InheritCoverage *bool           `json:"inherit_coverage,omitempty"`
 }
 
 // taskScheduleDTO 是给 UI 的计划任务视图：多给一个 frequency_text（人话），
@@ -90,53 +97,52 @@ func (s *Server) validateScheduleSpec(spec scheduleSpec) error {
 	if spec.TimeoutSeconds < 0 {
 		return fmt.Errorf("超时秒数不能为负")
 	}
-	if len(spec.LLMProfileIDs) > 0 {
-		if err := s.validateTaskProfileIDs(spec.LLMProfileIDs); err != nil {
-			return err
-		}
-	}
 	if spec.CategoryID != nil {
-		// GetTaskCategory 查不到时返回 (nil, nil)——必须判 nil，否则"分类不存在"会漏到触发那天。
+		// prepareTaskCreate 不校验分类（建任务时才由 DB 拒绝）；计划任务必须在写入时
+		// 就报错，否则错误会拖到触发那天。
 		cat, err := s.m.pg.GetTaskCategory(*spec.CategoryID)
 		if err != nil || cat == nil {
 			return fmt.Errorf("任务分类不存在")
 		}
 	}
-	if _, err := buildTaskInterceptRules(spec.InterceptRules); err != nil {
-		return fmt.Errorf("任务级拦截规则无效：%w", err)
-	}
-	if spec.ExplorationPolicy != nil {
-		global, _ := s.globalPolicy()
-		eff := policy.Merge(global, *spec.ExplorationPolicy)
-		if err := policy.Validate(eff); err != nil {
-			return fmt.Errorf("探索策略无效：%w", err)
-		}
+	// 走与 HTTP 建任务完全相同的准备管线：项目规则、SRC 快照、策略、LLM 配置、
+	// 分类、覆盖继承都在写入计划时就校验，避免到触发那天才发现配置写错。
+	if _, perr := s.prepareTaskCreate(context.Background(), scheduleSpecToCreateReq(spec)); perr != nil {
+		return fmt.Errorf("%s", perr.msg)
 	}
 	return nil
 }
 
 // createTaskFromSpec 按规格建一个任务并启动（与 HTTP 建任务同一条路径）。
 func (s *Server) createTaskFromSpec(spec scheduleSpec) (*Task, error) {
-	interceptRules, err := buildTaskInterceptRules(spec.InterceptRules)
-	if err != nil {
-		return nil, fmt.Errorf("任务级拦截规则无效：%w", err)
+	ctx := context.Background()
+	prep, perr := s.prepareTaskCreate(ctx, scheduleSpecToCreateReq(spec))
+	if perr != nil {
+		return nil, fmt.Errorf("%s", perr.msg)
 	}
-	policyDoc, err := s.newTaskPolicy(spec.ExplorationPolicy)
-	if err != nil {
-		return nil, err
-	}
-	t, err := s.m.CreateTaskWithOptions(spec.Description, spec.Goal, db.TaskCreateOptions{
-		Name: strings.TrimSpace(spec.Name), CategoryID: spec.CategoryID,
-		CompanyIDs: spec.CompanyIDs, LLMProfileIDs: spec.LLMProfileIDs,
-		TimeoutSeconds: spec.TimeoutSeconds, PlanHeartbeatSeconds: spec.PlanHeartbeatSeconds,
-		CoverageEnabled: spec.CoverageEnabled, InterceptRules: interceptRules,
-		ExplorationPolicy: policyDoc,
-	})
-	if err != nil {
-		return nil, err
+	t, perr := s.persistPreparedTask(ctx, prep, nil)
+	if perr != nil {
+		return nil, fmt.Errorf("%s", perr.msg)
 	}
 	s.launchTask(t, spec.Description+" "+spec.Goal, spec.SeedFirstIntent != nil && *spec.SeedFirstIntent)
 	return t, nil
+}
+
+// scheduleSpecToCreateReq maps a schedule's replayable spec onto the task-creation
+// request. Keeping one mapping means schedules cannot silently drift from the HTTP
+// creation path.
+func scheduleSpecToCreateReq(spec scheduleSpec) createTaskReq {
+	return createTaskReq{
+		Name: spec.Name, Description: spec.Description, Goal: spec.Goal,
+		CategoryID: spec.CategoryID, LLMProfileIDs: spec.LLMProfileIDs,
+		CompanyIDs: spec.CompanyIDs, TimeoutSeconds: spec.TimeoutSeconds,
+		TokenBudget: spec.TokenBudget, Priority: spec.Priority,
+		PlanHeartbeatSeconds: spec.PlanHeartbeatSeconds,
+		CoverageEnabled:      spec.CoverageEnabled, SeedFirstIntent: spec.SeedFirstIntent,
+		InterceptRules: spec.InterceptRules, ExplorationPolicy: spec.ExplorationPolicy,
+		Mode: spec.Mode, ModeDoc: spec.ModeDoc, SrcProgramID: spec.SrcProgramID,
+		InheritCoverage: spec.InheritCoverage,
+	}
 }
 
 // ---- HTTP ----

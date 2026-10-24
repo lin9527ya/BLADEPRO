@@ -17,6 +17,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Combobox,
   ComboboxContent,
@@ -40,7 +41,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
-import type { AssetInterceptRuleInput, TaskCategory, TaskTemplate } from "@/lib/types";
+import type { AssetInterceptRuleInput, SrcProgram, TaskCategory, TaskMode, TaskTemplate } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 interface TemplateDraft {
@@ -49,10 +50,16 @@ interface TemplateDraft {
   goal: string;
   categoryID: number | null;
   interceptRules: AssetInterceptRuleInput[];
+  mode: TaskMode;
+  srcProgramID: number | null;
+  inheritCoverage: boolean;
 }
 
 // TemplateSeed 是「另存为模板」时从创建表单带入的初值。
-type TemplateSeed = Pick<TemplateDraft, "description" | "goal" | "categoryID" | "interceptRules">;
+type TemplateSeed = Pick<
+  TemplateDraft,
+  "description" | "goal" | "categoryID" | "interceptRules" | "mode" | "srcProgramID" | "inheritCoverage"
+>;
 
 interface TaskTemplateManagerProps {
   open: boolean;
@@ -70,6 +77,9 @@ const emptyDraft = (): TemplateDraft => ({
   goal: "",
   categoryID: null,
   interceptRules: [],
+  mode: "",
+  srcProgramID: null,
+  inheritCoverage: false,
 });
 
 function templateDraft(template: TaskTemplate): TemplateDraft {
@@ -79,6 +89,9 @@ function templateDraft(template: TaskTemplate): TemplateDraft {
     goal: template.goal,
     categoryID: template.category_id ?? null,
     interceptRules: template.intercept_rules ?? [],
+    mode: template.mode === "src" ? "src" : "",
+    srcProgramID: template.src_program_id ?? null,
+    inheritCoverage: !!template.inherit_coverage,
   };
 }
 
@@ -97,6 +110,7 @@ function TaskTemplateManager({
   const [deleteOpen, setDeleteOpen] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
   const [categories, setCategories] = React.useState<TaskCategory[]>([]);
+  const [programs, setPrograms] = React.useState<SrcProgram[]>([]);
   const wasOpen = React.useRef(false);
 
   React.useEffect(() => {
@@ -105,6 +119,10 @@ function TaskTemplateManager({
       .taskCategories()
       .then(setCategories)
       .catch(() => setCategories([]));
+    api
+      .srcPrograms()
+      .then((r) => setPrograms(r.programs ?? []))
+      .catch(() => setPrograms([]));
   }, [open]);
 
   React.useEffect(() => {
@@ -117,6 +135,9 @@ function TaskTemplateManager({
           goal: seed.goal,
           categoryID: seed.categoryID,
           interceptRules: seed.interceptRules,
+          mode: seed.mode,
+          srcProgramID: seed.srcProgramID,
+          inheritCoverage: seed.inheritCoverage,
         });
       } else if (templates[0]) {
         setSelectedID(templates[0].id);
@@ -156,6 +177,9 @@ function TaskTemplateManager({
       intercept_rules: draft.interceptRules
         .map((r) => ({ ...r, pattern: r.pattern.trim() }))
         .filter((r) => r.pattern !== ""),
+      mode: draft.mode,
+      src_program_id: draft.mode === "src" ? draft.srcProgramID : null,
+      inherit_coverage: draft.mode === "src" ? draft.inheritCoverage : false,
     };
     if (!input.name || !input.description || !input.goal) {
       toast.error("请填写模板名称、描述和目标");
@@ -298,6 +322,62 @@ function TaskTemplateManager({
                   <FieldDescription>应用模板时预填此分类（可再改）。</FieldDescription>
                 </Field>
                 <Field>
+                  <FieldLabel htmlFor="task-template-mode">任务模式</FieldLabel>
+                  <NativeSelect
+                    id="task-template-mode"
+                    className="w-full"
+                    value={draft.mode}
+                    onChange={(event) =>
+                      patchDraft({
+                        mode: event.target.value as TaskMode,
+                        ...(event.target.value !== "src"
+                          ? { srcProgramID: null, inheritCoverage: false }
+                          : {}),
+                      })
+                    }
+                  >
+                    <NativeSelectOption value="">普通渗透</NativeSelectOption>
+                    <NativeSelectOption value="src">SRC 挖掘</NativeSelectOption>
+                  </NativeSelect>
+                  <FieldDescription>应用模板时一并设置任务模式（创建后不可切换）。</FieldDescription>
+                </Field>
+                {draft.mode === "src" ? (
+                  <>
+                    <Field>
+                      <FieldLabel htmlFor="task-template-program">SRC 平台项目（可选）</FieldLabel>
+                      <NativeSelect
+                        id="task-template-program"
+                        className="w-full"
+                        value={draft.srcProgramID == null ? "" : String(draft.srcProgramID)}
+                        onChange={(event) =>
+                          patchDraft({ srcProgramID: event.target.value === "" ? null : Number(event.target.value) })
+                        }
+                      >
+                        <NativeSelectOption value="">不绑定</NativeSelectOption>
+                        {programs.map((p) => (
+                          <NativeSelectOption key={p.id} value={String(p.id)}>
+                            {p.platform ? `${p.name} · ${p.platform}` : p.name}
+                          </NativeSelectOption>
+                        ))}
+                      </NativeSelect>
+                      <FieldDescription>应用模板时把项目规则编译进新任务。</FieldDescription>
+                    </Field>
+                    <Field>
+                      <label htmlFor="task-template-inherit" className="flex items-center gap-2 text-sm">
+                        <Checkbox
+                          id="task-template-inherit"
+                          checked={draft.inheritCoverage}
+                          onCheckedChange={(v) => patchDraft({ inheritCoverage: !!v })}
+                        />
+                        默认继承近期覆盖
+                      </label>
+                      <FieldDescription>
+                        应用模板时默认勾选「继承同项目/同企业的 tested_clear 与收尾数字」。
+                      </FieldDescription>
+                    </Field>
+                  </>
+                ) : null}
+                <Field>
                   <FieldLabel>任务级拦截 / 允许规则</FieldLabel>
                   <AssetInterceptRulesEditor
                     value={draft.interceptRules}
@@ -358,6 +438,9 @@ interface TaskTemplateControlsProps {
   goal: string;
   categoryID?: number;
   interceptRules?: AssetInterceptRuleInput[];
+  mode?: TaskMode;
+  srcProgramID?: number;
+  inheritCoverage?: boolean;
   selectedTemplateID: number | null;
   onSelectedTemplateIDChange: (id: number | null) => void;
   onApply: (template: TaskTemplate) => void;
@@ -369,6 +452,9 @@ export function TaskTemplateControls({
   goal,
   categoryID,
   interceptRules,
+  mode,
+  srcProgramID,
+  inheritCoverage,
   selectedTemplateID,
   onSelectedTemplateIDChange,
   onApply,
@@ -466,6 +552,9 @@ export function TaskTemplateControls({
                   goal,
                   categoryID: categoryID ?? null,
                   interceptRules: interceptRules ?? [],
+                  mode: mode ?? "",
+                  srcProgramID: srcProgramID ?? null,
+                  inheritCoverage: !!inheritCoverage,
                 })
               }
             >

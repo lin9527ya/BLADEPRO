@@ -758,12 +758,19 @@ CREATE TABLE IF NOT EXISTS task_templates (
     category_id     BIGINT REFERENCES task_categories(id) ON DELETE SET NULL,
     -- 预设的任务级拦截/允许规则快照(AssetInterceptRuleInput 数组)；应用模板时灌进新任务。
     intercept_rules JSONB NOT NULL DEFAULT '[]',
+    -- SRC 预设：模式 / 平台项目 / 跨任务覆盖继承。mode='' 表示普通渗透。
+    mode             TEXT NOT NULL DEFAULT '',
+    src_program_id   BIGINT,
+    inherit_coverage BOOLEAN NOT NULL DEFAULT false,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 -- 补旧库(已发版,加列带 IF NOT EXISTS)。
 ALTER TABLE task_templates ADD COLUMN IF NOT EXISTS category_id BIGINT REFERENCES task_categories(id) ON DELETE SET NULL;
 ALTER TABLE task_templates ADD COLUMN IF NOT EXISTS intercept_rules JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE task_templates ADD COLUMN IF NOT EXISTS mode             TEXT NOT NULL DEFAULT '';
+ALTER TABLE task_templates ADD COLUMN IF NOT EXISTS src_program_id   BIGINT;
+ALTER TABLE task_templates ADD COLUMN IF NOT EXISTS inherit_coverage BOOLEAN NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS idx_task_templates_updated ON task_templates(updated_at DESC, id DESC);
 DROP TRIGGER IF EXISTS trg_task_templates_upd ON task_templates;
 CREATE TRIGGER trg_task_templates_upd BEFORE UPDATE ON task_templates
@@ -1869,6 +1876,10 @@ CREATE TRIGGER trg_src_programs_upd BEFORE UPDATE ON src_programs
 
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS src_program_id BIGINT REFERENCES src_programs(id) ON DELETE SET NULL;
 ALTER TABLE src_submissions ADD COLUMN IF NOT EXISTS program_id BIGINT REFERENCES src_programs(id) ON DELETE SET NULL;
+-- task_templates 在 src_programs 之前创建：外键在两张表都存在后再补（幂等）。
+ALTER TABLE task_templates DROP CONSTRAINT IF EXISTS task_templates_src_program_id_fkey;
+ALTER TABLE task_templates ADD  CONSTRAINT task_templates_src_program_id_fkey
+    FOREIGN KEY (src_program_id) REFERENCES src_programs(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_tasks_src_program ON tasks(src_program_id) WHERE src_program_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_src_submissions_program ON src_submissions(program_id) WHERE program_id IS NOT NULL;
 

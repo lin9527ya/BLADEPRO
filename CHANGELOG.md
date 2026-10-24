@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+### 新增：计划任务与模板接 SRC（P2）
+
+- 任务模板新增 SRC 预设：`mode` / `src_program_id` / `inherit_coverage`。模板管理
+  可设置模式、平台项目与「默认继承近期覆盖」；应用模板时一并带入建任务表单
+  （模式、项目、继承勾选），切换回普通渗透会清掉 SRC 专属字段。
+- 计划任务 `task_spec` 新增 `mode` / `mode_doc` / `src_program_id` /
+  `inherit_coverage` / `token_budget` / `priority`；到点触发与「立即运行」都走
+  与 HTTP 建任务相同的准备管线（项目规则、SRC 快照、策略、覆盖继承）。
+- 保存计划任务时就用同一管线校验，配置错误在写入当天暴露，而不是等触发失败。
+- 计划任务弹窗新增模式、平台项目、继承覆盖；模板弹窗新增对应字段，模板预填
+  也会带入这些设置。
+- 回归：模板 SRC 字段存取/切回普通渗透清理、计划任务与模板预设端到端落到
+  触发建出的任务（mode/src_program_id/token_budget）。
+
 ### 新增：跨任务复用——枚举缓存与历史覆盖提示（P2）
 
 - 资产级枚举缓存：`src_probe` 的 `paths/js/methods` 结果按

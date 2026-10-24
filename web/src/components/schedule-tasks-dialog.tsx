@@ -21,7 +21,7 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
-import type { ScheduleFrequency, TaskCategory, TaskSchedule, TaskTemplate } from "@/lib/types";
+import type { ScheduleFrequency, SrcProgram, TaskCategory, TaskMode, TaskSchedule, TaskTemplate } from "@/lib/types";
 
 /**
  * ScheduleTasksDialog 管理「计划任务」（P22）：按结构化频率到点自动建任务。
@@ -39,6 +39,9 @@ const emptyForm = () => ({
   description: "",
   goal: "",
   categoryID: undefined as number | undefined,
+  mode: "" as TaskMode,
+  srcProgramID: undefined as number | undefined,
+  inheritCoverage: false,
   enabled: true,
   kind: "every_hours" as ScheduleFrequency["kind"],
   everyMinutes: "30",
@@ -66,6 +69,7 @@ export function ScheduleTasksDialog({ categories, onCreated }: { categories: Tas
   const [open, setOpen] = React.useState(false);
   const [rows, setRows] = React.useState<TaskSchedule[]>([]);
   const [templates, setTemplates] = React.useState<TaskTemplate[]>([]);
+  const [programs, setPrograms] = React.useState<SrcProgram[]>([]);
   const [editingID, setEditingID] = React.useState<number | null>(null); // null = 新建
   const [formOpen, setFormOpen] = React.useState(false);
   const [form, setForm] = React.useState<FormState>(emptyForm);
@@ -86,6 +90,10 @@ export function ScheduleTasksDialog({ categories, onCreated }: { categories: Tas
       .taskTemplates()
       .then(setTemplates)
       .catch(() => {});
+    void api
+      .srcPrograms()
+      .then((r) => setPrograms(r.programs ?? []))
+      .catch(() => setPrograms([]));
   }, [open, load]);
 
   function startCreate() {
@@ -101,6 +109,9 @@ export function ScheduleTasksDialog({ categories, onCreated }: { categories: Tas
       description: s.task_spec.description,
       goal: s.task_spec.goal,
       categoryID: s.task_spec.category_id,
+      mode: s.task_spec.mode === "src" ? "src" : "",
+      srcProgramID: s.task_spec.src_program_id,
+      inheritCoverage: !!s.task_spec.inherit_coverage,
       enabled: s.enabled,
       kind: s.frequency.kind,
       everyMinutes: String(s.frequency.every_minutes ?? 30),
@@ -120,6 +131,9 @@ export function ScheduleTasksDialog({ categories, onCreated }: { categories: Tas
       description: t.description,
       goal: t.goal,
       categoryID: t.category_id ?? f.categoryID,
+      mode: t.mode === "src" ? "src" : "",
+      srcProgramID: t.mode === "src" ? (t.src_program_id ?? undefined) : undefined,
+      inheritCoverage: t.mode === "src" && !!t.inherit_coverage,
     }));
   }
 
@@ -150,6 +164,9 @@ export function ScheduleTasksDialog({ categories, onCreated }: { categories: Tas
           description: form.description.trim(),
           goal: form.goal.trim(),
           category_id: form.categoryID,
+          mode: form.mode,
+          src_program_id: form.mode === "src" ? form.srcProgramID : undefined,
+          inherit_coverage: form.mode === "src" ? form.inheritCoverage : false,
         },
         frequency: buildFrequency(),
       };
@@ -298,6 +315,59 @@ export function ScheduleTasksDialog({ categories, onCreated }: { categories: Tas
                   ))}
                 </NativeSelect>
               </div>
+              <div className="grid gap-2">
+                <Label htmlFor="sched-mode">任务模式</Label>
+                <NativeSelect
+                  size="sm"
+                  id="sched-mode"
+                  value={form.mode}
+                  onChange={(e) => {
+                    const mode = e.target.value as TaskMode;
+                    setForm({
+                      ...form,
+                      mode,
+                      ...(mode !== "src" ? { srcProgramID: undefined, inheritCoverage: false } : {}),
+                    });
+                  }}
+                >
+                  <NativeSelectOption value="">普通渗透</NativeSelectOption>
+                  <NativeSelectOption value="src">SRC 挖掘</NativeSelectOption>
+                </NativeSelect>
+                <p className="text-muted-foreground text-xs">模式在每次触发时写入新任务，创建后不可切换。</p>
+              </div>
+              {form.mode === "src" ? (
+                <>
+                  <div className="grid gap-2">
+                    <Label htmlFor="sched-program">SRC 平台项目（可选）</Label>
+                    <NativeSelect
+                      size="sm"
+                      id="sched-program"
+                      value={form.srcProgramID == null ? "" : String(form.srcProgramID)}
+                      onChange={(e) =>
+                        setForm({ ...form, srcProgramID: e.target.value ? Number(e.target.value) : undefined })
+                      }
+                    >
+                      <NativeSelectOption value="">不绑定</NativeSelectOption>
+                      {programs.map((p) => (
+                        <NativeSelectOption key={p.id} value={String(p.id)}>
+                          {p.platform ? `${p.name} · ${p.platform}` : p.name}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                    <p className="text-muted-foreground text-xs">每次触发时把项目规则编译进新任务。</p>
+                  </div>
+                  <label htmlFor="sched-inherit" className="flex items-center gap-2 text-sm">
+                    <input
+                      id="sched-inherit"
+                      type="checkbox"
+                      className="size-4 accent-primary"
+                      checked={form.inheritCoverage}
+                      onChange={(e) => setForm({ ...form, inheritCoverage: e.target.checked })}
+                    />
+                    继承近期覆盖（同项目 / 同企业的 tested_clear 与收尾数字）
+                  </label>
+                </>
+              ) : null}
               <div className="grid gap-2">
                 <Label htmlFor="sched-kind">频率</Label>
                 <div className="flex flex-wrap items-center gap-2">

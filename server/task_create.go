@@ -60,6 +60,9 @@ func (s *Server) prepareTaskCreate(ctx context.Context, req createTaskReq) (*pre
 	if strings.TrimSpace(req.Description) == "" {
 		req.Description = "未命名任务"
 	}
+	if req.SrcProgramID != nil && *req.SrcProgramID <= 0 {
+		req.SrcProgramID = nil
+	}
 	if len(req.LLMProfileIDs) == 0 && req.LLMProfileID != nil {
 		req.LLMProfileIDs = []int64{*req.LLMProfileID}
 	}

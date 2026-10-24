@@ -421,6 +421,9 @@ export function CreateTaskSheet({
               goal={goal}
               categoryID={categoryID}
               interceptRules={interceptRules}
+              mode={mode}
+              srcProgramID={srcProgramID}
+              inheritCoverage={inheritCoverage}
               selectedTemplateID={selectedTemplateID}
               onSelectedTemplateIDChange={setSelectedTemplateID}
               onApply={(template) => {
@@ -428,6 +431,9 @@ export function CreateTaskSheet({
                 setGoal(template.goal);
                 setCategoryID(template.category_id ?? undefined);
                 setInterceptRules(template.intercept_rules ?? []);
+                setMode(template.mode === "src" ? "src" : "");
+                setSrcProgramID(template.mode === "src" && template.src_program_id ? template.src_program_id : undefined);
+                setInheritCoverage(template.mode === "src" && !!template.inherit_coverage);
                 setUploadCount(0);
               }}
               portalContainer={sheetContentRef}

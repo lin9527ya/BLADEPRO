@@ -257,3 +257,61 @@ LEFT JOIN src_finding_meta m ON m.finding_id = f.id`).Scan(&out.FindingsMedium, 
 	}
 	return out, nil
 }
+
+// SrcProgramFeedback 是一个平台项目的历史结果分布（台账 → 提示词/打法库回流用）。
+// 只统计已经交出去的台账（draft/ready 还没经过平台，不能当反馈）。
+type SrcProgramFeedback struct {
+	ProgramID   int64          `json:"program_id"`
+	Program     string         `json:"program"`
+	Submissions int            `json:"submissions"` // 全部台账（含草稿）
+	Submitted   int            `json:"submitted"`   // 已交给平台（含终态）
+	Accepted    int            `json:"accepted"`    // accepted + paid
+	Rejected    int            `json:"rejected"`
+	Duplicate   int            `json:"duplicate"`
+	Paid        int            `json:"paid"`
+	Reasons     map[string]int `json:"reasons"` // 驳回原因码 → 次数
+}
+
+// SrcProgramFeedback 聚合某项目的台账结果；programID<=0 返回空统计。
+func (s *SrcStore) SrcProgramFeedback(ctx context.Context, programID int64) (SrcProgramFeedback, error) {
+	out := SrcProgramFeedback{ProgramID: programID, Reasons: map[string]int{}}
+	if s == nil || s.db == nil || programID <= 0 {
+		return out, nil
+	}
+	if err := s.db.QueryRowContext(ctx, `
+SELECT p.name,
+       count(*) FILTER (WHERE s.status IN ('submitted','accepted','rejected','duplicate','paid')),
+       count(*) FILTER (WHERE s.status IN ('accepted','paid')),
+       count(*) FILTER (WHERE s.status='rejected'),
+       count(*) FILTER (WHERE s.status='duplicate'),
+       count(*) FILTER (WHERE s.status='paid'),
+       count(*)
+FROM src_submissions s
+JOIN src_programs p ON p.id = s.program_id
+WHERE s.program_id=$1
+GROUP BY p.name`, programID).Scan(
+		&out.Program, &out.Submitted, &out.Accepted, &out.Rejected, &out.Duplicate, &out.Paid, &out.Submissions); err != nil {
+		if err == sql.ErrNoRows {
+			return out, nil
+		}
+		return out, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT COALESCE(NULLIF(verdict_reason,''),'other'), count(*)
+FROM src_submissions
+WHERE program_id=$1 AND status='rejected'
+GROUP BY 1 ORDER BY 2 DESC`, programID)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var code string
+		var n int
+		if err := rows.Scan(&code, &n); err != nil {
+			return out, err
+		}
+		out.Reasons[code] = n
+	}
+	return out, rows.Err()
+}

@@ -784,6 +784,12 @@ function ProgramsTab() {
                         {p.company_id ? (
                           <span className="text-muted-foreground text-xs">企业 #{p.company_id}</span>
                         ) : null}
+                        {p.feedback && p.feedback.submitted > 0 ? (
+                          <span className="text-muted-foreground text-xs">
+                            已交 {p.feedback.submitted} · 受理 {p.feedback.accepted} · 驳回 {p.feedback.rejected} · 重复{" "}
+                            {p.feedback.duplicate}
+                          </span>
+                        ) : null}
                       </div>
                     </TableCell>
                     <TableCell className="text-xs">{p.platform || "—"}</TableCell>

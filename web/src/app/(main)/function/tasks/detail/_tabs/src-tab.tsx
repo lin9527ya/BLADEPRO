@@ -72,6 +72,16 @@ const SUBMISSION_STATUS_LABELS: Record<string, string> = {
   withdrawn: "已撤回",
 };
 
+// 平台驳回原因码（与后端 db.SrcVerdictReasons 同名）。
+const VERDICT_REASON_LABELS: Record<string, string> = {
+  not_reproducible: "无法复现",
+  duplicate: "已重复",
+  insufficient_info: "信息不全",
+  not_vulnerability: "非漏洞/不接收",
+  out_of_scope: "超出范围",
+  other: "其他",
+};
+
 const SUBMISSION_NEXT: Record<string, string[]> = {
   draft: ["ready", "withdrawn"],
   ready: ["submitted", "draft", "withdrawn"],
@@ -202,6 +212,7 @@ export function SrcTab({ taskId }: { taskId: string }) {
   const [ledgerStatus, setLedgerStatus] = React.useState("");
   const [ledgerExternalID, setLedgerExternalID] = React.useState("");
   const [ledgerReward, setLedgerReward] = React.useState("");
+  const [ledgerVerdictReason, setLedgerVerdictReason] = React.useState("");
   const [ledgerError, setLedgerError] = React.useState("");
   const [ledgerSaving, setLedgerSaving] = React.useState(false);
 
@@ -357,6 +368,7 @@ export function SrcTab({ taskId }: { taskId: string }) {
     setLedgerStatus(sub.status);
     setLedgerExternalID(sub.external_id ?? "");
     setLedgerReward(sub.reward ?? "");
+    setLedgerVerdictReason(sub.verdict_reason ?? "");
     setLedgerError("");
   };
 
@@ -369,6 +381,7 @@ export function SrcTab({ taskId }: { taskId: string }) {
         status: ledgerStatus || undefined,
         external_id: ledgerExternalID.trim(),
         reward: ledgerReward.trim(),
+        verdict_reason: ledgerStatus === "rejected" ? ledgerVerdictReason.trim() : undefined,
       });
       setLedgerTarget(null);
       toast.success("台账已更新");
@@ -971,6 +984,25 @@ export function SrcTab({ taskId }: { taskId: string }) {
                 onChange={(e) => setLedgerExternalID(e.target.value)}
               />
             </div>
+            {ledgerStatus === "rejected" ? (
+              <div className="grid gap-2">
+                <Label htmlFor="src-ledger-reason">平台驳回原因</Label>
+                <Select value={ledgerVerdictReason} onValueChange={setLedgerVerdictReason}>
+                  <SelectTrigger id="src-ledger-reason" className="w-full">
+                    <SelectValue placeholder="选择原因码（用于回注提示词与打法库）" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {Object.entries(VERDICT_REASON_LABELS).map(([code, label]) => (
+                        <SelectItem key={code} value={code}>
+                          {label}（{code}）
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
             <div className="grid gap-2">
               <Label htmlFor="src-ledger-reward">回报</Label>
               <Input

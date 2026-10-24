@@ -1767,9 +1767,13 @@ CREATE TABLE IF NOT EXISTS src_submissions (
     verdict_at     TIMESTAMPTZ,
     reward         TEXT NOT NULL DEFAULT '',
     note           TEXT NOT NULL DEFAULT '',
+    -- verdict_reason 是平台驳回原因码（not_reproducible/duplicate/insufficient_info/
+    -- not_vulnerability/out_of_scope/other）；用于回注提示词与打法库反馈。
+    verdict_reason TEXT NOT NULL DEFAULT '',
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE src_submissions ADD COLUMN IF NOT EXISTS verdict_reason TEXT NOT NULL DEFAULT '';
 -- 一条发现对一个平台只有一份台账（同一洞重复投同一平台是纯粹的重复劳动）。
 CREATE UNIQUE INDEX IF NOT EXISTS uq_src_submission_finding_platform
     ON src_submissions(finding_id, platform);

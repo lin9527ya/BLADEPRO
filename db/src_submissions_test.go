@@ -316,3 +316,82 @@ func TestSrcDegradedFingerprintSuspects(t *testing.T) {
 		t.Fatalf("降级指纹不该被精确查重命中：%+v", exact)
 	}
 }
+
+// TestSrcVerdictReasonAndFeedback 钉住平台结果回流的存储面：驳回原因码校验/落库，
+// 以及按项目聚合的已交/受理/驳回/重复与原因分布。
+func TestSrcVerdictReasonAndFeedback(t *testing.T) {
+	dsn, _, err := DSN()
+	if err != nil {
+		t.Skipf("no postgres configured (%v) — skipping", err)
+	}
+	d, err := Open(dsn)
+	if err != nil {
+		t.Skipf("postgres unavailable (%v) — skipping", err)
+	}
+	t.Cleanup(func() { d.Close() })
+
+	store := d.Src()
+	ctx := context.Background()
+	prog, err := store.CreateSrcProgram(ctx, SrcProgramInput{
+		Name: "feedback-test", Platform: "src", Rules: []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatalf("create program: %v", err)
+	}
+	task, err := d.CreateTaskWithOptions("src-feedback-test", "反馈", TaskCreateOptions{})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	findingID, err := d.AddFinding(task.ID, 0, "authz", "越权", "high", "same", "", "test", nil)
+	if err != nil {
+		t.Fatalf("add finding: %v", err)
+	}
+	var expID int64
+	if err := d.QueryRow(`SELECT exploration_id FROM tasks WHERE id=$1`, task.ID).Scan(&expID); err != nil {
+		t.Fatalf("exploration: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = d.Exec(`DELETE FROM src_submissions WHERE task_id=$1`, task.ID)
+		_, _ = d.Exec(`DELETE FROM src_finding_meta WHERE task_id=$1`, task.ID)
+		_, _ = d.Exec(`DELETE FROM findings WHERE task_id=$1`, task.ID)
+		_, _ = d.Exec(`DELETE FROM tasks WHERE id=$1`, task.ID)
+		_, _ = d.Exec(`DELETE FROM explorations WHERE id=$1`, expID)
+		_, _ = d.Exec(`DELETE FROM src_programs WHERE id=$1`, prog.ID)
+	})
+
+	sub, _, err := store.PrepareSrcSubmission(ctx, SrcSubmissionInput{
+		TaskID: task.ID, FindingID: findingID, Title: "越权", Severity: "high",
+		Status: SrcSubReady, ReportReady: true, ProgramID: prog.ID,
+		Compliance: []byte(`{"ok":true}`),
+	})
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if _, err := store.UpdateSrcSubmission(ctx, sub.ID, SrcSubmissionPatch{
+		Status: ptrStr(SrcSubSubmitted), ExternalID: ptrStr("SRC-1"),
+	}); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if _, err := store.UpdateSrcSubmission(ctx, sub.ID, SrcSubmissionPatch{
+		VerdictReason: ptrStr("bogus"),
+	}); err == nil {
+		t.Fatal("未知驳回原因码必须被拒")
+	}
+	rejected, err := store.UpdateSrcSubmission(ctx, sub.ID, SrcSubmissionPatch{
+		Status: ptrStr(SrcSubRejected), VerdictReason: ptrStr(SrcVerdictNotReproducible),
+	})
+	if err != nil {
+		t.Fatalf("reject: %v", err)
+	}
+	if rejected.VerdictReason != SrcVerdictNotReproducible {
+		t.Fatalf("verdict_reason 未落库：%+v", rejected)
+	}
+
+	fb, err := store.SrcProgramFeedback(ctx, prog.ID)
+	if err != nil {
+		t.Fatalf("feedback: %v", err)
+	}
+	if fb.Submitted != 1 || fb.Rejected != 1 || fb.Accepted != 0 || fb.Reasons[SrcVerdictNotReproducible] != 1 {
+		t.Fatalf("项目反馈聚合不对：%+v", fb)
+	}
+}

@@ -48,6 +48,31 @@ var srcSubmissionTransitions = map[string][]string{
 	SrcSubWithdrawn: {},
 }
 
+// 平台驳回原因码：封闭词表，供回注提示词与打法库反馈使用。
+const (
+	SrcVerdictNotReproducible  = "not_reproducible"
+	SrcVerdictDuplicate        = "duplicate"
+	SrcVerdictInsufficient     = "insufficient_info"
+	SrcVerdictNotVulnerability = "not_vulnerability"
+	SrcVerdictOutOfScope       = "out_of_scope"
+	SrcVerdictOther            = "other"
+)
+
+var SrcVerdictReasons = []string{
+	SrcVerdictNotReproducible, SrcVerdictDuplicate, SrcVerdictInsufficient,
+	SrcVerdictNotVulnerability, SrcVerdictOutOfScope, SrcVerdictOther,
+}
+
+func IsSrcVerdictReason(s string) bool {
+	s = strings.TrimSpace(s)
+	for _, v := range SrcVerdictReasons {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
 // IsSrcSubmissionStatus reports whether s is a legal ledger status.
 func IsSrcSubmissionStatus(s string) bool {
 	for _, v := range SrcSubmissionStatuses {
@@ -95,8 +120,10 @@ type SrcSubmission struct {
 	VerdictAt     *time.Time `json:"verdict_at,omitempty"`
 	Reward        string     `json:"reward"`
 	Note          string     `json:"note"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	// VerdictReason 是平台驳回原因码（见 SrcVerdictReasons）；空 = 未记录。
+	VerdictReason string    `json:"verdict_reason,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // SrcFindingMeta is the delivery-side metadata of one finding.
@@ -143,13 +170,13 @@ type SrcDuplicate struct {
 
 const srcSubmissionCols = `id, task_id, finding_id, platform, external_id, title, severity,
 COALESCE(platform_level,''), status, fingerprint, description, impact, fix, report_md,
-submitted_at, verdict_at, reward, note, created_at, updated_at`
+submitted_at, verdict_at, reward, note, COALESCE(verdict_reason,''), created_at, updated_at`
 
 func scanSrcSubmission(sc interface{ Scan(...any) error }) (*SrcSubmission, error) {
 	var s SrcSubmission
 	if err := sc.Scan(&s.ID, &s.TaskID, &s.FindingID, &s.Platform, &s.ExternalID, &s.Title, &s.Severity,
 		&s.PlatformLevel, &s.Status, &s.Fingerprint, &s.Description, &s.Impact, &s.Fix, &s.ReportMD,
-		&s.SubmittedAt, &s.VerdictAt, &s.Reward, &s.Note, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		&s.SubmittedAt, &s.VerdictAt, &s.Reward, &s.Note, &s.VerdictReason, &s.CreatedAt, &s.UpdatedAt); err != nil {
 		return nil, err
 	}
 	return &s, nil
@@ -350,6 +377,7 @@ type SrcSubmissionPatch struct {
 	PlatformLevel *string `json:"platform_level,omitempty"`
 	Reward        *string `json:"reward,omitempty"`
 	Note          *string `json:"note,omitempty"`
+	VerdictReason *string `json:"verdict_reason,omitempty"`
 }
 
 // UpdateSrcSubmission applies a partial update, validating the state machine and
@@ -409,6 +437,13 @@ func (s *SrcStore) UpdateSrcSubmission(ctx context.Context, id int64, patch SrcS
 	if patch.Note != nil {
 		note = strings.TrimSpace(*patch.Note)
 	}
+	verdictReason := cur.VerdictReason
+	if patch.VerdictReason != nil {
+		verdictReason = strings.TrimSpace(*patch.VerdictReason)
+		if verdictReason != "" && !IsSrcVerdictReason(verdictReason) {
+			return nil, fmt.Errorf("未知驳回原因码：%s（可选：%s）", verdictReason, strings.Join(SrcVerdictReasons, " / "))
+		}
+	}
 	var submittedAt, verdictAt *time.Time
 	if nextStatus == SrcSubSubmitted && cur.SubmittedAt == nil {
 		now := time.Now()
@@ -425,9 +460,10 @@ UPDATE src_submissions SET
     platform_level = $4,
     reward         = $5,
     note           = $6,
-    submitted_at   = COALESCE($7, submitted_at),
-    verdict_at     = COALESCE($8, verdict_at)
-WHERE id=$1`, id, nextStatus, externalID, platformLevel, reward, note, submittedAt, verdictAt)
+    verdict_reason = $7,
+    submitted_at   = COALESCE($8, submitted_at),
+    verdict_at     = COALESCE($9, verdict_at)
+WHERE id=$1`, id, nextStatus, externalID, platformLevel, reward, note, verdictReason, submittedAt, verdictAt)
 	if err != nil {
 		return nil, err
 	}

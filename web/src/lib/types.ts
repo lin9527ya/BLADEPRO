@@ -1115,6 +1115,8 @@ export interface SrcSubmission {
   fix?: string;
   reward: string;
   note: string;
+  /** 平台驳回原因码（not_reproducible/duplicate/insufficient_info/...）。 */
+  verdict_reason?: string;
   submitted_at?: string;
   verdict_at?: string;
   created_at?: string;
@@ -1226,6 +1228,18 @@ export interface SrcProgramRules {
   test_accounts?: string;
 }
 
+export interface SrcProgramFeedback {
+  program_id: number;
+  program: string;
+  submissions: number;
+  submitted: number;
+  accepted: number;
+  rejected: number;
+  duplicate: number;
+  paid: number;
+  reasons: Record<string, number>;
+}
+
 export interface SrcProgram {
   id: number;
   company_id?: number;
@@ -1236,6 +1250,8 @@ export interface SrcProgram {
   rate_limit: number;
   time_window: string;
   severity_map: Record<string, string>;
+  /** 台账历史成绩（服务端聚合；没有已提交记录时 submitted=0）。 */
+  feedback?: SrcProgramFeedback;
   created_at?: string;
   updated_at?: string;
 }

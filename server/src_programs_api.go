@@ -156,20 +156,27 @@ func validateProgramPolicy(p *srcmode.Program) error {
 	return policy.Validate(eff)
 }
 
+// srcProgramDTO 把项目规则与历史成绩放在一个对象里（内嵌字段保持 JSON 形状不变）。
+type srcProgramDTO struct {
+	*srcmode.Program
+	Feedback *db.SrcProgramFeedback `json:"feedback,omitempty"`
+}
+
 func (s *Server) listSrcPrograms(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.m.PG().Src().ListSrcPrograms(r.Context())
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	out := make([]*srcmode.Program, 0, len(rows))
+	out := make([]srcProgramDTO, 0, len(rows))
 	for i := range rows {
 		p, err := srcProgramFromRow(&rows[i])
 		if err != nil {
 			writeErr(w, 500, "项目 #"+strconv.FormatInt(rows[i].ID, 10)+" 的规则 JSON 坏了："+err.Error())
 			return
 		}
-		out = append(out, p)
+		fb, _ := s.m.PG().Src().SrcProgramFeedback(r.Context(), p.ID)
+		out = append(out, srcProgramDTO{Program: p, Feedback: &fb})
 	}
 	writeJSON(w, 200, map[string]any{"programs": out, "total": len(out)})
 }
@@ -251,7 +258,8 @@ func (s *Server) getSrcProgram(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 200, p)
+	fb, _ := s.m.PG().Src().SrcProgramFeedback(r.Context(), p.ID)
+	writeJSON(w, 200, srcProgramDTO{Program: p, Feedback: &fb})
 }
 
 func (s *Server) updateSrcProgram(w http.ResponseWriter, r *http.Request) {

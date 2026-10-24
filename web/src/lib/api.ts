@@ -493,7 +493,9 @@ export const api = {
   // 推进台账状态机（submitted 必须带 external_id；duplicate 必须先登记 dedupe_of）。
   patchSrcSubmission: (
     id: number,
-    body: Partial<Pick<SrcSubmission, "status" | "external_id" | "platform_level" | "reward" | "note">>,
+    body: Partial<
+      Pick<SrcSubmission, "status" | "external_id" | "platform_level" | "reward" | "note" | "verdict_reason">
+    >,
   ) => patch<SrcSubmission>(`/src/submissions/${id}`, body),
   // 重复定案：dedupeOf=0 表示「不是同一个洞」，解除标记。
   setSrcDedupe: (findingID: number, dedupeOf: number) =>

@@ -484,7 +484,14 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if program != nil {
 		srcDoc = program.ApplyToModeDoc(srcDoc)
-		if note := program.Describe(); note != "" {
+		note := program.Describe()
+		if fb := s.programFeedbackNote(r.Context(), program.ID); fb != "" {
+			if note != "" {
+				note += " "
+			}
+			note += fb
+		}
+		if note != "" {
 			srcDoc.ProgramNote = note
 		}
 		modeDoc, err = json.Marshal(srcDoc)

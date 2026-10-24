@@ -384,10 +384,16 @@ func (s *Server) patchSrcSubmission(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad json: "+err.Error())
 		return
 	}
-	sub, err := s.m.PG().Src().UpdateSrcSubmission(r.Context(), id, patch)
+	store := s.m.PG().Src()
+	before, _ := store.GetSrcSubmission(r.Context(), id)
+	sub, err := store.UpdateSrcSubmission(r.Context(), id, patch)
 	if err != nil {
 		writeErr(w, 400, err.Error())
 		return
+	}
+	// 只在状态真正推进时回流打法库：重复 PATCH 同一状态不该反复计分。
+	if sub != nil && (before == nil || before.Status != sub.Status) {
+		s.syncPlaybookForVerdict(r.Context(), sub)
 	}
 	sub.ReportMD = ""
 	writeJSON(w, 200, sub)

@@ -88,8 +88,8 @@ func TestParseToleratesBadSnapshot(t *testing.T) {
 
 func TestRequiredFor(t *testing.T) {
 	doc := DefaultDoc()
-	if got := doc.RequiredFor("app"); len(got) != 10 {
-		t.Fatalf("app 必做面应有 10 个（含四件套），got %v", got)
+	if got := doc.RequiredFor("app"); len(got) != 12 {
+		t.Fatalf("app 必做面应有 12 个（含四件套 + cache/oauth），got %v", got)
 	}
 	if got := doc.RequiredFor("endpoint"); len(got) != 7 {
 		t.Fatalf("endpoint 必做面应有 7 个（含四件套），got %v", got)
@@ -362,5 +362,34 @@ func TestProgramAppliesPlatformTemplate(t *testing.T) {
 	doc := p.ApplyToModeDoc(DefaultDoc())
 	if doc.PlatformTemplate != "vulbox" {
 		t.Fatalf("template=%q want vulbox", doc.PlatformTemplate)
+	}
+}
+
+func TestNewRiskAreas(t *testing.T) {
+	for _, area := range []string{"cache", "desync", "oauth"} {
+		if !IsArea(area) {
+			t.Fatalf("missing area %s", area)
+		}
+	}
+	app := DefaultRequiredAreas("app")
+	for _, want := range []string{"cache", "oauth"} {
+		if !containsStr(app, want) {
+			t.Fatalf("app required areas=%v missing %s", app, want)
+		}
+	}
+	if sub := DefaultRequiredAreas("subdomain"); !containsStr(sub, "desync") {
+		t.Fatalf("subdomain required areas=%v missing desync", sub)
+	}
+	if !NACodeAllowed("cache", "no_cache") || !NACodeAllowed("desync", "no_reverse_proxy") || !NACodeAllowed("oauth", "no_oauth") {
+		t.Fatal("new area N/A codes should be allowed")
+	}
+	if _, ok := FindCheck("cache_headers"); !ok {
+		t.Fatal("cache_headers check missing")
+	}
+	for _, item := range []string{"cache/poison", "desync/cl-te", "oauth/redirect-uri"} {
+		area, sub, err := SplitItem(item)
+		if err != nil || !ItemAllowed(area, sub) {
+			t.Fatalf("item %s invalid: %v", item, err)
+		}
 	}
 }

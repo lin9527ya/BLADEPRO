@@ -27,8 +27,14 @@ var Areas = []Area{
 		Items: []string{"idor", "vertical", "mass-assign", "object-graph"}},
 	{Name: "upload", Title: "上传 / 路径穿越 / 解析差异", Weight: 8,
 		Items: []string{"bypass", "lfi"}},
-	{Name: "session", Title: "登录 / 重置 / 改绑 / JWT / OAuth / 默认口令", Weight: 7,
+	{Name: "session", Title: "登录 / 重置 / 改绑 / JWT / 默认口令", Weight: 7,
 		Items: []string{"login-bypass", "jwt", "reset", "rebind", "2fa", "default-cred"}},
+	{Name: "oauth", Title: "OAuth / OIDC 流程与配置", Weight: 6,
+		Items: []string{"redirect-uri", "state", "pkce", "scope", "token-leak", "account-link"}},
+	{Name: "cache", Title: "Web 缓存投毒 / 欺骗", Weight: 7,
+		Items: []string{"poison", "deception", "vary", "key-normalization"}},
+	{Name: "desync", Title: "HTTP 请求走私 / 协议 desync", Weight: 7,
+		Items: []string{"cl-te", "te-cl", "h2", "connection-state"}},
 	{Name: "logic", Title: "状态机 / 金额 / 竞态 / 提权", Weight: 7,
 		Items: []string{"state-skip", "race", "privilege", "money"}},
 	{Name: "ssrf", Title: "SSRF", Weight: 6,
@@ -63,12 +69,12 @@ var areaByName = func() map[string]Area {
 // defaultRequired 是"资产类型 → 必做面"的默认映射。必做是**下限**不是上限：
 // 矩阵外的面照样能报，只是不占格。CSRF 不在其中（技能口径：有入口仍测，不当主业）。
 var defaultRequired = map[string][]string{
-	"app":         {"unauth", "authz", "injection", "ssrf", "xss", "rce", "paths", "session", "upload", "logic"},
-	"service":     {"unauth", "authz", "injection", "ssrf", "xss", "rce", "paths", "session", "upload", "logic"},
+	"app":         {"unauth", "authz", "injection", "ssrf", "xss", "rce", "paths", "session", "oauth", "cache", "upload", "logic"},
+	"service":     {"unauth", "authz", "injection", "ssrf", "xss", "rce", "paths", "session", "oauth", "cache", "upload", "logic"},
 	"endpoint":    {"unauth", "authz", "injection", "ssrf", "xss", "rce", "logic"},
 	"ip":          {"host", "cred"},
-	"root_domain": {"takeover", "host", "paths"},
-	"subdomain":   {"takeover", "host", "paths"},
+	"root_domain": {"takeover", "host", "paths", "desync"},
+	"subdomain":   {"takeover", "host", "paths", "desync"},
 }
 
 // assetValues 是补格优先级里的"资产价值"因子：主域/站点/API 面 > 普通子域 > 纯 IP。

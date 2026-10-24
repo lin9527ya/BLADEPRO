@@ -608,6 +608,8 @@ func (t *ToolSet) srcMarkCheck() actool.CoreTool {
 			"state_methods":     intp("状态变更端点已测方法数（platform 档用）"),
 			"variants":          intp("做过的参数变体类型数（≥4：换值/补参/去参/重复）"),
 			"contrasts":         intp("防护对照实验数（≥1）"),
+			"cache_vary":        intp("缓存 Vary/未键控头对照数（cache_headers，≥1）"),
+			"age_contrast":      intp("缓存 Age/X-Cache 对照数（cache_headers，≥1）"),
 			"local_unreachable": intp("本地不可达(1=是)"),
 			"external_exits":    intp("外部出口复测数（≥2）"),
 			"dns_resolvers":     intp("公共 DNS 解析器数（≥2）"),

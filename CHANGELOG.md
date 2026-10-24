@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+### 新增：高风险面 cache / desync / oauth（P2）
+
+- 新增三个风险面并进入默认覆盖矩阵：
+  - **cache**（Web 缓存投毒/欺骗，app/service 必做，权重 7）：poison/deception/vary/key-normalization；
+  - **desync**（HTTP 请求走私/协议 desync，root_domain/subdomain 必做，权重 7）：
+    cl-te/te-cl/h2/connection-state；
+  - **oauth**（OAuth/OIDC 流程与配置，app/service 必做，权重 6）：
+    redirect-uri/state/pkce/scope/token-leak/account-link。
+- 新增 N/A 理由码：no_cache / no_reverse_proxy / no_oauth，避免新面被空白或
+  “static_page”草率豁免。
+- 新增收尾项 `cache_headers`（app/service）：要求 Vary 与 Age/X-Cache 对照各 ≥1；
+  无共享缓存可 na(no_cache)。`src_mark_check` 指标同步增加 cache_vary/age_contrast。
+- planner/worker 提示词补充三个面的具体测法与只读/最小化边界；intent 风险类
+  词表增加 cache/smuggling/desync/oauth。
+- 回归：新面必做映射、N/A 白名单、cache_headers 定义与细分项合法性。
 ### 新增：program_scope（P2）
 
 - 新增 `src_program_scope`：平台项目可显式维护 in/out 范围（root_domain /

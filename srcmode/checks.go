@@ -145,6 +145,19 @@ var CheckDefs = []CheckDef{
 		RequireEvidence: true,
 	},
 	{
+		Key: "cache_headers", Title: "缓存头与 Vary 对照",
+		Hint:       "有共享缓存/CDN 时：记录 Cache-Control/Expires/Age/X-Cache/Vary，并做一次 Vary 与未键控头的对照；无共享缓存填 na(no_cache)。",
+		AssetTypes: []string{"app", "service"}, Weight: 10,
+		Metrics: []MetricDef{
+			{Key: "cache_vary", Label: "Vary 对照数"},
+			{Key: "age_contrast", Label: "Age 对照数"},
+		},
+		MinFull:         map[string]int{"cache_vary": 1, "age_contrast": 1},
+		MinPlatform:     map[string]int{"cache_vary": 1, "age_contrast": 1},
+		NaCodes:         []string{"no_cache", "not_applicable"},
+		RequireEvidence: true,
+	},
+	{
 		Key: "screenshots", Title: "证据截图",
 		Hint:       "平台要求截图时（program.require_screenshots），把截图产物登记为证据节点；不要求时填 na。",
 		AssetTypes: []string{"app", "service"}, Weight: 10,

@@ -11,7 +11,8 @@ import (
 // 命令执行与反序列化归 rce，对象级越权 idor、功能级越权 authz，不贴合时用 other。
 var RiskAreas = []string{
 	"sqli", "xss", "rce", "ssrf", "ssti", "xxe",
-	"idor", "authz", "auth", "logic", "upload", "traversal", "disclosure", "other",
+	"idor", "authz", "auth", "logic", "upload", "traversal", "disclosure",
+	"cache", "smuggling", "desync", "oauth", "other",
 }
 
 // NormalizeRiskArea maps a planner-supplied token onto the closed vocabulary

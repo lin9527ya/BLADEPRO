@@ -46,6 +46,18 @@
 - 回归：阈值降档/判死三条件单测、`TestPlannerGuardHooks`、提示词变量渲染、
   导出正文校验；`go test -p 1 ./agent ./srcmode ./db` 在干净测试库通过。
 
+### 修复：SRC 终态语义收紧（P0-6）
+
+- `tested_clear` 默认必须挂 `evidence_node_id`（一条 fact）；只有 program 规则
+  `allow_reason_only_clear=true` 时才允许只写说明。收尾门与写入校验同一口径。
+- `static_page` 只对输入/执行/对象类面生效（injection / xss / ssrf / upload / rce /
+  authz / logic / session / csrf）；`paths` / `cred` / `host` / `takeover` 不再接受
+  "纯静态页"当免测理由。
+- `platform_exempt` 必须有 program `rules.exempt_areas` 的显式声明，不再是无条件
+  万能 N/A；`out_of_scope` 保持原语义（范围外资产，仍需 reason）。
+- 回归：clear 证据/allow 开关、platform_exempt 豁免依据、static_page 按面白名单、
+  Program→mode_doc 编译；集成测试夹具显式打开 allow 以聚焦各自断言。
+
 ### 优化：src_state 摘要视图、收尾进度上列表、docx 提交块
 
 - `src_state` 默认返回摘要（计数 + top20 缺口 + 每资产进度），`detail=true` 才给逐格矩阵；

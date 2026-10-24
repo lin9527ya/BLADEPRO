@@ -68,6 +68,12 @@ type ModeDoc struct {
 	// TimeWindow 是平台项目的作业时间窗快照（"HH:MM-HH:MM"，逗号分段，允许跨夜）。
 	// 空 = 不限；guard 会在窗口外直接拦下动作（不只是提示词约束）。
 	TimeWindow string `json:"time_window,omitempty"`
+	// AllowReasonOnlyClear 允许 tested_clear 只写说明、不挂证据节点。默认 false：
+	// "没证据的 clear 等于没测"；只有明确接受人工复核的档位才应打开。
+	AllowReasonOnlyClear bool `json:"allow_reason_only_clear,omitempty"`
+	// PlatformExemptAreas 是 program 显式声明的平台豁免面：只有列在这里的面才允许
+	// na_code=platform_exempt，避免把"平台不测"当成万能 N/A。
+	PlatformExemptAreas []string `json:"platform_exempt_areas,omitempty"`
 	// PlatformRedlines 是平台原始红线（逐条进提示词，不自动编译成规则）。
 	PlatformRedlines []string `json:"platform_redlines,omitempty"`
 }
@@ -133,6 +139,11 @@ func Resolve(mode string, raw json.RawMessage) (json.RawMessage, ModeDoc, error)
 			return nil, ModeDoc{}, err
 		}
 	}
+	for _, area := range doc.PlatformExemptAreas {
+		if !IsArea(strings.TrimSpace(area)) {
+			return nil, ModeDoc{}, fmt.Errorf("未知的 platform_exempt_areas 风险面：%s", area)
+		}
+	}
 	switch strings.TrimSpace(doc.CheckTier) {
 	case "", CheckTierFull, CheckTierPlatform, CheckTierOff:
 	default:
@@ -174,6 +185,18 @@ func Parse(raw json.RawMessage) ModeDoc {
 
 // IsSrc reports whether this snapshot describes the SRC mode.
 func (d ModeDoc) IsSrc() bool { return d.Mode == ModeSrc }
+
+// PlatformExemptAllowed reports whether the program snapshot explicitly exempts
+// this risk area from testing (the only basis for na_code=platform_exempt).
+func (d ModeDoc) PlatformExemptAllowed(area string) bool {
+	area = strings.TrimSpace(area)
+	for _, a := range d.PlatformExemptAreas {
+		if strings.TrimSpace(a) == area {
+			return true
+		}
+	}
+	return false
+}
 
 // RequiredFor 返回某资产类型的必做风险面（mode_doc 覆盖优先，否则用 taxonomy 默认）。
 func (d ModeDoc) RequiredFor(assetType string) []string {

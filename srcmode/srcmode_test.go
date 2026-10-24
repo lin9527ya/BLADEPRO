@@ -143,10 +143,13 @@ func TestValidateCellStructuralRules(t *testing.T) {
 		{"bad state", withState(base, "authz", "*", "done", "ok"), "未知终态", false},
 		{"found without finding", withState(base, "authz", "*", db.SrcStateFound, ""), "finding_id", false},
 		{"clear without evidence", withState(base, "authz", "*", db.SrcStateClear, ""), "evidence_node_id", false},
-		{"clear with reason", withState(base, "authz", "*", db.SrcStateClear, "测过，无越权"), "", true},
+		{"clear with reason only", withState(base, "authz", "*", db.SrcStateClear, "测过，无越权"), "evidence_node_id", false},
 		{"na without reason", withState(base, "authz", "*", db.SrcStateNA, ""), "reason", false},
 		{"budget_stop without reason", withState(base, "authz", "*", db.SrcStateBudgetStop, ""), "reason", false},
-		{"fine with item", withState(base, "injection", "sql", db.SrcStateClear, "参数化查询"), "", true},
+		{"fine with evidence", db.SrcCell{
+			TaskID: 1, AssetID: 2, Area: "injection", Item: "sql",
+			State: db.SrcStateClear, Reason: "参数化查询", EvidenceNodeID: 5,
+		}, "", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -163,6 +166,24 @@ func TestValidateCellStructuralRules(t *testing.T) {
 				}
 			}
 		})
+	}
+
+	// 项目显式允许时，说明型 clear 才可以通过。
+	allow := DefaultDoc()
+	allow.AllowReasonOnlyClear = true
+	if err := ValidateCell(ctx, nil, 1, allow, withState(base, "authz", "*", db.SrcStateClear, "测过，无越权")); err != nil {
+		t.Fatalf("allow_reason_only_clear 应放行说明型 clear：%v", err)
+	}
+	// platform_exempt 必须有 program 的 exempt_areas 依据。
+	exempt := withState(base, "authz", "*", db.SrcStateNA, "平台不测")
+	exempt.NACode = "platform_exempt"
+	if err := ValidateCell(ctx, nil, 1, DefaultDoc(), exempt); err == nil {
+		t.Fatal("没有豁免声明时 platform_exempt 必须被拒")
+	}
+	allowExempt := DefaultDoc()
+	allowExempt.PlatformExemptAreas = []string{"authz"}
+	if err := ValidateCell(ctx, nil, 1, allowExempt, exempt); err != nil {
+		t.Fatalf("program 声明豁免后 platform_exempt 应放行：%v", err)
 	}
 }
 
@@ -184,11 +205,14 @@ func TestCellGapShapes(t *testing.T) {
 		{db.SrcCell{Area: "authz", Item: "*", State: db.SrcStateNA, Reason: "不适用"}, "", false},
 		{db.SrcCell{Area: "authz", Item: "*", State: db.SrcStateNA}, GapMissingReason, true},
 		{db.SrcCell{Area: "authz", Item: "*", State: db.SrcStateClear}, GapMissingEvidence, true},
+		{db.SrcCell{Area: "authz", Item: "*", State: db.SrcStateClear, Reason: "发过请求，无异常"}, GapMissingEvidence, true},
+		{db.SrcCell{Area: "authz", Item: "*", State: db.SrcStateClear, EvidenceNodeID: 9}, "", false},
 		{db.SrcCell{Area: "authz", Item: "*", State: db.SrcStateFound}, GapMissingFinding, true},
 		{db.SrcCell{Area: "authz", Item: "*", State: db.SrcStateFound, FindingID: 3}, "", false},
 	}
+	doc := DefaultDoc()
 	for i, tc := range cases {
-		gap, isGap := cellGap(asset, "authz", tc.cell)
+		gap, isGap := cellGap(asset, "authz", tc.cell, doc)
 		if isGap != tc.wantGap {
 			t.Fatalf("case %d: want gap=%v got %v (%+v)", i, tc.wantGap, isGap, gap)
 		}
@@ -198,6 +222,14 @@ func TestCellGapShapes(t *testing.T) {
 		if gap.AssetID != asset.ID || gap.Asset != asset.Label {
 			t.Fatalf("case %d: gap lost asset identity: %+v", i, gap)
 		}
+	}
+	// 项目显式允许时，说明型 clear 可以不留证据节点。
+	allow := DefaultDoc()
+	allow.AllowReasonOnlyClear = true
+	if g, bad := cellGap(asset, "authz", db.SrcCell{
+		Area: "authz", Item: "*", State: db.SrcStateClear, Reason: "发过请求，无异常",
+	}, allow); bad {
+		t.Fatalf("allow_reason_only_clear 应放行说明型 clear：%+v", g)
 	}
 }
 

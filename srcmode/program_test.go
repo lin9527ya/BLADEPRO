@@ -279,3 +279,31 @@ func TestProgramTimeWindowCompiledIntoModeDoc(t *testing.T) {
 		t.Fatal("坏快照应 fail-closed")
 	}
 }
+
+// TestProgramExemptAreas 钉住 platform_exempt 的依据：只有 program 显式列出的
+// 风险面才能豁免，且 allow_reason_only_clear 能编译进任务快照。
+func TestProgramExemptAreas(t *testing.T) {
+	bad := &Program{Name: "bad"}
+	bad.Rules.ExemptAreas = []string{"nope"}
+	if err := bad.Validate(); err == nil {
+		t.Fatal("未知风险面的豁免必须被拒")
+	}
+
+	allow := true
+	p := &Program{Name: "exempt"}
+	p.Rules.ExemptAreas = []string{"injection", " authz "}
+	p.Rules.AllowReasonOnlyClear = &allow
+	if err := p.Validate(); err != nil {
+		t.Fatalf("合法豁免不该报错：%v", err)
+	}
+	doc := p.ApplyToModeDoc(DefaultDoc())
+	if !doc.PlatformExemptAllowed("injection") || !doc.PlatformExemptAllowed("authz") {
+		t.Fatalf("豁免面未编译进 mode_doc：%+v", doc.PlatformExemptAreas)
+	}
+	if doc.PlatformExemptAllowed("xss") {
+		t.Fatal("未声明的面不该被豁免")
+	}
+	if !doc.AllowReasonOnlyClear {
+		t.Fatal("allow_reason_only_clear 未编译进 mode_doc")
+	}
+}

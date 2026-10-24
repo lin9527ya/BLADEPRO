@@ -152,7 +152,7 @@ func CheckFinish(ctx context.Context, store *db.SrcStore, taskID int64, doc Mode
 				if cell.State == db.SrcStateFound || cell.State == db.SrcStateClear {
 					rep.CellsMeasured++
 				}
-				if g, bad := cellGap(asset, area, cell); bad {
+				if g, bad := cellGap(asset, area, cell, doc); bad {
 					gaps = append(gaps, g)
 					continue
 				}
@@ -275,7 +275,7 @@ func requiredCells(area string, doc ModeDoc, cells map[string]db.SrcCell) ([]str
 }
 
 // cellGap 把一个终态行判成"过"还是"缺什么"。
-func cellGap(asset db.SrcAsset, area string, cell db.SrcCell) (Gap, bool) {
+func cellGap(asset db.SrcAsset, area string, cell db.SrcCell, doc ModeDoc) (Gap, bool) {
 	base := Gap{
 		AssetID: asset.ID, Asset: asset.Label, AssetType: asset.Type,
 		Area: area, AreaTitle: AreaTitle(area), Item: cell.Item,
@@ -290,10 +290,17 @@ func cellGap(asset db.SrcAsset, area string, cell db.SrcCell) (Gap, bool) {
 			return base, true
 		}
 	case db.SrcStateClear:
-		if cell.EvidenceNodeID == 0 && strings.TrimSpace(cell.Reason) == "" {
-			base.Kind = GapMissingEvidence
-			base.Reason = "tested_clear 缺证据节点，也没写说明"
-			return base, true
+		if cell.EvidenceNodeID == 0 {
+			if !doc.AllowReasonOnlyClear {
+				base.Kind = GapMissingEvidence
+				base.Reason = "tested_clear 缺证据节点（项目未允许只写说明）"
+				return base, true
+			}
+			if strings.TrimSpace(cell.Reason) == "" {
+				base.Kind = GapMissingEvidence
+				base.Reason = "tested_clear 缺证据节点，也没写说明"
+				return base, true
+			}
 		}
 	case db.SrcStateFound:
 		if cell.FindingID == 0 {
@@ -390,8 +397,13 @@ func ValidateCell(ctx context.Context, store *db.SrcStore, taskID int64, doc Mod
 			return fmt.Errorf("tested_found 必须带 finding_id（先 report_finding 再把 id 写进格）")
 		}
 	case db.SrcStateClear:
-		if cell.EvidenceNodeID == 0 && strings.TrimSpace(cell.Reason) == "" {
-			return fmt.Errorf("tested_clear 必须给 evidence_node_id（一条 fact 节点）或写清 reason")
+		if cell.EvidenceNodeID == 0 {
+			if !doc.AllowReasonOnlyClear {
+				return fmt.Errorf("tested_clear 必须挂 evidence_node_id（一条 fact 节点）；只有项目规则 allow_reason_only_clear=true 时才允许只写说明")
+			}
+			if strings.TrimSpace(cell.Reason) == "" {
+				return fmt.Errorf("tested_clear 允许只写说明，但说明不能为空")
+			}
 		}
 	case db.SrcStateNA:
 		if strings.TrimSpace(cell.Reason) == "" {
@@ -407,6 +419,9 @@ func ValidateCell(ctx context.Context, store *db.SrcStore, taskID int64, doc Mod
 		if !NACodeAllowed(cell.Area, code) {
 			return fmt.Errorf("%s 面不接受 na_code=%q（可选：%s）", cell.Area, code,
 				strings.Join(AreaNACodes(cell.Area), " / "))
+		}
+		if code == "platform_exempt" && !doc.PlatformExemptAllowed(cell.Area) {
+			return fmt.Errorf("platform_exempt 需要 program 的 exempt_areas 明确列出 %s 面；当前任务快照没有这条豁免", cell.Area)
 		}
 	case db.SrcStateBudgetStop:
 		if strings.TrimSpace(cell.Reason) == "" {

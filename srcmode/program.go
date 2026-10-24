@@ -63,6 +63,10 @@ type ProgramRules struct {
 	Redlines []string `json:"redlines,omitempty"`
 	// MaxRecordsRead 是越权读取上限（合规层提示用，不硬拦）。
 	MaxRecordsRead int `json:"max_records_read,omitempty"`
+	// AllowReasonOnlyClear 允许 tested_clear 不挂证据节点（默认 false）。
+	AllowReasonOnlyClear *bool `json:"allow_reason_only_clear,omitempty"`
+	// ExemptAreas 是平台明确不测的风险面；只有这里列出的面才允许 na(platform_exempt)。
+	ExemptAreas []string `json:"exempt_areas,omitempty"`
 	// RequireScreenshots 平台要求关键步骤截图时置真。
 	RequireScreenshots bool `json:"require_screenshots,omitempty"`
 	// StrictLayout 导出严格 8 块（备注退出正文）。
@@ -148,6 +152,11 @@ func (p *Program) Validate() error {
 			return fmt.Errorf("check_thresholds[%s] 不能为负", metric)
 		}
 	}
+	for _, area := range p.Rules.ExemptAreas {
+		if !IsArea(strings.TrimSpace(area)) {
+			return fmt.Errorf("exempt_areas 含未知风险面：%q", area)
+		}
+	}
 	if p.Rules.MaxRecordsRead < 0 {
 		return fmt.Errorf("max_records_read 不能为负")
 	}
@@ -225,6 +234,22 @@ func (p *Program) ApplyToModeDoc(doc ModeDoc) ModeDoc {
 	}
 	if p.Rules.MaxRecordsRead > 0 {
 		out.MaxRecordsRead = p.Rules.MaxRecordsRead
+	}
+	if p.Rules.AllowReasonOnlyClear != nil {
+		out.AllowReasonOnlyClear = *p.Rules.AllowReasonOnlyClear
+	}
+	if len(p.Rules.ExemptAreas) > 0 {
+		seen := map[string]bool{}
+		for _, a := range out.PlatformExemptAreas {
+			seen[strings.TrimSpace(a)] = true
+		}
+		for _, a := range p.Rules.ExemptAreas {
+			a = strings.TrimSpace(a)
+			if a != "" && !seen[a] {
+				seen[a] = true
+				out.PlatformExemptAreas = append(out.PlatformExemptAreas, a)
+			}
+		}
 	}
 	if p.TimeWindow != "" {
 		out.TimeWindow = p.TimeWindow

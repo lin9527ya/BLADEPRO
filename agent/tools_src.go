@@ -419,8 +419,8 @@ func (t *ToolSet) srcMarkCell() actool.CoreTool {
 		"【SRC 模式】点亮一个覆盖格（asset_id + area + item）的终态。结束一条意图前必须调用。\n"+
 			"state 取值与要求：\n"+
 			"  tested_found  —— 测出洞：必须带 finding_id（先 report_finding 拿到 id）；\n"+
-			"  tested_clear  —— 测了没洞：带 evidence_node_id（record_fact 返回的节点 id）或写清 reason；\n"+
-			"  na            —— 该面不适用：必须写 reason + na_code（可选值见 src_state 的 na_codes）；\n"+
+			"  tested_clear  —— 测了没洞：必须带 evidence_node_id（record_fact 返回的节点 id）；项目显式允许时才可只写 reason；\n"+
+			"  na            —— 该面不适用：必须写 reason + na_code（只能在白名单内；platform_exempt 还需 program 的 exempt_areas 声明）；\n"+
 			"  budget_stop   —— 预算/时间用尽没测完：必须写 reason。\n"+
 			"area 只能是："+srcmode.AreaLegend()+"；item 用 \"*\" 表示整组，或用该面的细分项（如 injection/sql、paths/enum-200）。\n"+
 			"同一格尝试次数超过上限后只能用 budget_stop 收口。",

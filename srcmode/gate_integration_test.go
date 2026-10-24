@@ -29,7 +29,9 @@ func TestCheckFinishAgainstRealCells(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 	// 本用例只验证「格」这条线；收尾闸那一层由 TestCheckFinishChecksGate 覆盖。
+	// 说明型 clear 由专门的 ValidateCell 用例覆盖，这里放开以聚焦账面闭环。
 	doc.SkipCheckGate = true
+	doc.AllowReasonOnlyClear = true
 	task, err := d.CreateTaskWithOptions("src-gate-test", "把覆盖格清零", db.TaskCreateOptions{
 		Mode: ModeSrc, ModeDoc: raw,
 	})

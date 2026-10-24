@@ -128,7 +128,7 @@ func WorkerOverlay(doc ModeDoc) string {
 【SRC 模式】你领到的意图对应覆盖矩阵上的一格（asset_id + area [+ item]），这一格的终态由你负责落账。
 %s
 %s
-- 结束前**必须**调用 src_mark_cell：tested_found 带 finding_id / tested_clear 带 evidence_node_id（一条 fact）或写清 reason / na 写 reason + na_code（理由码只能选自该面允许的码）/ budget_stop 写 reason。
+- 结束前**必须**调用 src_mark_cell：tested_found 带 finding_id / tested_clear 带 evidence_node_id（一条 fact；项目显式允许时才可只写说明）/ na 写 reason + na_code（理由码只能选自该面允许的码；platform_exempt 还需要 program 声明）/ budget_stop 写 reason。
 - 如果这条意图做的是收尾动作（抽 JS、枚举路径、复测非 404、方法矩阵、参数变体、防护对照），做完要调 **src_mark_check** 并把数字填进 metrics（例如 paths=214 / retested=6 / methods=7），同时给 evidence_node_id——收尾门只认数字，不认"做过了"。
 - 什么算测过：真的发过请求、看过响应。只读代码、只凭指纹猜、只"看起来像"，都只能写 fact（confidence 标 inferred），不能标 tested_clear。
 - 只读证明：命令执行证明到 whoami/id 即止；不写 webshell、不建账号、不改配置、不横向移动。禁止对目标做破坏性写操作。

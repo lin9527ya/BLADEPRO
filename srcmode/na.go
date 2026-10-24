@@ -25,7 +25,11 @@ var NACodes = []NACode{
 	{Code: "no_upload_entry", Title: "无上传/下载入口", Areas: []string{"upload"}},
 	{Code: "no_object", Title: "纯登录墙，抽不出对象", Areas: []string{"authz", "logic"}},
 	{Code: "no_login_entry", Title: "清单里无发会话/重置/改绑/换票口", Areas: []string{"session"}},
-	{Code: "static_page", Title: "纯静态页面", Areas: nil},
+	// 纯静态页只对"输入/执行/对象"类面成立；paths/cred 仍可能命中（备份、JS 密钥），
+	// host/takeover 更与页面静态与否无关，所以不给这两类开口子。
+	{Code: "static_page", Title: "纯静态页面", Areas: []string{
+		"injection", "xss", "ssrf", "upload", "rce", "authz", "logic", "session", "csrf",
+	}},
 	{Code: "platform_exempt", Title: "平台档案明确不测", Areas: nil},
 	{Code: "out_of_scope", Title: "越界资产，不在授权范围", Areas: nil},
 }

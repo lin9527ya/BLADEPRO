@@ -178,6 +178,10 @@ ALTER TABLE src_cells ADD COLUMN IF NOT EXISTS na_code TEXT NOT NULL DEFAULT '';
 
 ### 5.2 N/A 理由码（`na_code`）
 
+> `tested_clear` 默认必须挂 `evidence_node_id`（一条 fact）；只有 program 规则
+> `allow_reason_only_clear=true` 时才允许只写说明。`platform_exempt` 只在
+> `rules.exempt_areas` 显式列出该面时合法。
+
 | code | 含义 | 允许的 area |
 |---|---|---|
 | `no_input` | 无任何 query/body 业务参 | injection / logic / ssrf / xss |
@@ -188,8 +192,8 @@ ALTER TABLE src_cells ADD COLUMN IF NOT EXISTS na_code TEXT NOT NULL DEFAULT '';
 | `no_object` | 纯登录墙、抽不出对象 | authz / logic |
 | `no_login_entry` | 清单无发会话/重置/改绑/换票口 | session |
 | `no_business_param` | 无可换的过滤参数 | 收尾项 `param_variants` |
-| `static_page` | 纯静态页 | 全部 |
-| `platform_exempt` | 平台档案明确不测（须 program 提供该豁免） | 全部 |
+| `static_page` | 纯静态页 | 输入/执行/对象类面（injection / xss / ssrf / upload / rce / authz / logic / session / csrf；**不含 paths / cred / host / takeover**） |
+| `platform_exempt` | 平台档案明确不测（须 program `rules.exempt_areas` 列出该面） | 仅 program 声明的面 |
 | `out_of_scope` | 越界资产（已有语义） | 全部 |
 | `reachable` | 资产可达，无需判死 | 收尾项 `unreachable_proof` |
 

@@ -26,6 +26,8 @@ func TestCheckFinishChecksGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
+	// 说明型 clear 由专门的 ValidateCell 用例覆盖，这里放开以聚焦收尾闸。
+	doc.AllowReasonOnlyClear = true
 	task, err := d.CreateTaskWithOptions("src-checks-test", "收尾闸闭环", db.TaskCreateOptions{
 		Mode: ModeSrc, ModeDoc: raw,
 	})

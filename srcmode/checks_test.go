@@ -127,7 +127,13 @@ func TestNACodeWhitelist(t *testing.T) {
 		t.Fatal("rce 不该允许 no_input（那是注入/逻辑的理由码）")
 	}
 	if !NACodeAllowed("authz", "static_page") {
-		t.Fatal("static_page 应对全部面适用")
+		t.Fatal("static_page 对 authz 仍应适用")
+	}
+	if NACodeAllowed("paths", "static_page") {
+		t.Fatal("静态页不能给敏感路径面免测（备份/.git 仍然存在）")
+	}
+	if NACodeAllowed("cred", "static_page") {
+		t.Fatal("静态页不能给凭证泄露面免测（JS 里可能有密钥）")
 	}
 	if NACodeAllowed("injection", "made_up") {
 		t.Fatal("未知理由码不该通过")

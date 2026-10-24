@@ -34,6 +34,9 @@ type ModeDoc struct {
 	// Platform / Program 只是提交台账与报告备注用的标签（P2 起真正使用）。
 	Platform string `json:"platform,omitempty"`
 	Program  string `json:"program,omitempty"`
+	// PlatformTemplate 是提交块模板（generic/butian/vulbox/edu/hackerone）。
+	// 空 = 按 Platform 标签自动识别，识别不出用 generic。
+	PlatformTemplate string `json:"platform_template,omitempty"`
 	// ProgramNote 是创建任务时按平台项目生成的一行规则说明（P3）：平台、限额、
 	// 时间窗、范围说明。它进提示词，让 agent 从一开始就知道这套边界。
 	ProgramNote string `json:"program_note,omitempty"`
@@ -158,6 +161,12 @@ func Resolve(mode string, raw json.RawMessage) (json.RawMessage, ModeDoc, error)
 		if _, _, err := SplitItem(item); err != nil {
 			return nil, ModeDoc{}, err
 		}
+	}
+	if t := strings.TrimSpace(doc.PlatformTemplate); t != "" {
+		if _, ok := FindPlatformTemplate(t); !ok {
+			return nil, ModeDoc{}, fmt.Errorf("未知平台模板：%s（可选：%s）", t, PlatformTemplateKeys())
+		}
+		doc.PlatformTemplate = strings.ToLower(t)
 	}
 	for _, area := range doc.PlatformExemptAreas {
 		if !IsArea(strings.TrimSpace(area)) {

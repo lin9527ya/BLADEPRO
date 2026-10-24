@@ -182,6 +182,7 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 			"max_intents_per_asset": t.srcDoc.MaxIntentsPerAsset,
 			"platform":              t.srcDoc.Platform,
 			"program":               t.srcDoc.Program,
+			"platform_template":     t.srcDoc.PlatformTemplate,
 			"check_tier":            t.srcDoc.Tier(),
 			"require_screenshots":   t.srcDoc.RequireScreenshots,
 			"require_retest":        t.srcDoc.RequireRetest,

@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+### 新增：平台提交模板（P2）
+
+- 内置提交块模板：通用 / 补天 / 漏洞盒子 / 教育 SRC / HackerOne。模板只改
+  【提交信息】的字段名与顺序（标题、漏洞类型/CWE、等级、资产 URL、账号、源 IP、
+  复现与附件、规则页），正文仍是同一份 8 块报告。
+- `src_programs.rules.platform_template` 可显式指定；`mode_doc.platform_template`
+  在任务创建时快照。未指定时按平台名自动识别（补天/vulbox/edu/hackerone）。
+- 提交块现在带上发现的标题、CWE、CVSS、资产 URL 与实际存在的附件（PoC、
+  `attachments/screenshots/`），不再只有通用 5 字段；单条导出、批量包、
+  「准备交付件」共用同一份渲染。
+- 模板内置规则页日期（2026-10-24）会写进提交块，并明确提示提交前按平台最新
+  规则复核；未知模板 key 在创建/校验阶段直接拒绝。
+- 设置页 SRC 项目与建任务 SRC 选项均可选择模板。
+- 回归：补天/HackerOne 字段渲染、自动识别、未知模板拒绝、Program→mode_doc 编译。
+
 ### 新增：截图自动化（P2）
 
 - 新工具 `src_screenshot`（planner/worker）：宿主用本机 headless Chromium/Chrome

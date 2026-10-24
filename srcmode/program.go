@@ -71,6 +71,8 @@ type ProgramRules struct {
 	ExemptAreas []string `json:"exempt_areas,omitempty"`
 	// RequireScreenshots 平台要求关键步骤截图时置真。
 	RequireScreenshots bool `json:"require_screenshots,omitempty"`
+	// PlatformTemplate 是提交块模板 key（空 = 按平台名自动识别）。
+	PlatformTemplate string `json:"platform_template,omitempty"`
 	// StrictLayout 导出严格 8 块（备注退出正文）。
 	StrictLayout bool `json:"strict_layout,omitempty"`
 	// EgressIP / TestAccounts 是提交块字段。
@@ -165,6 +167,12 @@ func (p *Program) Validate() error {
 	if len(p.Rules.Redlines) > 30 {
 		return fmt.Errorf("redlines 最多 30 条（当前 %d 条）", len(p.Rules.Redlines))
 	}
+	if t := strings.TrimSpace(p.Rules.PlatformTemplate); t != "" {
+		if _, ok := FindPlatformTemplate(t); !ok {
+			return fmt.Errorf("未知平台模板：%s（可选：%s）", t, PlatformTemplateKeys())
+		}
+		p.Rules.PlatformTemplate = strings.ToLower(t)
+	}
 	kept := make([]string, 0, len(p.Rules.Redlines))
 	for _, r := range p.Rules.Redlines {
 		r = strings.TrimSpace(r)
@@ -230,6 +238,12 @@ func (p *Program) ApplyToModeDoc(doc ModeDoc) ModeDoc {
 	}
 	if p.Rules.RequireScreenshots {
 		out.RequireScreenshots = true
+	}
+	if t := strings.TrimSpace(p.Rules.PlatformTemplate); t != "" {
+		// 非法 key 由 Validate 拒绝；这里静默跳过，不能提前 return 掉后续规则。
+		if _, ok := FindPlatformTemplate(t); ok {
+			out.PlatformTemplate = strings.ToLower(t)
+		}
 	}
 	if p.Rules.StrictLayout {
 		out.StrictLayout = true

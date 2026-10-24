@@ -123,13 +123,9 @@ func (s *Server) prepareSrcSubmission(ctx context.Context, req agent.SrcPrepareR
 		in.Notes = warningNotes(in.Notes)
 	}
 	// 提交块里的危害等级优先用平台映射后的等级（严重/高危 vs critical/high），
-	// 没有映射时回落到内部等级的交付用语。
+	// 没有映射时回落到内部等级的交付用语。台账与提交块共用同一口径。
 	platformLevel, programID := s.srcPlatformInfo(ctx, req.TaskID, f.Severity)
-	submitLabel := report.SrcSeverityLabel(f.Severity)
-	if platformLevel != "" {
-		submitLabel = platformLevel
-	}
-	in.SubmitBlock = srcmode.SubmitInfo(doc, submitLabel)
+	in.SubmitBlock = s.srcSubmitBlock(ctx, req.TaskID, f, in, doc)
 	markdown := report.SrcMarkdown(in)
 
 	var issues []string
@@ -264,6 +260,47 @@ func (s *Server) srcDocForTask(taskID int64) srcmode.ModeDoc {
 		return srcmode.ModeDoc{}
 	}
 	return srcmode.Parse(t.ModeDoc)
+}
+
+// srcSubmitBlock renders the platform-specific submission crib. It prefers the
+// program's severity_map, then the internal severity label.
+func (s *Server) srcSubmitBlock(ctx context.Context, taskID int64, f *db.DBFinding, in report.SrcInput, doc srcmode.ModeDoc) string {
+	if taskID <= 0 || f == nil {
+		return ""
+	}
+	label := report.SrcSeverityLabel(f.Severity)
+	if lv, _ := s.srcPlatformInfo(ctx, taskID, f.Severity); lv != "" {
+		label = lv
+	}
+	return srcmode.SubmitInfoFor(doc, srcmode.SubmitContext{
+		Title: in.Title, SeverityLabel: label, CWE: in.CWE, CVSS: in.CVSSVector,
+		Asset: in.TargetURL, ReproEnv: in.ReproEnv,
+		Attachments: s.srcAttachmentSummary(ctx, taskID, f),
+	})
+}
+
+// srcAttachmentSummary lists what the delivery package will actually contain, so
+// the platform form does not claim attachments that were never generated.
+func (s *Server) srcAttachmentSummary(ctx context.Context, taskID int64, f *db.DBFinding) []string {
+	out := []string{}
+	if poc, err := s.buildSrcPoc(ctx, f); err == nil && poc != nil {
+		out = append(out, poc.Dir+"/poc.sh", poc.Dir+"/request.http")
+	}
+	if arts, err := s.m.pg.ListEvidenceArtifacts(ctx, taskID); err == nil {
+		n := 0
+		for _, a := range arts {
+			if strings.HasPrefix(a.MIME, "image/") {
+				n++
+			}
+		}
+		if n > 0 {
+			out = append(out, fmt.Sprintf("attachments/screenshots/（%d 张）", n))
+		}
+	}
+	if len(out) == 0 {
+		out = append(out, "复现整包见正文")
+	}
+	return out
 }
 
 func srcDuplicateRefs(in []db.SrcDuplicate) []agent.SrcDuplicateRef {

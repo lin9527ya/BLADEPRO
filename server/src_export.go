@@ -89,16 +89,6 @@ func (s *Server) buildSrcInput(ctx context.Context, f *db.DBFinding) (report.Src
 		}
 	}
 
-	// 【提交信息】块：单条导出、批量包、交付准备共用同一份，平台等级优先。
-	if f.TaskID != nil && *f.TaskID > 0 {
-		doc := s.srcDocForTask(*f.TaskID)
-		label := report.SrcSeverityLabel(f.Severity)
-		if lv, _ := s.srcPlatformInfo(ctx, *f.TaskID, f.Severity); lv != "" {
-			label = lv
-		}
-		in.SubmitBlock = srcmode.SubmitInfo(doc, label)
-	}
-
 	// 目标 URL：优先锚定资产的展示标签，其次绑定流量里的 URL。
 	assets := s.resolveAssetIDs(f.AssetIDs)
 	for _, aid := range f.AssetIDs {
@@ -108,6 +98,13 @@ func (s *Server) buildSrcInput(ctx context.Context, f *db.DBFinding) (report.Src
 				break
 			}
 		}
+	}
+
+	// 【提交信息】块：单条导出、批量包、交付准备共用同一份，平台等级优先。
+	// 必须在 TargetURL 解析之后再渲染，否则平台模板里的"资产/URL"会是空的。
+	if f.TaskID != nil && *f.TaskID > 0 {
+		doc := s.srcDocForTask(*f.TaskID)
+		in.SubmitBlock = s.srcSubmitBlock(ctx, *f.TaskID, f, in, doc)
 	}
 
 	// warnings 是导出前的证据缺项清单（P15 交付证据门）。空 = 本发现可以直接交。

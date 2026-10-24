@@ -155,6 +155,8 @@ export function CreateTaskSheet({
   const [inheritCoverage, setInheritCoverage] = React.useState(false);
   // P2 资产级 token 预算（0 = 跟随系统全局默认）。
   const [assetTokenBudget, setAssetTokenBudget] = React.useState("0");
+  // 提交块模板（空 = 按平台名自动识别；项目规则可覆盖）。
+  const [platformTemplate, setPlatformTemplate] = React.useState("");
   // P2 批量扇出：按 host / 根域 / 数量分片，每片建一个任务并归入同一 campaign。
   const [batchFanout, setBatchFanout] = React.useState(false);
   const [shardBy, setShardBy] = React.useState<"host" | "root_domain">("host");
@@ -279,7 +281,13 @@ export function CreateTaskSheet({
       mode,
       srcProgramID,
       inheritCoverage: mode === "src" ? inheritCoverage : false,
-      modeDoc: mode === "src" ? { asset_token_budget: Math.max(0, Number(assetTokenBudget) || 0) } : undefined,
+      modeDoc:
+        mode === "src"
+          ? {
+              asset_token_budget: Math.max(0, Number(assetTokenBudget) || 0),
+              platform_template: platformTemplate || undefined,
+            }
+          : undefined,
       interceptRules: interceptRules
         .map((r) => ({ ...r, pattern: r.pattern.trim() }))
         .filter((r) => r.pattern !== ""),
@@ -369,6 +377,7 @@ export function CreateTaskSheet({
       setSrcProgramID(undefined);
       setInheritCoverage(false);
       setAssetTokenBudget("0");
+      setPlatformTemplate("");
       setBatchFanout(false);
       setShardBy("host");
       setAssetsPerTask("20");
@@ -518,6 +527,30 @@ export function CreateTaskSheet({
                 </Select>
                 <FieldDescription>
                   绑定项目后，项目的禁用手段/写操作、限速与必做面会编译进本任务；项目规则改动不影响已建任务。
+                </FieldDescription>
+              </Field>
+            )}
+            {mode === "src" && (
+              <Field>
+                <FieldLabel htmlFor="platform-template">提交块模板</FieldLabel>
+                <Select
+                  value={platformTemplate || "auto"}
+                  onValueChange={(v) => setPlatformTemplate(v === "auto" ? "" : v)}
+                >
+                  <SelectTrigger id="platform-template">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">自动识别（按平台名）</SelectItem>
+                    <SelectItem value="generic">通用</SelectItem>
+                    <SelectItem value="butian">补天</SelectItem>
+                    <SelectItem value="vulbox">漏洞盒子</SelectItem>
+                    <SelectItem value="edu">教育 SRC</SelectItem>
+                    <SelectItem value="hackerone">HackerOne</SelectItem>
+                  </SelectContent>
+                </Select>
+                <FieldDescription>
+                  只决定【提交信息】块的字段名/顺序；绑定平台项目时以项目规则为准。
                 </FieldDescription>
               </Field>
             )}

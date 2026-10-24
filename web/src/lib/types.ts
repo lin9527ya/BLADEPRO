@@ -1230,6 +1230,8 @@ export interface SrcTaskState {
     checks_done?: number;
     /** 单资产 token 预算（0 = 不限）。 */
     asset_token_budget?: number;
+    /** 提交块模板 key（空 = 按平台名自动识别）。 */
+    platform_template?: string;
   };
 }
 
@@ -1269,6 +1271,8 @@ export interface SrcProgramRules {
   strict_layout?: boolean;
   egress_ip?: string;
   test_accounts?: string;
+  /** 提交块模板：generic/butian/vulbox/edu/hackerone；空=按平台名自动识别。 */
+  platform_template?: string;
 }
 
 export interface SrcProgramFeedback {

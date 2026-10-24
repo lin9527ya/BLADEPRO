@@ -189,6 +189,7 @@ function severityMapText(map?: Record<string, string>): string {
 interface ProgramDraft {
   name: string;
   platform: string;
+  platformTemplate: string;
   companyID: string;
   scopeNote: string;
   rateLimit: string;
@@ -220,6 +221,7 @@ function emptyDraft(): ProgramDraft {
   return {
     name: "",
     platform: "",
+    platformTemplate: "",
     companyID: "",
     scopeNote: "",
     rateLimit: "",
@@ -257,6 +259,7 @@ function draftFromProgram(p: SrcProgram): ProgramDraft {
   return {
     name: p.name ?? "",
     platform: p.platform ?? "",
+    platformTemplate: rules.platform_template ?? "",
     companyID: p.company_id ? String(p.company_id) : "",
     scopeNote: p.scope_note ?? "",
     rateLimit: countText(p.rate_limit),
@@ -686,6 +689,7 @@ function ProgramsTab() {
         strict_layout: draft.strictLayout,
         egress_ip: draft.egressIP.trim(),
         test_accounts: draft.testAccounts.trim(),
+        platform_template: draft.platformTemplate || undefined,
       },
       rate_limit: toCount(draft.rateLimit),
       time_window: timeWindow,
@@ -872,6 +876,25 @@ function ProgramsTab() {
                   placeholder="例如 某众测平台 / 厂商 SRC"
                   onChange={(e) => patch({ platform: e.target.value })}
                 />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="program-template">提交块模板</Label>
+                <Select value={draft.platformTemplate || "auto"} onValueChange={(v) => patch({ platformTemplate: v === "auto" ? "" : v })}>
+                  <SelectTrigger id="program-template">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">自动识别（按平台名）</SelectItem>
+                    <SelectItem value="generic">通用</SelectItem>
+                    <SelectItem value="butian">补天</SelectItem>
+                    <SelectItem value="vulbox">漏洞盒子</SelectItem>
+                    <SelectItem value="edu">教育 SRC</SelectItem>
+                    <SelectItem value="hackerone">HackerOne</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-muted-foreground text-xs">
+                  只决定【提交信息】块的字段名/顺序，正文仍是同一份 8 块报告；模板内置日期见提交块，提交前按平台最新规则复核。
+                </p>
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="program-company">关联企业 ID</Label>

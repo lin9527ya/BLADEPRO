@@ -316,3 +316,51 @@ func TestResolveValidatesAreaROI(t *testing.T) {
 		t.Fatalf("合法 ROI 未解析：%v %+v", err, doc.AreaROI)
 	}
 }
+
+func TestSubmitInfoPlatformTemplates(t *testing.T) {
+	doc := DefaultDoc()
+	doc.Platform = "补天"
+	block := SubmitInfoFor(doc, SubmitContext{
+		Title: "越权读取订单", SeverityLabel: "高危", CWE: "CWE-639",
+		Asset: "https://api.example.com/orders/1", Attachments: []string{"attachments/1/poc.sh"},
+	})
+	for _, want := range []string{"提交信息 · 补天", "标题：越权读取订单", "漏洞类型：CWE-639", "资产/URL：https://api.example.com/orders/1", "规则页（模板日期", "https://www.butian.net/"} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("butian block missing %q:\n%s", want, block)
+		}
+	}
+
+	doc = DefaultDoc()
+	doc.PlatformTemplate = "hackerone"
+	block = SubmitInfoFor(doc, SubmitContext{Title: "IDOR", SeverityLabel: "high", CWE: "CWE-639", Asset: "api.example.com"})
+	for _, want := range []string{"HackerOne", "Title：IDOR", "Weakness：CWE-639", "Steps to Reproduce"} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("hackerone block missing %q:\n%s", want, block)
+		}
+	}
+
+	// 未识别出平台时保持通用块，且没有提交字段就不硬塞空块。
+	doc = DefaultDoc()
+	if got := SubmitInfoFor(doc, SubmitContext{}); got != "" {
+		t.Fatalf("empty generic block=%q want empty", got)
+	}
+	if tpl := ResolvePlatformTemplate(doc); tpl.Key != "generic" {
+		t.Fatalf("template=%+v want generic", tpl)
+	}
+
+	// 未知模板 key 在 Resolve 阶段拒绝。
+	if _, _, err := Resolve("src", json.RawMessage(`{"platform_template":"nope"}`)); err == nil {
+		t.Fatal("unknown platform template should be rejected")
+	}
+}
+
+func TestProgramAppliesPlatformTemplate(t *testing.T) {
+	p := &Program{Name: "prog", Rules: ProgramRules{PlatformTemplate: "vulbox"}}
+	if err := p.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	doc := p.ApplyToModeDoc(DefaultDoc())
+	if doc.PlatformTemplate != "vulbox" {
+		t.Fatalf("template=%q want vulbox", doc.PlatformTemplate)
+	}
+}

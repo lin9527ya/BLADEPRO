@@ -276,9 +276,15 @@ func (s *Server) llmAutoTierEnabled() bool {
 // is not tier-routed (mainagent/chat/custom agents keep the existing precedence).
 func autoTierForAgent(agentKey string) string {
 	switch agentKey {
-	case "planner", "goals":
+	case "planner", "goals", "compress":
 		return db.ProfileTierCheap
 	case "worker":
+		return db.ProfileTierStrong
+	case "worker-cheap":
+		return db.ProfileTierCheap
+	case "worker-standard":
+		return db.ProfileTierStandard
+	case "worker-strong":
 		return db.ProfileTierStrong
 	default:
 		return ""
@@ -312,6 +318,18 @@ func (s *Server) autoTierProfileForAgent(agentKey string) *int64 {
 		}
 	}
 	return nil
+}
+
+// autoTierProvider resolves the provider for one auto-tier role. It returns
+// ok=false when auto-tier is off / no usable profile exists, so callers fall
+// back to the worker's default provider.
+func (s *Server) autoTierProvider(agentKey string) (llm.Provider, bool) {
+	id := s.autoTierProfileForAgent(agentKey)
+	if id == nil {
+		return nil, false
+	}
+	prov, _, ok := s.providerForProfile(*id)
+	return prov, ok
 }
 
 // tierProfileCandidates filters profiles by tier and orders them: active profile

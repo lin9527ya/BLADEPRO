@@ -47,6 +47,7 @@ const emptyForm = () => ({
   assetsPerTask: "20",
   maxShards: "50",
   campaignName: "",
+  campaignTokenBudget: "0",
   batchFilter: "all" as "all" | "new" | "untested",
   enabled: true,
   kind: "every_hours" as ScheduleFrequency["kind"],
@@ -123,6 +124,7 @@ export function ScheduleTasksDialog({ categories, onCreated }: { categories: Tas
       assetsPerTask: String(s.task_spec.batch?.assets_per_task ?? 20),
       maxShards: String(s.task_spec.batch?.max_shards ?? 50),
       campaignName: s.task_spec.batch?.campaign_name ?? "",
+      campaignTokenBudget: String(s.task_spec.batch?.campaign_token_budget ?? 0),
       batchFilter: s.task_spec.batch?.only_new_assets
         ? "new"
         : s.task_spec.batch?.only_untested_assets
@@ -189,6 +191,7 @@ export function ScheduleTasksDialog({ categories, onCreated }: { categories: Tas
                 assets_per_task: Math.max(1, Number(form.assetsPerTask) || 20),
                 max_shards: Math.max(1, Number(form.maxShards) || 50),
                 campaign_name: form.campaignName.trim() || undefined,
+                campaign_token_budget: Math.max(0, Number(form.campaignTokenBudget) || 0),
                 only_new_assets: form.batchFilter === "new",
                 only_untested_assets: form.batchFilter === "untested",
               }
@@ -463,6 +466,17 @@ export function ScheduleTasksDialog({ categories, onCreated }: { categories: Tas
                         value={form.campaignName}
                         placeholder="留空自动生成"
                         onChange={(e) => setForm({ ...form, campaignName: e.target.value })}
+                      />
+                    </div>
+                    <div className="grid gap-1 sm:col-span-2">
+                      <Label htmlFor="sched-campaign-budget" className="text-xs">
+                        战役总 token 预算（0=不限）
+                      </Label>
+                      <Input
+                        id="sched-campaign-budget"
+                        inputMode="numeric"
+                        value={form.campaignTokenBudget}
+                        onChange={(e) => setForm({ ...form, campaignTokenBudget: e.target.value })}
                       />
                     </div>
                     <p className="text-muted-foreground text-xs sm:col-span-2">

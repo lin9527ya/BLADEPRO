@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -19,19 +20,23 @@ var ErrCampaignInvalid = errors.New("invalid campaign")
 
 // Campaign 是一次作业：一个客户、若干目标、一份交付物。
 type Campaign struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	CompanyID *int64    `json:"company_id,omitempty"`
-	Note      string    `json:"note"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	CompanyID *int64 `json:"company_id,omitempty"`
+	Note      string `json:"note"`
+	// Priority 是战役内任务的默认排队优先级；TokenBudget 是战役级 token 上限
+	// （0=不限），跨分片任务累计。
+	Priority    int       `json:"priority"`
+	TokenBudget int64     `json:"token_budget"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-const campaignCols = `id, name, company_id, note, created_at, updated_at`
+const campaignCols = `id, name, company_id, note, priority, token_budget, created_at, updated_at`
 
 func scanCampaign(row interface{ Scan(...any) error }) (*Campaign, error) {
 	c := &Campaign{}
-	err := row.Scan(&c.ID, &c.Name, &c.CompanyID, &c.Note, &c.CreatedAt, &c.UpdatedAt)
+	err := row.Scan(&c.ID, &c.Name, &c.CompanyID, &c.Note, &c.Priority, &c.TokenBudget, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -49,14 +54,21 @@ func campaignNKey(name string) (string, error) {
 }
 
 // CreateCampaign 新建一次作业。同名（归一化后）会被 nkey 唯一约束挡住。
-func (d *DB) CreateCampaign(name, note string, companyID *int64) (*Campaign, error) {
+func (d *DB) CreateCampaign(name, note string, companyID *int64, priority int, tokenBudget int64) (*Campaign, error) {
 	nkey, err := campaignNKey(name)
 	if err != nil {
 		return nil, err
 	}
+	if tokenBudget < 0 {
+		return nil, fmt.Errorf("%w：token 预算不能为负", ErrCampaignInvalid)
+	}
+	if priority < -1000 || priority > 1000 {
+		return nil, fmt.Errorf("%w：优先级必须在 -1000–1000", ErrCampaignInvalid)
+	}
 	c, err := scanCampaign(d.QueryRow(`
-INSERT INTO campaigns(name, nkey, company_id, note) VALUES ($1,$2,$3,$4) RETURNING `+campaignCols,
-		strings.Join(strings.Fields(name), " "), nkey, companyID, strings.TrimSpace(note)))
+INSERT INTO campaigns(name, nkey, company_id, note, priority, token_budget)
+VALUES ($1,$2,$3,$4,$5,$6) RETURNING `+campaignCols,
+		strings.Join(strings.Fields(name), " "), nkey, companyID, strings.TrimSpace(note), priority, tokenBudget))
 	if err != nil {
 		if strings.Contains(err.Error(), "campaigns_nkey_key") {
 			return nil, fmt.Errorf("%w：已存在同名战役", ErrCampaignInvalid)
@@ -90,14 +102,21 @@ func (d *DB) GetCampaign(id int64) (*Campaign, error) {
 }
 
 // UpdateCampaign 改名/备注/客户。改名同样受唯一约束约束。
-func (d *DB) UpdateCampaign(id int64, name, note string, companyID *int64) (*Campaign, error) {
+func (d *DB) UpdateCampaign(id int64, name, note string, companyID *int64, priority int, tokenBudget int64) (*Campaign, error) {
 	nkey, err := campaignNKey(name)
 	if err != nil {
 		return nil, err
 	}
+	if tokenBudget < 0 {
+		return nil, fmt.Errorf("%w：token 预算不能为负", ErrCampaignInvalid)
+	}
+	if priority < -1000 || priority > 1000 {
+		return nil, fmt.Errorf("%w：优先级必须在 -1000–1000", ErrCampaignInvalid)
+	}
 	c, err := scanCampaign(d.QueryRow(`
-UPDATE campaigns SET name=$2, nkey=$3, company_id=$4, note=$5 WHERE id=$1 RETURNING `+campaignCols,
-		id, strings.Join(strings.Fields(name), " "), nkey, companyID, strings.TrimSpace(note)))
+UPDATE campaigns SET name=$2, nkey=$3, company_id=$4, note=$5, priority=$6, token_budget=$7
+WHERE id=$1 RETURNING `+campaignCols,
+		id, strings.Join(strings.Fields(name), " "), nkey, companyID, strings.TrimSpace(note), priority, tokenBudget))
 	if err != nil {
 		if strings.Contains(err.Error(), "campaigns_nkey_key") {
 			return nil, fmt.Errorf("%w：已存在同名战役", ErrCampaignInvalid)
@@ -161,4 +180,25 @@ func (d *DB) CampaignTaskIDs(campaignID int64) ([]int64, error) {
 		out = append(out, id)
 	}
 	return out, rows.Err()
+}
+
+// CampaignBudgetForTask resolves the campaign budget and its current spend for
+// one task. campaignID=0 means the task is not in a campaign (no campaign gate).
+func (d *DB) CampaignBudgetForTask(ctx context.Context, taskID int64) (campaignID, budget, used int64, err error) {
+	if d == nil || taskID <= 0 {
+		return 0, 0, 0, nil
+	}
+	err = d.QueryRowContext(ctx, `
+SELECT COALESCE(t.campaign_id,0), COALESCE(c.token_budget,0),
+  COALESCE((
+    SELECT SUM(u.input_tokens + u.output_tokens)
+    FROM llm_usage u JOIN tasks tt ON u.task_id = tt.id::text
+    WHERE tt.campaign_id = t.campaign_id
+  ),0)
+FROM tasks t LEFT JOIN campaigns c ON c.id=t.campaign_id
+WHERE t.id=$1`, taskID).Scan(&campaignID, &budget, &used)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, 0, 0, nil
+	}
+	return campaignID, budget, used, err
 }

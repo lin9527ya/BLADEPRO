@@ -133,3 +133,91 @@ func SubmitInfoFor(doc ModeDoc, in SubmitContext) string {
 	}
 	return b.String()
 }
+
+// CustomSubmitField / CustomSubmitTemplate are the user-defined form layout.
+// The server loads them from src_platform_templates and passes them in; this
+// package stays database-free and only renders.
+type CustomSubmitField struct {
+	Label    string `json:"label"`
+	Source   string `json:"source"`
+	Required bool   `json:"required,omitempty"`
+}
+
+type CustomSubmitTemplate struct {
+	Key      string              `json:"key"`
+	Name     string              `json:"name"`
+	Header   string              `json:"header,omitempty"`
+	RuleURL  string              `json:"rule_url,omitempty"`
+	RuleDate string              `json:"rule_date,omitempty"`
+	Fields   []CustomSubmitField `json:"fields"`
+}
+
+// SubmitInfoForCustom renders a user-defined template. Unknown field sources are
+// skipped (a template edited by hand must not break export).
+func SubmitInfoForCustom(doc ModeDoc, in SubmitContext, tpl *CustomSubmitTemplate) string {
+	if tpl == nil || len(tpl.Fields) == 0 {
+		return SubmitInfoFor(doc, in)
+	}
+	program := strings.TrimSpace(doc.Program)
+	accounts := strings.TrimSpace(doc.TestAccounts)
+	egress := strings.TrimSpace(doc.EgressIP)
+	attachments := strings.Join(in.Attachments, "；")
+	value := func(source string) string {
+		switch strings.ToLower(strings.TrimSpace(source)) {
+		case "title":
+			return in.Title
+		case "severity":
+			return in.SeverityLabel
+		case "cwe":
+			return in.CWE
+		case "cvss":
+			return in.CVSS
+		case "asset":
+			return in.Asset
+		case "repro_env":
+			return in.ReproEnv
+		case "attachments":
+			return attachments
+		case "platform":
+			return strings.TrimSpace(doc.Platform)
+		case "program":
+			return program
+		case "egress_ip":
+			return egress
+		case "test_accounts":
+			return accounts
+		}
+		return ""
+	}
+	var b strings.Builder
+	name := strings.TrimSpace(tpl.Name)
+	if name == "" {
+		name = tpl.Key
+	}
+	b.WriteString("## 【提交信息 · " + name + "】\n")
+	if h := strings.TrimSpace(tpl.Header); h != "" {
+		b.WriteString(h + "\n")
+	}
+	for _, f := range tpl.Fields {
+		v := strings.TrimSpace(value(f.Source))
+		if v == "" && !f.Required {
+			continue
+		}
+		label := strings.TrimSpace(f.Label)
+		if label == "" {
+			label = f.Source
+		}
+		if v == "" {
+			v = "（待补）"
+		}
+		b.WriteString("- " + label + "：" + v + "\n")
+	}
+	if tpl.RuleURL != "" {
+		date := tpl.RuleDate
+		if date == "" {
+			date = "未知"
+		}
+		b.WriteString("- 规则页（模板日期 " + date + "；提交前请按平台最新规则复核）：" + tpl.RuleURL + "\n")
+	}
+	return b.String()
+}

@@ -49,15 +49,17 @@ func (s *Server) createCampaign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name      string `json:"name"`
-		Note      string `json:"note"`
-		CompanyID *int64 `json:"company_id"`
+		Name        string `json:"name"`
+		Note        string `json:"note"`
+		CompanyID   *int64 `json:"company_id"`
+		Priority    int    `json:"priority"`
+		TokenBudget int64  `json:"token_budget"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, 400, "invalid JSON: "+err.Error())
 		return
 	}
-	c, err := s.m.pg.CreateCampaign(req.Name, req.Note, req.CompanyID)
+	c, err := s.m.pg.CreateCampaign(req.Name, req.Note, req.CompanyID, req.Priority, req.TokenBudget)
 	if err != nil {
 		if errors.Is(err, db.ErrCampaignInvalid) {
 			writeErr(w, 400, err.Error())
@@ -199,9 +201,11 @@ func (s *Server) patchCampaign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name      *string `json:"name"`
-		Note      *string `json:"note"`
-		CompanyID *int64  `json:"company_id"`
+		Name        *string `json:"name"`
+		Note        *string `json:"note"`
+		CompanyID   *int64  `json:"company_id"`
+		Priority    *int    `json:"priority"`
+		TokenBudget *int64  `json:"token_budget"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, 400, "invalid JSON: "+err.Error())
@@ -221,7 +225,15 @@ func (s *Server) patchCampaign(w http.ResponseWriter, r *http.Request) {
 			company = nil
 		}
 	}
-	c, err := s.m.pg.UpdateCampaign(id, name, note, company)
+	priority := cur.Priority
+	if req.Priority != nil {
+		priority = *req.Priority
+	}
+	tokenBudget := cur.TokenBudget
+	if req.TokenBudget != nil {
+		tokenBudget = *req.TokenBudget
+	}
+	c, err := s.m.pg.UpdateCampaign(id, name, note, company, priority, tokenBudget)
 	if err != nil {
 		if errors.Is(err, db.ErrCampaignInvalid) {
 			writeErr(w, 400, err.Error())

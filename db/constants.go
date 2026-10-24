@@ -12,7 +12,7 @@ import (
 var RiskAreas = []string{
 	"sqli", "xss", "rce", "ssrf", "ssti", "xxe",
 	"idor", "authz", "auth", "logic", "upload", "traversal", "disclosure",
-	"cache", "smuggling", "desync", "oauth", "other",
+	"cache", "smuggling", "desync", "oauth", "graphql", "websocket", "supply", "other",
 }
 
 // NormalizeRiskArea maps a planner-supplied token onto the closed vocabulary

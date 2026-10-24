@@ -18,6 +18,8 @@ type BatchAsset struct {
 	AppName    string `json:"app_name,omitempty"`
 	RootDomain string `json:"root_domain,omitempty"`
 	CompanyID  int64  `json:"company_id,omitempty"`
+	// Tier 是人工资产分级（assets.extra.asset_tier），用于自动排队优先级。
+	Tier string `json:"tier,omitempty"`
 }
 
 // ResolveBatchAssets returns the union of assets selected by company scope, source
@@ -48,7 +50,8 @@ func (d *DB) ResolveBatchAssets(ctx context.Context, companyIDs, sourceTaskIDs, 
 	rows, err := d.QueryContext(ctx, `
 SELECT DISTINCT a.id, a.type,
        COALESCE(a.domain,''), COALESCE(a.url,''), COALESCE(a.ip,''),
-       COALESCE(a.app_name,''), COALESCE(a.root_domain,''), COALESCE(a.company_id,0)
+       COALESCE(a.app_name,''), COALESCE(a.root_domain,''), COALESCE(a.company_id,0),
+       COALESCE(NULLIF(a.extra->>'asset_tier',''),'')
 FROM assets a
 WHERE (
       a.id = ANY($1::bigint[])
@@ -68,7 +71,7 @@ LIMIT $5`, assetIDs, companyIDs, sourceTaskIDs, types, limit+1)
 	out := []BatchAsset{}
 	for rows.Next() {
 		var a BatchAsset
-		if err := rows.Scan(&a.ID, &a.Type, &a.Domain, &a.URL, &a.IP, &a.AppName, &a.RootDomain, &a.CompanyID); err != nil {
+		if err := rows.Scan(&a.ID, &a.Type, &a.Domain, &a.URL, &a.IP, &a.AppName, &a.RootDomain, &a.CompanyID, &a.Tier); err != nil {
 			return nil, false, err
 		}
 		out = append(out, a)

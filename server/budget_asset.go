@@ -12,6 +12,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strconv"
@@ -27,6 +28,7 @@ import (
 const (
 	settingAssetTokenBudget = "src_asset_token_budget"
 	settingAssetTimeBudget  = "src_asset_time_budget_minutes"
+	settingSrcAreaTiers     = "src_area_tiers"
 	// 资产预算扫描节流：llm_usage 是热表，每 15s 一次足够及时且不增加明显负担。
 	assetBudgetSweepInterval = 15 * time.Second
 	maxAssetTokenBudgetValue = int64(1_000_000_000_000)
@@ -35,6 +37,37 @@ const (
 // srcAssetTokenBudget resolves the global per-asset token budget (0 = off).
 func (s *Server) srcAssetTokenBudget() int64 {
 	return parseTokenBudgetSetting(s.m.pg, settingAssetTokenBudget)
+}
+
+// srcAreaTiers reads the global per-risk-area model tier mapping. Invalid
+// entries are ignored (a typo must not make task creation fail); an explicitly
+// written mode_doc area_tiers is still validated strictly by srcmode.Resolve.
+func (s *Server) srcAreaTiers() map[string]string {
+	pg := s.m.pg
+	if pg == nil {
+		return nil
+	}
+	v, ok, err := pg.GetSetting(settingSrcAreaTiers)
+	if err != nil || !ok || strings.TrimSpace(v) == "" {
+		return nil
+	}
+	var raw map[string]string
+	if err := json.Unmarshal([]byte(v), &raw); err != nil {
+		return nil
+	}
+	out := map[string]string{}
+	for area, tier := range raw {
+		area = strings.TrimSpace(area)
+		tier = strings.ToLower(strings.TrimSpace(tier))
+		if !srcmode.IsArea(area) || (tier != "cheap" && tier != "standard" && tier != "strong") {
+			continue
+		}
+		out[area] = tier
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // srcAssetTimeBudgetMinutes resolves the global per-asset wall-clock budget

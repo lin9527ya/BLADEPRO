@@ -164,6 +164,7 @@ export function CreateTaskSheet({
   const [assetsPerTask, setAssetsPerTask] = React.useState("20");
   const [maxShards, setMaxShards] = React.useState("50");
   const [batchTokenBudget, setBatchTokenBudget] = React.useState("0");
+  const [campaignTokenBudget, setCampaignTokenBudget] = React.useState("0");
   const [campaignName, setCampaignName] = React.useState("");
   // 批量扇出的资产过滤：all=全部 / new=未被 SRC 任务关联过 / untested=没有任何终态格。
   const [batchAssetFilter, setBatchAssetFilter] = React.useState<"all" | "new" | "untested">("all");
@@ -359,6 +360,7 @@ export function CreateTaskSheet({
           maxShards: Math.max(1, Number(maxShards) || 50),
           tokenBudget: Math.max(0, Number(batchTokenBudget) || 0),
           campaignName: campaignName.trim() || undefined,
+          campaignTokenBudget: Math.max(0, Number(campaignTokenBudget) || 0),
           onlyNewAssets: batchAssetFilter === "new",
           onlyUntestedAssets: batchAssetFilter === "untested",
         });
@@ -390,6 +392,7 @@ export function CreateTaskSheet({
       setAssetsPerTask("20");
       setMaxShards("50");
       setBatchTokenBudget("0");
+      setCampaignTokenBudget("0");
       setCampaignName("");
       setBatchAssetFilter("all");
       setQueuePriority("0");
@@ -457,6 +460,7 @@ export function CreateTaskSheet({
                 setAssetsPerTask(batch?.assets_per_task ? String(batch.assets_per_task) : "20");
                 setMaxShards(batch?.max_shards ? String(batch.max_shards) : "50");
                 setCampaignName(batch?.campaign_name ?? "");
+                setCampaignTokenBudget(batch?.campaign_token_budget ? String(batch.campaign_token_budget) : "0");
                 setBatchAssetFilter(
                   batch?.only_untested_assets ? "untested" : batch?.only_new_assets ? "new" : "all",
                 );
@@ -680,7 +684,21 @@ export function CreateTaskSheet({
                         onChange={(e) => setBatchTokenBudget(e.target.value)}
                       />
                     </div>
+                    <div className="grid gap-1">
+                      <Label htmlFor="campaign-token-budget" className="text-xs">
+                        战役总 token 预算（0=不限）
+                      </Label>
+                      <Input
+                        id="campaign-token-budget"
+                        inputMode="numeric"
+                        value={campaignTokenBudget}
+                        onChange={(e) => setCampaignTokenBudget(e.target.value)}
+                      />
+                    </div>
                   </div>
+                  <p className="text-muted-foreground text-xs">
+                    每片预算限制单个分片；战役总预算跨所有分片累计，达到后各分片自动收尾。
+                  </p>
                   <div className="grid gap-1">
                     <Label className="text-xs">只跑</Label>
                     <Select

@@ -53,6 +53,7 @@ type taskShardSpec struct {
 	Description    string
 	Goal           string
 	TokenBudget    int64
+	Priority       int
 	ScopeRows      []db.TaskScopeInput
 	AssetIDs       []int64
 	OmitCompanyIDs bool // 分片任务用精确 scope，不能把整个企业再灌进来
@@ -203,6 +204,17 @@ func (s *Server) prepareTaskCreate(ctx context.Context, req createTaskReq) (*pre
 			return nil, taskErr(500, err.Error())
 		}
 	}
+	// 风险面模型分层（可选）：mode_doc 显式给了就用自己的；没给则继承全局
+	// setting `src_area_tiers`。创建时快照，运行中改全局不影响已建任务。
+	if srcDoc.IsSrc() && len(srcDoc.AreaTiers) == 0 {
+		if tiers := s.srcAreaTiers(); len(tiers) > 0 {
+			srcDoc.AreaTiers = tiers
+			modeDoc, err = json.Marshal(srcDoc)
+			if err != nil {
+				return nil, taskErr(500, err.Error())
+			}
+		}
+	}
 	// 资产级 token 预算（P2）：mode_doc 显式给了就用自己的；没给（0）则继承全局
 	// setting `src_asset_token_budget`，创建时快照进 mode_doc，运行中改全局不影响。
 	if srcDoc.IsSrc() && (srcDoc.AssetTokenBudget <= 0 || srcDoc.AssetTimeBudgetMinutes <= 0) {
@@ -277,6 +289,7 @@ func (s *Server) persistPreparedTask(ctx context.Context, prep *preparedTaskCrea
 	}
 	name, desc, goal := prep.req.Name, prep.req.Description, prep.req.Goal
 	tokenBudget := prep.req.TokenBudget
+	priority := prep.req.Priority
 	companyIDs := prep.companyIDs
 	var scopeRows []db.TaskScopeInput
 	var assetIDs []int64
@@ -291,6 +304,9 @@ func (s *Server) persistPreparedTask(ctx context.Context, prep *preparedTaskCrea
 		if shard.TokenBudget > 0 {
 			tokenBudget = shard.TokenBudget
 		}
+		if shard.Priority != 0 {
+			priority = shard.Priority
+		}
 		if shard.OmitCompanyIDs {
 			companyIDs = nil
 		}
@@ -300,7 +316,7 @@ func (s *Server) persistPreparedTask(ctx context.Context, prep *preparedTaskCrea
 		Name: strings.TrimSpace(name), CategoryID: prep.req.CategoryID,
 		SourceTaskIDs: prep.sourceIDs, CompanyIDs: companyIDs, LLMProfileIDs: prep.req.LLMProfileIDs,
 		TimeoutSeconds: prep.req.TimeoutSeconds, TokenBudget: tokenBudget,
-		Priority:             prep.req.Priority,
+		Priority:             priority,
 		PlanHeartbeatSeconds: prep.req.PlanHeartbeatSeconds,
 		CoverageEnabled:      prep.req.CoverageEnabled,
 		InterceptRules:       prep.interceptRules,

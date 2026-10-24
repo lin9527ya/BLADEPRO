@@ -255,13 +255,13 @@ func (t *ToolSet) AppendSrcTools(tools []actool.CoreTool, role string) []actool.
 	switch role {
 	case "planner":
 		return append(tools, t.srcState(), t.srcFinishCheck(), t.srcMarkCell(), t.srcMarkCheck(),
-			t.srcPrepareSubmission(), t.srcDedupe(), t.srcProbeTool(), t.srcScreenshotTool())
+			t.srcPrepareSubmission(), t.srcDedupe(), t.srcProbeTool(), t.srcScreenshotTool(), t.srcNegativeTool())
 	case "worker":
 		return append(tools, t.srcMarkCell(), t.srcMarkCheck(), t.srcState(),
-			t.srcPrepareSubmission(), t.srcDedupe(), t.srcProbeTool(), t.srcScreenshotTool())
+			t.srcPrepareSubmission(), t.srcDedupe(), t.srcProbeTool(), t.srcScreenshotTool(), t.srcNegativeTool())
 	case "main":
 		// 主 agent 只读 + 可交付/定案；点格/点收尾项仍归 planner/worker，避免绕过覆盖判定。
-		return append(tools, t.srcState(), t.srcPrepareSubmission(), t.srcDedupe())
+		return append(tools, t.srcState(), t.srcPrepareSubmission(), t.srcDedupe(), t.srcNegativeTool())
 	default:
 		return tools
 	}
@@ -1635,6 +1635,13 @@ func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, er
 		leasedAssets = anchors
 	}
 	payload := map[string]any{"summary": it.Summary, "risk_area": db.NormalizeRiskArea(it.RiskArea)}
+	// 按风险面分层：意图创建时把 tier 写进 payload，worker 执行时据此选模型。
+	// 只对 SRC 模式生效；显式 worker 绑定在宿主侧优先（见 server/agentsForTask）。
+	if t.srcMode {
+		if tier := t.srcDoc.WorkerTierForRiskArea(db.NormalizeRiskArea(it.RiskArea)); tier != "" {
+			payload["worker_tier"] = tier
+		}
+	}
 	// ATT&CK 技术标注：**标错不该让整条方向作废**，所以非法项由 NormalizeTechniques 丢弃，
 	// 不在这里返错。它是给交付物用的分类，不是约束。
 	if techs := db.NormalizeTechniques(it.Techniques); len(techs) > 0 {
@@ -1714,7 +1721,7 @@ func (t *ToolSet) addIntent() actool.CoreTool {
 			"goal_id":       idp("【目标归属】本条方向服务的目标 id（graph_overview 的 goals；可选）：挂上后链路图显示「目标→意图」，push 目标进度。省略时若本任务恰有一个未达成(open)目标会自动挂；有多个目标时请指名（不猜）。"),
 			"uses_loot_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "【本方向在动用哪次已得的访问】战果节点 id（graph_overview 的 footholds/credentials；可选，0/1/多个）：这条方向的立足点来自某个据点/某条凭据时**务必传**。它让系统能算出「哪些战果还没被推进过」——不传的话那条战果会一直显示为 outstanding，你也看不出它是否已经被别的意图接手了。"},
 			"priority":      intp("优先级 0-10，默认5"),
-			"risk_area":     str("【覆盖矩阵键】本方向要打的风险类：sqli(注入) | xss | rce(命令执行/反序列化) | ssrf | ssti | xxe | idor(对象级越权) | authz(功能级越权) | auth(认证/会话) | logic(业务逻辑/竞态) | upload | traversal | disclosure | cache(缓存投毒/欺骗) | smuggling/desync(请求走私) | oauth(OAuth/OIDC) | other。**尽量填写**——报告与覆盖度按「范围内资产 × 风险类」统计已测/未测成/未触及。"),
+			"risk_area":     str("【覆盖矩阵键】本方向要打的风险类：sqli(注入) | xss | rce(命令执行/反序列化) | ssrf | ssti | xxe | idor(对象级越权) | authz(功能级越权) | auth(认证/会话) | logic(业务逻辑/竞态) | upload | traversal | disclosure | cache(缓存投毒/欺骗) | smuggling/desync(请求走私) | oauth(OAuth/OIDC) | graphql(GraphQL) | websocket(实时通道) | supply(第三方/供应链) | other。**尽量填写**——报告与覆盖度按「范围内资产 × 风险类」统计已测/未测成/未触及。"),
 			"techniques":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "【ATT&CK 技术 ID】本方向用到的技术，如 T1190(利用公开漏洞) / T1078(有效账户) / T1552.001(凭据文件) / T1021(远程服务)。可选但**尽量填**——红队交付物按 ATT&CK 组织，报告会据此汇总「本次作业覆盖了哪些技术」；不标就只剩一堆没有共同语言的方向描述。只写 ID（T#### 或 T####.###），不要写技术名。"},
 		}),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {

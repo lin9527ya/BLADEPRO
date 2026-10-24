@@ -571,6 +571,18 @@ func tidOfTask(t *Task) int64 {
 	return n
 }
 
+// workerHasExplicitLLM reports whether the worker role is pinned by an agent
+// binding or a task-level profile chain. Area tiering must not override either.
+func (s *Server) workerHasExplicitLLM(t *Task) bool {
+	if t == nil {
+		return true
+	}
+	if _, _, ok := s.agentBindingProvider("worker"); ok {
+		return true
+	}
+	return len(t.llmStateSnapshot().ProfileIDs) > 0
+}
+
 func (s *Server) invalidateTaskAgents() {
 	s.agents.mu.Lock()
 	s.agents.bundles = map[string]*taskAgentBundle{}
@@ -600,6 +612,21 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	wk.SetNoaEnabled(s.m.NoaCompactionEnabled)     // 实验功能:noa 上下文压缩(平台级开关,每 run 读)
 	wk.SetRunTimeout(time.Duration(s.agentRunSeconds("worker")) * time.Second)
 	wk.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
+	// 按风险面分层：只有 llm_auto_tier 打开且任务/角色没有显式模型绑定时才接管。
+	// 显式配置永远优先——区域分层是默认路由，不是覆盖。
+	if s.llmAutoTierEnabled() && !s.workerHasExplicitLLM(t) {
+		tiers := map[string]llm.Provider{}
+		for _, tier := range []string{db.ProfileTierCheap, db.ProfileTierStandard, db.ProfileTierStrong} {
+			if p, ok := s.autoTierProvider("worker-" + tier); ok {
+				tiers[tier] = p
+			}
+		}
+		var summary llm.Provider
+		if p, ok := s.autoTierProvider("compress"); ok {
+			summary = p
+		}
+		wk.SetModelTiers(tiers, summary)
+	}
 	wk.SetWebSearch(s.webSearchFor("worker"))
 	wk.SetConstraintInject(s.constraintInjectWorker)     // 操作约束注入 worker(可配置,默认开)
 	wk.SetExecService(s.m.Executions())                  // P13 长任务托管执行(活过 run;nil=工具显式报未接线)

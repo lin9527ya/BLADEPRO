@@ -32,12 +32,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
 import type {
   ProgramScopeInput,
+  SrcDuplicateGroup,
   SrcProgram,
   SrcProgramInput,
   SrcProgramRule,
   SrcProgramRules,
   SrcStats,
   SrcSubmission,
+  SrcSubmitField,
+  SrcSubmitTemplate,
 } from "@/lib/types";
 
 // 台账状态 → 中文 + 下一步合法流转。与服务端状态机一致（口径以服务端为准），
@@ -601,14 +604,46 @@ function LedgerTab() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
     </div>
   );
 }
 
 // ---- Tab B：平台项目（全局规则集）----
 
+// 自定义提交模板的字段编辑用「每行 label|source|required」的轻量文本格式；
+// 比嵌套 JSON 好填，也比纯自由文本可校验。
+const SUBMIT_FIELD_SOURCES = [
+  "title", "severity", "cwe", "cvss", "asset", "repro_env", "attachments",
+  "platform", "program", "egress_ip", "test_accounts",
+];
+
+function fieldsToText(fields?: SrcSubmitField[]): string {
+  return (fields ?? []).map((f) => `${f.label}|${f.source}|${f.required ? "1" : "0"}`).join("\n");
+}
+
+function parseFieldText(text: string): SrcSubmitField[] {
+  const out: SrcSubmitField[] = [];
+  for (const line of text.split("\n")) {
+    const parts = line.split("|").map((p) => p.trim());
+    if (!parts[0]) continue;
+    const source = (parts[1] || "title").toLowerCase();
+    if (!SUBMIT_FIELD_SOURCES.includes(source)) continue;
+    out.push({ label: parts[0], source, required: parts[2] === "1" || parts[2] === "true" });
+  }
+  return out;
+}
+
 function ProgramsTab() {
   const [programs, setPrograms] = React.useState<SrcProgram[]>([]);
+  const [dupGroups, setDupGroups] = React.useState<SrcDuplicateGroup[]>([]);
+  const [submitTemplates, setSubmitTemplates] = React.useState<SrcSubmitTemplate[]>([]);
+  const [tplOpen, setTplOpen] = React.useState(false);
+  const [tplSaving, setTplSaving] = React.useState(false);
+  const [tplDraft, setTplDraft] = React.useState({
+    key: "", name: "", ruleUrl: "", ruleDate: "", header: "",
+    fieldsText: "Title|title|1\nSeverity|severity|1\nAsset|asset|1",
+  });
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState("");
 
@@ -626,8 +661,14 @@ function ProgramsTab() {
   const load = React.useCallback(async () => {
     setLoading(true);
     try {
-      const r = await api.srcPrograms();
+      const [r, g, tpls] = await Promise.all([
+        api.srcPrograms(),
+        api.srcDuplicateGroups({ limit: 20 }).catch(() => ({ groups: [], total: 0 })),
+        api.srcSubmitTemplates().catch(() => [] as SrcSubmitTemplate[]),
+      ]);
       setPrograms(r.programs ?? []);
+      setDupGroups(g.groups ?? []);
+      setSubmitTemplates(tpls);
       setError("");
     } catch (e) {
       setError(errText(e));
@@ -639,6 +680,57 @@ function ProgramsTab() {
   React.useEffect(() => {
     void load();
   }, [load]);
+
+  const patchTpl = (p: Partial<typeof tplDraft>) => setTplDraft((d) => ({ ...d, ...p }));
+
+  const saveTemplate = async () => {
+    const fields = parseFieldText(tplDraft.fieldsText);
+    if (!tplDraft.key.trim().startsWith("custom:")) {
+      toast.error("模板 key 必须以 custom: 开头");
+      return;
+    }
+    if (!tplDraft.name.trim() || fields.length === 0) {
+      toast.error("请填写名称，并至少保留一个有效字段（label|source|required）");
+      return;
+    }
+    setTplSaving(true);
+    try {
+      await api.saveSrcSubmitTemplate({
+        key: tplDraft.key.trim().toLowerCase(),
+        name: tplDraft.name.trim(),
+        header: tplDraft.header.trim() || undefined,
+        rule_url: tplDraft.ruleUrl.trim() || undefined,
+        rule_date: tplDraft.ruleDate.trim() || undefined,
+        fields,
+      });
+      toast.success("提交模板已保存");
+      const next = await api.srcSubmitTemplates();
+      setSubmitTemplates(next);
+      setTplOpen(false);
+    } catch (e) {
+      toast.error("保存失败：" + String((e as Error)?.message ?? e));
+    } finally {
+      setTplSaving(false);
+    }
+  };
+
+  const removeTemplate = async (key: string) => {
+    try {
+      await api.deleteSrcSubmitTemplate(key);
+      toast.success("已删除自定义模板");
+      setSubmitTemplates(await api.srcSubmitTemplates());
+    } catch (e) {
+      toast.error("删除失败：" + String((e as Error)?.message ?? e));
+    }
+  };
+
+  const editTemplate = (t: SrcSubmitTemplate) => {
+    setTplDraft({
+      key: t.key, name: t.name, ruleUrl: t.rule_url ?? "", ruleDate: t.rule_date ?? "",
+      header: t.header ?? "", fieldsText: fieldsToText(t.fields),
+    });
+    setTplOpen(true);
+  };
 
   const openCreate = () => {
     setEditing(null);
@@ -861,7 +953,7 @@ function ProgramsTab() {
               })}
               {!loading && programs.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="py-8">
+                  <TableCell colSpan={8} className="py-8">
                     <Empty className="py-4">
                       <EmptyHeader>
                         <EmptyTitle>还没有平台项目</EmptyTitle>
@@ -875,6 +967,57 @@ function ProgramsTab() {
               ) : null}
             </TableBody>
           </Table>
+        </CardContent>
+      </Card>
+
+      <Card className="gap-0 overflow-hidden py-0">
+        <CardContent className="px-0">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3">
+            <div>
+              <div className="text-sm font-medium">重复组</div>
+              <p className="text-muted-foreground text-xs">
+                同指纹（强指纹优先，无强指纹时用降级指纹）的发现聚在一起；这里只做展示，合并裁决仍走 src_dedupe。
+              </p>
+            </div>
+            <Badge variant="outline">{dupGroups.length} 组</Badge>
+          </div>
+          {dupGroups.length === 0 ? (
+            <p className="text-muted-foreground px-4 py-6 text-sm">暂无重复组。</p>
+          ) : (
+            <div className="divide-y">
+              {dupGroups.map((g) => (
+                <div key={g.fingerprint} className="grid gap-1.5 px-4 py-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={g.strong ? "secondary" : "outline"}>
+                      {g.strong ? "强指纹" : "降级指纹"}
+                    </Badge>
+                    <code className="text-muted-foreground text-xs">{g.fingerprint}</code>
+                    <span className="text-xs">{g.count} 条</span>
+                  </div>
+                  <div className="grid gap-1">
+                    {g.findings.map((f) => (
+                      <div key={f.finding_id} className="flex flex-wrap items-center gap-2 text-xs">
+                        <span className="font-mono text-muted-foreground">#{f.finding_id}</span>
+                        <span className="max-w-[26rem] truncate" title={f.title}>
+                          {f.title}
+                        </span>
+                        <Badge variant="outline" className="text-[10px]">
+                          {f.severity || "—"}
+                        </Badge>
+                        <span className="text-muted-foreground">
+                          {f.task_name || `任务 #${f.task_id}`}
+                        </span>
+                        {f.submission_status ? (
+                          <span className="text-muted-foreground">台账 {f.submission_status}</span>
+                        ) : null}
+                        <span className="text-muted-foreground">{f.created_at}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -915,19 +1058,35 @@ function ProgramsTab() {
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="program-template">提交块模板</Label>
-                <Select value={draft.platformTemplate || "auto"} onValueChange={(v) => patch({ platformTemplate: v === "auto" ? "" : v })}>
-                  <SelectTrigger id="program-template">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="auto">自动识别（按平台名）</SelectItem>
-                    <SelectItem value="generic">通用</SelectItem>
-                    <SelectItem value="butian">补天</SelectItem>
-                    <SelectItem value="vulbox">漏洞盒子</SelectItem>
-                    <SelectItem value="edu">教育 SRC</SelectItem>
-                    <SelectItem value="hackerone">HackerOne</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="flex items-center gap-2">
+                  <Select value={draft.platformTemplate || "auto"} onValueChange={(v) => patch({ platformTemplate: v === "auto" ? "" : v })}>
+                    <SelectTrigger id="program-template">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">自动识别（按平台名）</SelectItem>
+                      {submitTemplates.map((t) => (
+                        <SelectItem key={t.key} value={t.key}>
+                          {t.name}{t.custom ? "（自定义）" : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setTplDraft({
+                        key: "custom:", name: "", ruleUrl: "", ruleDate: "", header: "",
+                        fieldsText: "Title|title|1\nSeverity|severity|1\nAsset|asset|1",
+                      });
+                      setTplOpen(true);
+                    }}
+                  >
+                    管理模板
+                  </Button>
+                </div>
                 <p className="text-muted-foreground text-xs">
                   只决定【提交信息】块的字段名/顺序，正文仍是同一份 8 块报告；模板内置日期见提交块，提交前按平台最新规则复核。
                 </p>
@@ -1365,6 +1524,79 @@ function ProgramsTab() {
             <Button disabled={saving || !draft.name.trim()} onClick={() => void submit()}>
               {saving && <Spinner data-icon="inline-start" />}
               {editing ? "保存" : "创建"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={tplOpen} onOpenChange={setTplOpen}>
+        <DialogContent className="flex max-h-[88vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
+          <DialogHeader className="border-b p-6">
+            <DialogTitle>平台提交模板</DialogTitle>
+            <DialogDescription>
+              自定义模板 key 必须带 custom: 前缀；字段来源可选 {SUBMIT_FIELD_SOURCES.join(" / ")}。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-6">
+            <div className="grid gap-2">
+              {submitTemplates.filter((t) => t.custom).length === 0 ? (
+                <p className="text-muted-foreground text-sm">还没有自定义模板。</p>
+              ) : (
+                submitTemplates.filter((t) => t.custom).map((t) => (
+                  <div key={t.key} className="flex flex-wrap items-center gap-2 rounded border px-3 py-2 text-sm">
+                    <code className="text-xs">{t.key}</code>
+                    <span>{t.name}</span>
+                    <div className="ml-auto flex gap-1">
+                      <Button type="button" size="sm" variant="ghost" onClick={() => editTemplate(t)}>
+                        编辑
+                      </Button>
+                      <Button type="button" size="sm" variant="ghost" onClick={() => void removeTemplate(t.key)}>
+                        删除
+                      </Button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="grid gap-3 border-t pt-4 sm:grid-cols-2">
+              <div className="grid gap-1">
+                <Label htmlFor="tpl-key">Key（custom: 开头）</Label>
+                <Input id="tpl-key" value={tplDraft.key} onChange={(e) => patchTpl({ key: e.target.value })} />
+              </div>
+              <div className="grid gap-1">
+                <Label htmlFor="tpl-name">名称</Label>
+                <Input id="tpl-name" value={tplDraft.name} onChange={(e) => patchTpl({ name: e.target.value })} />
+              </div>
+              <div className="grid gap-1">
+                <Label htmlFor="tpl-rule-url">规则页 URL（可选）</Label>
+                <Input id="tpl-rule-url" value={tplDraft.ruleUrl} onChange={(e) => patchTpl({ ruleUrl: e.target.value })} />
+              </div>
+              <div className="grid gap-1">
+                <Label htmlFor="tpl-rule-date">规则页日期（可选）</Label>
+                <Input id="tpl-rule-date" value={tplDraft.ruleDate} onChange={(e) => patchTpl({ ruleDate: e.target.value })} />
+              </div>
+              <div className="grid gap-1 sm:col-span-2">
+                <Label htmlFor="tpl-header">头部说明（可选，原样插入提交块）</Label>
+                <Input id="tpl-header" value={tplDraft.header} onChange={(e) => patchTpl({ header: e.target.value })} />
+              </div>
+              <div className="grid gap-1 sm:col-span-2">
+                <Label htmlFor="tpl-fields">字段（每行 label|source|required，required 用 1/0）</Label>
+                <Textarea
+                  id="tpl-fields"
+                  className="font-mono text-xs"
+                  rows={6}
+                  value={tplDraft.fieldsText}
+                  onChange={(e) => patchTpl({ fieldsText: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="border-t p-4">
+            <Button type="button" variant="outline" onClick={() => setTplOpen(false)} disabled={tplSaving}>
+              关闭
+            </Button>
+            <Button type="button" onClick={() => void saveTemplate()} disabled={tplSaving}>
+              {tplSaving ? "保存中" : "保存模板"}
             </Button>
           </DialogFooter>
         </DialogContent>

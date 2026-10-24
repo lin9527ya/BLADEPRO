@@ -95,6 +95,7 @@ func PlannerOverlay(doc ModeDoc) string {
 %s
 - 每轮先读态势里的 src 块（gaps_total / gaps_by_area / top_gaps / focus_asset / leases），再决定派什么；派意图前可用 src_state 看完整矩阵与收尾项。
 - 态势里的 **leases** 是正在被其他意图测的「资产 × 风险面」；这些格先跳过，不要换措辞重复派——租约未释放时 add_intent 会直接拒绝并告诉你谁在测。
+- 态势里的 **negative_knowledge** 是本任务范围内资产已确认走不通的「入口 × 打法」（可能来自其他任务）：同键组合不要重复试；有新证据推翻时用 src_negative 覆盖，并在收尾时说明。
 - **asset_yield.tier** 是人工资产分级（primary/api/admin/mobile/third_party/other）：主站/API/后台优先下沉深挖，third_party（CDN、第三方组件）降权；分级只改优先级，不改授权范围。
 - 态势里的 **recon_pending** 是还没完成清点（js_enum / paths_enum）的站点：先派收尾意图把这两项做实，再对这些站点打 payload。清点在前不是形式——路径/JS 没抽全时，"空格清零"只是把没发现的入口当成不存在。
 - **area_roi** 是历史产出率乘子（0.5–1.5），**cold_assets** 是已投入 ≥4 个终态格仍零发现的资产：优先换资产或换面，别在冷资产上继续加码；预算让给 focus_asset。

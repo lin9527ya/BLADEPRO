@@ -18,6 +18,7 @@ import (
 	"github.com/lin9527ya/bladepro/agent"
 	"github.com/lin9527ya/bladepro/db"
 	"github.com/lin9527ya/bladepro/intercept"
+	"github.com/lin9527ya/bladepro/srcmode"
 )
 
 // getSettings returns the runtime app settings the UI toggles. The Brave API key
@@ -86,13 +87,15 @@ func (s *Server) settingsPayload() map[string]any {
 		// 资产级墙钟预算（分钟，默认 0=关）：从资产首次产生 LLM 用量起算，
 		// 到点后与 token 预算同样收口并转向其他资产。
 		"src_asset_time_budget_minutes": s.srcAssetTimeBudgetMinutes(),
-		"llm_record":                    s.m.LLMRecordEnabled(),
-		"web_search_enabled":            on,
-		"web_search_backend":            backend,
-		"brave_key_set":                 strings.TrimSpace(braveKey) != "",
-		"tavily_key_set":                strings.TrimSpace(tavilyKey) != "",
-		"web_search_proxy":              proxy,             // 独立出口代理(http/https/socks5)，空=直连
-		"global_proxy":                  s.m.GlobalProxy(), // 全局出口代理(http/https/socks5)，所有目标流量走它，空=直连
+		// 风险面模型分层：{"authz":"strong","paths":"cheap"}；空 = 用内建默认。
+		"src_area_tiers":     s.srcAreaTiers(),
+		"llm_record":         s.m.LLMRecordEnabled(),
+		"web_search_enabled": on,
+		"web_search_backend": backend,
+		"brave_key_set":      strings.TrimSpace(braveKey) != "",
+		"tavily_key_set":     strings.TrimSpace(tavilyKey) != "",
+		"web_search_proxy":   proxy,             // 独立出口代理(http/https/socks5)，空=直连
+		"global_proxy":       s.m.GlobalProxy(), // 全局出口代理(http/https/socks5)，所有目标流量走它，空=直连
 		// 出站速率治理（录制代理层）：0 = 关闭。host 桶与全局桶同时生效。
 		"egress_global_qps":        egressGlobal,
 		"egress_host_qps":          egressHost,
@@ -203,13 +206,14 @@ func (s *Server) pgDetectPython(w http.ResponseWriter, r *http.Request) {
 // off, agents get no proxy config, no traffic tools, and no proxy prompt content.
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TrafficCapture      *bool  `json:"traffic_capture"`
-		AgentTrafficBinding *bool  `json:"agent_traffic_binding"`
-		AgentAutoRetest     *bool  `json:"agent_auto_retest"`
-		TaskTokenBudget     *int64 `json:"task_token_budget"`
-		SrcAssetTokenBudget *int64 `json:"src_asset_token_budget"`
-		SrcAssetTimeBudget  *int   `json:"src_asset_time_budget_minutes"` // 分钟；0=关
-		LLMRecord           *bool  `json:"llm_record"`                    // LLM 录制开关（默认关）；即时生效，无需重建 agent
+		TrafficCapture      *bool              `json:"traffic_capture"`
+		AgentTrafficBinding *bool              `json:"agent_traffic_binding"`
+		AgentAutoRetest     *bool              `json:"agent_auto_retest"`
+		TaskTokenBudget     *int64             `json:"task_token_budget"`
+		SrcAssetTokenBudget *int64             `json:"src_asset_token_budget"`
+		SrcAssetTimeBudget  *int               `json:"src_asset_time_budget_minutes"` // 分钟；0=关
+		SrcAreaTiers        *map[string]string `json:"src_area_tiers"`
+		LLMRecord           *bool              `json:"llm_record"` // LLM 录制开关（默认关）；即时生效，无需重建 agent
 		// Web search. WebSearchEnabled/Backend toggle the tool + backend; BraveKey/TavilyKey
 		// are optional — omit (null) to leave a stored key untouched, send "" to clear.
 		WebSearchEnabled *bool   `json:"web_search_enabled"`
@@ -583,6 +587,31 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.m.pg.SetSetting(settingAssetTokenBudget, strconv.FormatInt(v, 10)); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.SrcAreaTiers != nil {
+		out := map[string]string{}
+		for area, tier := range *req.SrcAreaTiers {
+			area = strings.TrimSpace(area)
+			tier = strings.ToLower(strings.TrimSpace(tier))
+			if !srcmode.IsArea(area) {
+				writeErr(w, 400, "未知风险面："+area)
+				return
+			}
+			if tier != "cheap" && tier != "standard" && tier != "strong" {
+				writeErr(w, 400, "风险面 "+area+" 的分层只能是 cheap / standard / strong")
+				return
+			}
+			out[area] = tier
+		}
+		raw, err := json.Marshal(out)
+		if err != nil {
+			writeErr(w, 400, err.Error())
+			return
+		}
+		if err := s.m.pg.SetSetting(settingSrcAreaTiers, string(raw)); err != nil {
 			writeErr(w, 500, err.Error())
 			return
 		}

@@ -33,17 +33,20 @@ const (
 
 type createTaskBatchReq struct {
 	createTaskReq
-	NamePrefix         string   `json:"name_prefix,omitempty"`
-	AssetIDs           []int64  `json:"asset_ids,omitempty"`
-	AssetTypes         []string `json:"asset_types,omitempty"`
-	ShardBy            string   `json:"shard_by,omitempty"` // host（默认）| root_domain | count
-	AssetsPerTask      int      `json:"assets_per_task,omitempty"`
-	MaxShards          int      `json:"max_shards,omitempty"`
-	MaxAssets          int      `json:"max_assets,omitempty"`
-	CampaignName       string   `json:"campaign_name,omitempty"`
-	DryRun             bool     `json:"dry_run,omitempty"`
-	OnlyNewAssets      bool     `json:"only_new_assets,omitempty"`
-	OnlyUntestedAssets bool     `json:"only_untested_assets,omitempty"`
+	NamePrefix    string   `json:"name_prefix,omitempty"`
+	AssetIDs      []int64  `json:"asset_ids,omitempty"`
+	AssetTypes    []string `json:"asset_types,omitempty"`
+	ShardBy       string   `json:"shard_by,omitempty"` // host（默认）| root_domain | count
+	AssetsPerTask int      `json:"assets_per_task,omitempty"`
+	MaxShards     int      `json:"max_shards,omitempty"`
+	MaxAssets     int      `json:"max_assets,omitempty"`
+	CampaignName  string   `json:"campaign_name,omitempty"`
+	// CampaignTokenBudget 是战役级 token 上限（0=不限）：跨分片累计，达到后
+	// 各分片任务在其 deadline coordinator 里收尾。与每个分片的 token_budget 不同。
+	CampaignTokenBudget int64 `json:"campaign_token_budget,omitempty"`
+	DryRun              bool  `json:"dry_run,omitempty"`
+	OnlyNewAssets       bool  `json:"only_new_assets,omitempty"`
+	OnlyUntestedAssets  bool  `json:"only_untested_assets,omitempty"`
 }
 
 type batchShardPlan struct {
@@ -195,6 +198,7 @@ func (s *Server) persistBatch(ctx context.Context, req createTaskBatchReq, prep 
 		shard := &taskShardSpec{
 			Name: name, Description: desc, Goal: prep.req.Goal,
 			TokenBudget: prep.req.TokenBudget, ScopeRows: p.Scope, AssetIDs: assetIDs(p.Assets),
+			Priority:       autoShardPriority(p.Assets, campaign.Priority, prep.req.Priority),
 			OmitCompanyIDs: true,
 		}
 		t, perr := s.persistPreparedTask(ctx, prep, shard)
@@ -261,11 +265,42 @@ func (s *Server) createBatchCampaign(ctx context.Context, req createTaskBatchReq
 		companyID = &id
 	}
 	note := fmt.Sprintf("批量扇出：%d 个分片 / %d 个资产；shard_by=%s", shards, assets, req.ShardBy)
-	c, err := s.m.PG().CreateCampaign(name, note, companyID)
+	c, err := s.m.PG().CreateCampaign(name, note, companyID, req.Priority, req.CampaignTokenBudget)
 	if err != nil {
 		return nil, fmt.Errorf("创建 campaign 失败：%w", err)
 	}
 	return c, nil
+}
+
+// autoShardPriority derives a queue priority for one shard when the caller did
+// not set an explicit priority. Explicit priority always wins; otherwise the
+// campaign priority plus an asset-tier score decides who starts first when the
+// concurrency limit queues work. The score is deliberately simple and auditable:
+// primary +12, api/admin +8, mobile +4, third-party -3.
+func autoShardPriority(assets []db.BatchAsset, campaignPriority, explicit int) int {
+	if explicit != 0 {
+		return explicit
+	}
+	score := campaignPriority
+	for _, a := range assets {
+		switch a.Tier {
+		case "primary":
+			score += 12
+		case "api", "admin":
+			score += 8
+		case "mobile":
+			score += 4
+		case "third_party":
+			score -= 3
+		}
+	}
+	if score < -1000 {
+		score = -1000
+	}
+	if score > 1000 {
+		score = 1000
+	}
+	return score
 }
 
 // planBatchShards groups assets into non-overlapping host/root-domain shards.

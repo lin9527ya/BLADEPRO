@@ -164,18 +164,19 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 	}
 	leases, _ := t.srcStore.ListActiveSrcLeases(ctx, t.taskID)
 	return map[string]any{
-		"mode":              srcmode.ModeSrc,
-		"summary":           rep,
-		"gaps":              rep.Gaps,
-		"leases":            leases,
-		"gaps_total":        rep.GapsTotal,
-		"gaps_by_area":      rep.GapsByArea,
-		"checks":            checkRows,
-		"cells":             cells,
-		"assets":            matrix,
-		"asset_token_usage": assetUsage,
-		"prior_coverage":    priorCoverage,
-		"finishable":        rep.Finishable,
+		"mode":               srcmode.ModeSrc,
+		"summary":            rep,
+		"gaps":               rep.Gaps,
+		"leases":             leases,
+		"gaps_total":         rep.GapsTotal,
+		"gaps_by_area":       rep.GapsByArea,
+		"checks":             checkRows,
+		"cells":              cells,
+		"assets":             matrix,
+		"asset_token_usage":  assetUsage,
+		"prior_coverage":     priorCoverage,
+		"negative_knowledge": t.srcNegativeBriefs(ctx, t.taskID, 20),
+		"finishable":         rep.Finishable,
 		"doc": map[string]any{
 			"allow_budget_stop":     t.srcDoc.AllowBudgetStop,
 			"max_attempts_per_cell": t.srcDoc.MaxAttemptsPerCell,
@@ -195,6 +196,20 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 		// 交付面（P2）：台账随快照一起给，agent 与 UI 看的是同一份"交到哪一步"。
 		"submissions": t.srcSubmissionBriefs(ctx),
 	}, nil
+}
+
+// srcNegativeBriefs returns structured negative knowledge for the task's assets.
+// Read failures degrade to an empty list: negative knowledge is an accelerator,
+// not a precondition for planning.
+func (t *ToolSet) srcNegativeBriefs(ctx context.Context, taskID int64, limit int) []db.SrcNegative {
+	if t.srcStore == nil || taskID <= 0 {
+		return nil
+	}
+	rows, err := t.srcStore.ListSrcNegativesForTask(ctx, taskID, limit)
+	if err != nil {
+		return nil
+	}
+	return rows
 }
 
 // srcSubmissionBriefs 是台账的精简视图（去掉正文字段：正文只在导出与详情里取）。
@@ -277,6 +292,10 @@ func (t *ToolSet) srcOverviewBlock(ctx context.Context) (map[string]any, error) 
 	if prior, err := t.srcStore.PriorSrcCoverage(ctx, t.taskID, scopeAssetIDs, time.Now().Add(-30*24*time.Hour), 10); err == nil && len(prior) > 0 {
 		out["prior_coverage"] = prior
 		out["prior_coverage_note"] = "其他任务在相同资产 × 风险面上的最近结论；tested_clear/na 可直接复用（建任务时开启覆盖继承会自动带入），tested_found 先确认是否已交付。"
+	}
+	if negatives := t.srcNegativeBriefs(ctx, t.taskID, 20); len(negatives) > 0 {
+		out["negative_knowledge"] = negatives
+		out["negative_note"] = "本任务范围内资产已确认走不通的打法（含其他任务留下的）。不要重复试同键组合；有新证据时用 src_negative 覆盖。"
 	}
 	// 资产级 token 预算：只给预算开启的任务附上用量（最多 20 个资产，按用量降序），
 	// 让 planner 在派意图前就能看到谁快/已经爆预算。

@@ -168,8 +168,8 @@ func (p *Program) Validate() error {
 		return fmt.Errorf("redlines 最多 30 条（当前 %d 条）", len(p.Rules.Redlines))
 	}
 	if t := strings.TrimSpace(p.Rules.PlatformTemplate); t != "" {
-		if _, ok := FindPlatformTemplate(t); !ok {
-			return fmt.Errorf("未知平台模板：%s（可选：%s）", t, PlatformTemplateKeys())
+		if _, ok := FindPlatformTemplate(t); !ok && !strings.HasPrefix(strings.ToLower(t), "custom:") {
+			return fmt.Errorf("未知平台模板：%s（可选：%s，或 custom:<key>）", t, PlatformTemplateKeys())
 		}
 		p.Rules.PlatformTemplate = strings.ToLower(t)
 	}

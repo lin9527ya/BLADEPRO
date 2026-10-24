@@ -79,6 +79,9 @@ export function useSettingsState() {
   // 资产级墙钟预算（SRC，分钟，0 = 关闭）。
   const [assetTimeBudget, setAssetTimeBudget] = React.useState("0");
   const [savingAssetTimeBudget, setSavingAssetTimeBudget] = React.useState(false);
+  // 风险面模型分层（JSON 文本，0 项 = 内建默认）。
+  const [areaTiers, setAreaTiers] = React.useState("{}");
+  const [savingAreaTiers, setSavingAreaTiers] = React.useState(false);
   // 出站速率治理（录制代理层）：0 = 关闭。
   const [egressGlobalQPS, setEgressGlobalQPS] = React.useState("0");
   const [egressHostQPS, setEgressHostQPS] = React.useState("0");
@@ -155,6 +158,7 @@ export function useSettingsState() {
     setTokenBudget(String(s.task_token_budget ?? 0));
     setAssetTokenBudget(String(s.src_asset_token_budget ?? 0));
     setAssetTimeBudget(String(s.src_asset_time_budget_minutes ?? 0));
+    setAreaTiers(JSON.stringify(s.src_area_tiers ?? {}));
     setEgressGlobalQPS(String(s.egress_global_qps ?? 0));
     setEgressHostQPS(String(s.egress_host_qps ?? 0));
     setEgressWaitMS(String(s.egress_max_wait_ms ?? 0));
@@ -390,6 +394,29 @@ export function useSettingsState() {
       })
       .catch((e) => toast.error("保存失败：" + (e as Error).message))
       .finally(() => setSavingAssetTimeBudget(false));
+  };
+
+  const saveAreaTiers = () => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(areaTiers || "{}");
+    } catch {
+      toast.error("风险面分层必须是合法 JSON，例如 {\"authz\":\"strong\",\"paths\":\"cheap\"}");
+      return;
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      toast.error("风险面分层必须是对象");
+      return;
+    }
+    setSavingAreaTiers(true);
+    api
+      .setSettings({ src_area_tiers: parsed as Record<string, string> })
+      .then((s) => {
+        apply(s);
+        toast.success("已保存风险面模型分层");
+      })
+      .catch((e) => toast.error("保存失败：" + (e as Error).message))
+      .finally(() => setSavingAreaTiers(false));
   };
 
   const saveEgress = () => {
@@ -776,6 +803,10 @@ export function useSettingsState() {
     savingAssetTimeBudget,
     setSavingAssetTimeBudget,
     saveAssetTimeBudget,
+    areaTiers,
+    setAreaTiers,
+    savingAreaTiers,
+    saveAreaTiers,
     egressGlobalQPS,
     setEgressGlobalQPS,
     egressHostQPS,

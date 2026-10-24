@@ -242,3 +242,64 @@ func SortedAreas() []string {
 	})
 	return names
 }
+
+// DefaultAreaTier 是风险面的内建模型分层建议。只在 llm_auto_tier 打开且任务
+// 没有显式 worker 绑定时使用；高价值/需要多步推理的面用 strong，清点与枚举类
+// 用 cheap，其余 standard。
+func DefaultAreaTier(area string) string {
+	switch area {
+	case "injection", "authz", "rce", "upload", "oauth", "graphql", "desync", "cache":
+		return "strong"
+	case "paths", "host", "takeover", "cred", "supply":
+		return "cheap"
+	}
+	return "standard"
+}
+
+// RiskAreaToSrcArea 把 planner 的 db risk_area 映射到 SRC 覆盖矩阵的面。
+// 映射不上的面返回空串（由调用方按 standard/default worker 处理）。
+func RiskAreaToSrcArea(risk string) string {
+	switch strings.TrimSpace(risk) {
+	case "injection", "sqli", "nosql", "ssti", "cmdi", "xxe":
+		return "injection"
+	case "xss":
+		return "xss"
+	case "rce":
+		return "rce"
+	case "ssrf":
+		return "ssrf"
+	case "idor", "authz", "auth":
+		return "authz"
+	case "logic":
+		return "logic"
+	case "upload", "traversal":
+		return "upload"
+	case "cache":
+		return "cache"
+	case "smuggling", "desync":
+		return "desync"
+	case "oauth":
+		return "oauth"
+	case "graphql":
+		return "graphql"
+	case "websocket":
+		return "websocket"
+	case "supply":
+		return "supply"
+	case "disclosure":
+		return "paths"
+	}
+	return ""
+}
+
+// WorkerTierForRiskArea returns the configured tier for a planner risk area.
+func (d ModeDoc) WorkerTierForRiskArea(risk string) string {
+	area := RiskAreaToSrcArea(risk)
+	if area == "" {
+		return ""
+	}
+	if tier := strings.TrimSpace(d.AreaTiers[area]); tier != "" {
+		return tier
+	}
+	return DefaultAreaTier(area)
+}

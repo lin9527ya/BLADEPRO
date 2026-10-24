@@ -969,6 +969,7 @@ export interface ScheduleBatchSpec {
   max_shards?: number;
   max_assets?: number;
   campaign_name?: string;
+  campaign_token_budget?: number;
   only_new_assets?: boolean;
   only_untested_assets?: boolean;
 }
@@ -1352,6 +1353,43 @@ export interface SrcProgramInput {
   time_window: string;
   severity_map: Record<string, string>;
   retention_days?: number;
+}
+
+export interface SrcSubmitField {
+  label: string;
+  source: string;
+  required?: boolean;
+}
+
+/** 平台提交模板（内置 + custom: 用户自定义）。 */
+export interface SrcSubmitTemplate {
+  key: string;
+  name: string;
+  header?: string;
+  rule_url?: string;
+  rule_date?: string;
+  fields?: SrcSubmitField[];
+  custom: boolean;
+}
+
+export interface SrcDuplicateGroupFinding {
+  finding_id: number;
+  task_id: number;
+  task_name?: string;
+  title: string;
+  severity: string;
+  status: string;
+  submission_status?: string;
+  created_at: string;
+}
+
+/** 同指纹发现组（GET /api/src/duplicate-groups）。 */
+export interface SrcDuplicateGroup {
+  fingerprint: string;
+  /** true = 绑定流量算出的强指纹；false = 降级指纹（仅供参考）。 */
+  strong: boolean;
+  count: number;
+  findings: SrcDuplicateGroupFinding[];
 }
 
 /** 全局 SRC 看板的聚合数字（服务端一次查完，UI 不算）。 */
@@ -1947,6 +1985,8 @@ export interface Settings {
   // 资产级墙钟预算（SRC，分钟，默认 0=关）：从资产首次产生 LLM 用量起算，到点后与
   // token 预算同样收口并转向其他资产；建任务时快照进 mode_doc。
   src_asset_time_budget_minutes?: number;
+  /** 风险面 → 模型分层（cheap/standard/strong）；空 = 内建默认。 */
+  src_area_tiers?: Record<string, string>;
   // 任务并发上限:同时「运行中」的任务数上限。关闭=不限;开启后新建任务超限则排队,有空位自动启动。
   task_concurrency_enabled?: boolean; // 默认 false
   task_concurrency_limit?: number; // 开启后默认 5
@@ -2823,6 +2863,10 @@ export interface Campaign {
   name: string;
   company_id?: number;
   note: string;
+  /** 战役内任务的默认排队优先级。 */
+  priority?: number;
+  /** 战役级 token 上限（0=不限），跨分片累计。 */
+  token_budget?: number;
   created_at: string;
   updated_at: string;
   task_count?: number;

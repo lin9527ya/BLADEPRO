@@ -48,6 +48,25 @@ func (s *Server) registerSrcDelivery(mux routeRegistrar) {
 	mux.HandleFunc("GET /api/src/submissions", s.listSrcSubmissions)
 	mux.HandleFunc("PATCH /api/src/submissions/{id}", s.patchSrcSubmission)
 	mux.HandleFunc("GET /api/src/submissions/{id}/events", s.listSrcSubmissionEvents)
+	// 重复组：同指纹的发现聚在一起看；只读，不自动合并。
+	mux.HandleFunc("GET /api/src/duplicate-groups", s.listSrcDuplicateGroups)
+	// 用户自定义平台提交模板（内置模板在 srcmode，只读合并返回）。
+	mux.HandleFunc("GET /api/src/platform-templates", s.listSrcSubmitTemplates)
+	mux.HandleFunc("POST /api/src/platform-templates", s.saveSrcSubmitTemplate)
+	mux.HandleFunc("DELETE /api/src/platform-templates/{key}", s.deleteSrcSubmitTemplate)
+}
+
+// listSrcDuplicateGroups returns fingerprint clusters (>=2 findings), optionally
+// scoped to one task. UI 用它回答“哪几条其实是同一个洞”，裁决仍走 src_dedupe。
+func (s *Server) listSrcDuplicateGroups(w http.ResponseWriter, r *http.Request) {
+	taskID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("task_id")), 10, 64)
+	limit := atoiDefault(r.URL.Query().Get("limit"), 20)
+	groups, err := s.m.PG().Src().SrcDuplicateGroups(r.Context(), taskID, limit, 10)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"groups": groups, "total": len(groups)})
 }
 
 // prepareSrcSubmission 是交付准备的唯一实现：
@@ -279,11 +298,24 @@ func (s *Server) srcSubmitBlock(ctx context.Context, taskID int64, f *db.DBFindi
 	if lv, _ := s.srcPlatformInfo(ctx, taskID, f.Severity); lv != "" {
 		label = lv
 	}
-	return srcmode.SubmitInfoFor(doc, srcmode.SubmitContext{
+	submitCtx := srcmode.SubmitContext{
 		Title: in.Title, SeverityLabel: label, CWE: in.CWE, CVSS: in.CVSSVector,
 		Asset: in.TargetURL, ReproEnv: in.ReproEnv,
 		Attachments: s.srcAttachmentSummary(ctx, taskID, f),
-	})
+	}
+	if key := strings.TrimSpace(doc.PlatformTemplate); strings.HasPrefix(key, "custom:") {
+		if row, err := s.m.PG().Src().GetSrcSubmitTemplate(ctx, key); err == nil && row != nil {
+			fields := make([]srcmode.CustomSubmitField, 0, len(row.Fields))
+			for _, f := range row.Fields {
+				fields = append(fields, srcmode.CustomSubmitField{Label: f.Label, Source: f.Source, Required: f.Required})
+			}
+			return srcmode.SubmitInfoForCustom(doc, submitCtx, &srcmode.CustomSubmitTemplate{
+				Key: row.Key, Name: row.Name, Header: row.Header, RuleURL: row.RuleURL,
+				RuleDate: row.RuleDate, Fields: fields,
+			})
+		}
+	}
+	return srcmode.SubmitInfoFor(doc, submitCtx)
 }
 
 // srcAttachmentSummary lists what the delivery package will actually contain, so

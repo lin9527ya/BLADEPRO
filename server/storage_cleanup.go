@@ -274,31 +274,35 @@ func (s *Server) purgeRetentionCategory(ctx context.Context, spec storageCategor
 		return 0, err
 	}
 	var total int64
-	for _, g := range groups {
-		if g.Days <= 0 {
-			continue
-		}
-		inGroup := make(map[string]bool, len(g.TaskIDs))
-		for _, id := range g.TaskIDs {
-			inGroup[id] = true
-		}
-		protectTasks := append([]string{}, tasks...)
-		protectExp := append([]int64{}, explorations...)
-		for id, t := range taskByID {
-			if inGroup[id] {
+	// 服务端日志不归属任务：program 保留期对它没有意义，不能因为某个项目
+	// retention_days 更短就把全局日志提前删掉。
+	if spec.DBTable != db.RetentionServerLogs {
+		for _, g := range groups {
+			if g.Days <= 0 {
 				continue
 			}
-			protectTasks = append(protectTasks, id)
-			if t.ExplorationID > 0 {
-				protectExp = append(protectExp, t.ExplorationID)
+			inGroup := make(map[string]bool, len(g.TaskIDs))
+			for _, id := range g.TaskIDs {
+				inGroup[id] = true
 			}
+			protectTasks := append([]string{}, tasks...)
+			protectExp := append([]int64{}, explorations...)
+			for id, t := range taskByID {
+				if inGroup[id] {
+					continue
+				}
+				protectTasks = append(protectTasks, id)
+				if t.ExplorationID > 0 {
+					protectExp = append(protectExp, t.ExplorationID)
+				}
+			}
+			cutoff := now.AddDate(0, 0, -g.Days)
+			n, err := s.purgeTableBefore(ctx, spec, cutoff, protectTasks, protectExp)
+			if err != nil {
+				return total, fmt.Errorf("program #%d：%w", g.ProgramID, err)
+			}
+			total += n
 		}
-		cutoff := now.AddDate(0, 0, -g.Days)
-		n, err := s.purgeTableBefore(ctx, spec, cutoff, protectTasks, protectExp)
-		if err != nil {
-			return total, fmt.Errorf("program #%d：%w", g.ProgramID, err)
-		}
-		total += n
 	}
 
 	// ② 全局档：保留期比全局更长的项目要从全局清理中排除，否则它们的行会被

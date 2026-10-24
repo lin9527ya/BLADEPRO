@@ -625,10 +625,16 @@ CREATE TABLE IF NOT EXISTS campaigns (
     nkey       TEXT NOT NULL UNIQUE,
     company_id BIGINT REFERENCES companies(id) ON DELETE SET NULL,
     note       TEXT NOT NULL DEFAULT '',
+    -- priority: 战役内任务的默认排队优先级；token_budget: 战役级 token 上限
+    -- （0=不限），跨分片任务累计，达到后各任务进入收尾。
+    priority     INT NOT NULL DEFAULT 0,
+    token_budget BIGINT NOT NULL DEFAULT 0 CHECK (token_budget >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 DROP TRIGGER IF EXISTS trg_campaigns_upd ON campaigns;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS priority INT NOT NULL DEFAULT 0;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS token_budget BIGINT NOT NULL DEFAULT 0;
 CREATE TRIGGER trg_campaigns_upd BEFORE UPDATE ON campaigns
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
@@ -1806,6 +1812,37 @@ CREATE INDEX IF NOT EXISTS idx_evidence_artifacts_sha  ON evidence_artifacts(sha
 -- 人工复核队列的裁决留痕：队列项按 (kind, ref_key) 去重；已裁决的项不再重复出现。
 -- reject/retest 会改底层状态，但留痕仍保留，便于事后审计。
 -- 任务告警去重标记：SLA 扫描每 6 小时跑一次，同一条超时项在冷却期内只推一次。
+-- 结构化负知识：某资产/端点/风险面的某个打法已确认走不通。跨任务复用，
+-- 让后续任务不再重复试同一指纹；与 tested_clear（整格结论）互补。
+CREATE TABLE IF NOT EXISTS src_negative_knowledge (
+    id         BIGSERIAL PRIMARY KEY,
+    task_id    BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    asset_id   BIGINT NOT NULL DEFAULT 0 REFERENCES assets(id) ON DELETE CASCADE,
+    area       TEXT NOT NULL DEFAULT '',
+    endpoint   TEXT NOT NULL DEFAULT '',
+    technique  TEXT NOT NULL DEFAULT '',
+    reason     TEXT NOT NULL,
+    source     TEXT NOT NULL DEFAULT 'agent',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_src_negative
+    ON src_negative_knowledge(task_id, asset_id, area, endpoint, technique);
+CREATE INDEX IF NOT EXISTS idx_src_negative_asset ON src_negative_knowledge(asset_id, area);
+
+-- 用户自定义平台提交模板：字段顺序/标签/必填与规则页由用户维护。
+-- key 以 custom: 开头，避免覆盖内置模板；渲染逻辑仍在 srcmode（只读数据）。
+CREATE TABLE IF NOT EXISTS src_platform_templates (
+    key        TEXT PRIMARY KEY CHECK (key LIKE 'custom:%'),
+    name       TEXT NOT NULL,
+    header     TEXT NOT NULL DEFAULT '',
+    rule_url   TEXT NOT NULL DEFAULT '',
+    rule_date  TEXT NOT NULL DEFAULT '',
+    fields     JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS src_alert_marks (
     alert_key TEXT PRIMARY KEY,
     sent_at   TIMESTAMPTZ NOT NULL DEFAULT now()

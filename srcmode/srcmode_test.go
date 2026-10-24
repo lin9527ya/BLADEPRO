@@ -468,3 +468,69 @@ func TestAssetTierMultiplier(t *testing.T) {
 		t.Fatal("unknown tier must be rejected")
 	}
 }
+
+// TestWorkerTierForRiskArea pins the per-area model routing table: high-value
+// faces go strong, inventory faces go cheap, explicit mode_doc overrides win,
+// and unknown db risk areas stay unrouted (fall back to the default worker).
+func TestWorkerTierForRiskArea(t *testing.T) {
+	doc := DefaultDoc()
+	cases := map[string]string{
+		"sqli": "strong", "authz": "strong", "cache": "strong", "graphql": "strong",
+		"traversal": "strong", "disclosure": "cheap", "supply": "cheap", "other": "",
+	}
+	for risk, want := range cases {
+		if got := doc.WorkerTierForRiskArea(risk); got != want {
+			t.Fatalf("WorkerTierForRiskArea(%q)=%q want %q", risk, got, want)
+		}
+	}
+	doc.AreaTiers = map[string]string{"injection": "cheap", "paths": "strong"}
+	if got := doc.WorkerTierForRiskArea("sqli"); got != "cheap" {
+		t.Fatalf("explicit area_tiers should win, got %q", got)
+	}
+	if got := doc.WorkerTierForRiskArea("disclosure"); got != "strong" {
+		t.Fatalf("paths override not applied: %q", got)
+	}
+	if _, _, err := Resolve(ModeSrc, []byte(`{"area_tiers":{"nope":"strong"}}`)); err == nil {
+		t.Fatal("unknown area should be rejected")
+	}
+	if _, _, err := Resolve(ModeSrc, []byte(`{"area_tiers":{"authz":"turbo"}}`)); err == nil {
+		t.Fatal("unknown tier should be rejected")
+	}
+}
+
+// TestCustomSubmitTemplateRenders pins user templates: field order/labels,
+// required placeholders, unknown sources skipped, and rule-page reminder.
+func TestCustomSubmitTemplateRenders(t *testing.T) {
+	doc := DefaultDoc()
+	doc.Platform = "Acme SRC"
+	doc.Program = "Acme Q4"
+	doc.EgressIP = "203.0.113.9"
+	tpl := &CustomSubmitTemplate{
+		Key: "custom:acme", Name: "Acme 表单", Header: "请按模板填写",
+		RuleURL: "https://acme.example/rules", RuleDate: "2026-10-24",
+		Fields: []CustomSubmitField{
+			{Label: "标题", Source: "title", Required: true},
+			{Label: "等级", Source: "severity", Required: true},
+			{Label: "说明", Source: "unknown"},
+			{Label: "出口", Source: "egress_ip"},
+		},
+	}
+	out := SubmitInfoForCustom(doc, SubmitContext{Title: "越权", SeverityLabel: "高危"}, tpl)
+	for _, want := range []string{"【提交信息 · Acme 表单】", "请按模板填写", "标题：越权", "等级：高危", "出口：203.0.113.9", "规则页（模板日期 2026-10-24"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("custom block missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "说明") {
+		t.Fatalf("unknown source should be skipped:\n%s", out)
+	}
+	// 必填缺失 -> 占位符，而不是静默空行。
+	out = SubmitInfoForCustom(doc, SubmitContext{}, tpl)
+	if !strings.Contains(out, "标题：（待补）") {
+		t.Fatalf("required placeholder missing:\n%s", out)
+	}
+	// custom: 前缀在 Resolve 中合法（存在性由 server 查库）。
+	if _, _, err := Resolve(ModeSrc, []byte(`{"platform_template":"custom:acme"}`)); err != nil {
+		t.Fatalf("custom template key rejected: %v", err)
+	}
+}

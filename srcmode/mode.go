@@ -94,6 +94,10 @@ type ModeDoc struct {
 	// AreaROI 是按风险面的历史产出率乘子（0.5–1.5，创建任务时按台账快照）。
 	// 用于补格排序：高产出面优先，长期无产出的面降权。缺省 = 1。
 	AreaROI map[string]float64 `json:"area_roi,omitempty"`
+	// AreaTiers 是按风险面的模型分层（cheap/standard/strong）。空 = 用内建默认
+	// （有输出价值的面 strong，清点/枚举类 cheap）。只有在 llm_auto_tier 打开、
+	// 且任务没有显式 worker 绑定时才生效；显式配置始终优先。
+	AreaTiers map[string]string `json:"area_tiers,omitempty"`
 	// PlatformExemptAreas 是 program 显式声明的平台豁免面：只有列在这里的面才允许
 	// na_code=platform_exempt，避免把"平台不测"当成万能 N/A。
 	PlatformExemptAreas []string `json:"platform_exempt_areas,omitempty"`
@@ -176,14 +180,25 @@ func Resolve(mode string, raw json.RawMessage) (json.RawMessage, ModeDoc, error)
 		}
 	}
 	if t := strings.TrimSpace(doc.PlatformTemplate); t != "" {
-		if _, ok := FindPlatformTemplate(t); !ok {
-			return nil, ModeDoc{}, fmt.Errorf("未知平台模板：%s（可选：%s）", t, PlatformTemplateKeys())
+		// custom: 前缀留给用户自定义模板；存在性由 server 在创建任务时查库校验。
+		if _, ok := FindPlatformTemplate(t); !ok && !strings.HasPrefix(strings.ToLower(t), "custom:") {
+			return nil, ModeDoc{}, fmt.Errorf("未知平台模板：%s（可选：%s，或 custom:<key>）", t, PlatformTemplateKeys())
 		}
 		doc.PlatformTemplate = strings.ToLower(t)
 	}
 	for _, area := range doc.PlatformExemptAreas {
 		if !IsArea(strings.TrimSpace(area)) {
 			return nil, ModeDoc{}, fmt.Errorf("未知的 platform_exempt_areas 风险面：%s", area)
+		}
+	}
+	for area, tier := range doc.AreaTiers {
+		if !IsArea(strings.TrimSpace(area)) {
+			return nil, ModeDoc{}, fmt.Errorf("未知 area_tiers 风险面：%s", area)
+		}
+		switch strings.TrimSpace(tier) {
+		case "cheap", "standard", "strong":
+		default:
+			return nil, ModeDoc{}, fmt.Errorf("area_tiers[%s] 只能是 cheap / standard / strong", area)
 		}
 	}
 	for area, mult := range doc.AreaROI {

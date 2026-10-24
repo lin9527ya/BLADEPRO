@@ -36,6 +36,8 @@ export default function CampaignsPage() {
   const [createOpen, setCreateOpen] = React.useState(false);
   const [newName, setNewName] = React.useState("");
   const [newNote, setNewNote] = React.useState("");
+  const [newPriority, setNewPriority] = React.useState("0");
+  const [newBudget, setNewBudget] = React.useState("0");
 
   const refresh = React.useCallback(async () => {
     setLoading(true);
@@ -69,11 +71,16 @@ export default function CampaignsPage() {
     }
     setBusy(true);
     try {
-      await api.createCampaign(newName.trim(), newNote.trim());
+      await api.createCampaign(newName.trim(), newNote.trim(), {
+        priority: Math.max(-1000, Math.min(1000, Number(newPriority) || 0)),
+        tokenBudget: Math.max(0, Number(newBudget) || 0),
+      });
       toast.success("已创建");
       setCreateOpen(false);
       setNewName("");
       setNewNote("");
+      setNewPriority("0");
+      setNewBudget("0");
       await refresh();
     } catch (e) {
       const msg = String((e as Error)?.message ?? e);
@@ -157,7 +164,11 @@ export default function CampaignsPage() {
                       <FolderKanbanIcon className="text-muted-foreground size-4" />
                       <span className="font-medium">{c.name}</span>
                     </div>
-                    <Badge variant="outline">{c.task_count ?? 0} 个任务</Badge>
+                    <div className="flex flex-wrap items-center justify-end gap-1">
+                      {c.priority ? <Badge variant="secondary">优先级 {c.priority}</Badge> : null}
+                      {c.token_budget ? <Badge variant="outline">预算 {c.token_budget}</Badge> : null}
+                      <Badge variant="outline">{c.task_count ?? 0} 个任务</Badge>
+                    </div>
                   </div>
                   {c.note && <p className="text-muted-foreground mt-2 line-clamp-2 text-xs">{c.note}</p>}
                 </CardContent>
@@ -191,6 +202,27 @@ export default function CampaignsPage() {
               onChange={(e) => setNewNote(e.target.value)}
             />
           </Field>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="默认排队优先级" htmlFor="campaign-priority">
+              <Input
+                id="campaign-priority"
+                type="number"
+                min={-1000}
+                max={1000}
+                value={newPriority}
+                onChange={(e) => setNewPriority(e.target.value)}
+              />
+            </Field>
+            <Field label="战役 token 预算（0=不限）" htmlFor="campaign-budget">
+              <Input
+                id="campaign-budget"
+                type="number"
+                min={0}
+                value={newBudget}
+                onChange={(e) => setNewBudget(e.target.value)}
+              />
+            </Field>
+          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={busy}>
               取消
@@ -219,6 +251,12 @@ export default function CampaignsPage() {
                   <Badge variant="outline">据点 {summary.totals.footholds}</Badge>
                   <Badge variant="outline">凭据 {summary.totals.credentials}</Badge>
                   <Badge variant="outline">检测验证 {summary.totals.detections}</Badge>
+                  {summary.campaign.priority ? (
+                    <Badge variant="secondary">优先级 {summary.campaign.priority}</Badge>
+                  ) : null}
+                  {summary.campaign.token_budget ? (
+                    <Badge variant="outline">token 预算 {summary.campaign.token_budget}</Badge>
+                  ) : null}
                 </div>
 
                 {summary.techniques && Object.keys(summary.techniques).length > 0 && (

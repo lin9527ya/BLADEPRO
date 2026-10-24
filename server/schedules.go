@@ -56,15 +56,16 @@ type scheduleSpec struct {
 // scheduleBatchSpec 是计划任务的分片规格；资产范围仍由 company_ids / program /
 // asset_ids 决定，at trigger 时现解析（这样"只跑新增/未测"每次都是新的）。
 type scheduleBatchSpec struct {
-	AssetIDs           []int64  `json:"asset_ids,omitempty"`
-	AssetTypes         []string `json:"asset_types,omitempty"`
-	ShardBy            string   `json:"shard_by,omitempty"`
-	AssetsPerTask      int      `json:"assets_per_task,omitempty"`
-	MaxShards          int      `json:"max_shards,omitempty"`
-	MaxAssets          int      `json:"max_assets,omitempty"`
-	CampaignName       string   `json:"campaign_name,omitempty"`
-	OnlyNewAssets      bool     `json:"only_new_assets,omitempty"`
-	OnlyUntestedAssets bool     `json:"only_untested_assets,omitempty"`
+	AssetIDs            []int64  `json:"asset_ids,omitempty"`
+	AssetTypes          []string `json:"asset_types,omitempty"`
+	ShardBy             string   `json:"shard_by,omitempty"`
+	AssetsPerTask       int      `json:"assets_per_task,omitempty"`
+	MaxShards           int      `json:"max_shards,omitempty"`
+	MaxAssets           int      `json:"max_assets,omitempty"`
+	CampaignName        string   `json:"campaign_name,omitempty"`
+	CampaignTokenBudget int64    `json:"campaign_token_budget,omitempty"`
+	OnlyNewAssets       bool     `json:"only_new_assets,omitempty"`
+	OnlyUntestedAssets  bool     `json:"only_untested_assets,omitempty"`
 }
 
 // taskScheduleDTO 是给 UI 的计划任务视图：多给一个 frequency_text（人话），
@@ -198,7 +199,8 @@ func (s *Server) createTasksFromBatchSpec(spec scheduleSpec) (*Task, error) {
 		NamePrefix:    strings.TrimSpace(spec.Name),
 		AssetIDs:      b.AssetIDs, AssetTypes: b.AssetTypes, ShardBy: b.ShardBy,
 		AssetsPerTask: b.AssetsPerTask, MaxShards: b.MaxShards, MaxAssets: b.MaxAssets,
-		CampaignName: b.CampaignName, OnlyNewAssets: b.OnlyNewAssets, OnlyUntestedAssets: b.OnlyUntestedAssets,
+		CampaignName: b.CampaignName, CampaignTokenBudget: b.CampaignTokenBudget,
+		OnlyNewAssets: b.OnlyNewAssets, OnlyUntestedAssets: b.OnlyUntestedAssets,
 	}
 	// 计划任务没有 HTTP 请求体，先跑一遍与 HTTP 相同的归一化。
 	if perr := normalizeBatchReq(&req); perr != nil {

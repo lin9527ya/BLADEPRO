@@ -8,12 +8,16 @@ import (
 
 func TestAutoTierForAgentMapping(t *testing.T) {
 	cases := map[string]string{
-		"planner":   db.ProfileTierCheap,
-		"goals":     db.ProfileTierCheap,
-		"worker":    db.ProfileTierStrong,
-		"mainagent": "",
-		"retester":  "",
-		"":          "",
+		"planner":         db.ProfileTierCheap,
+		"goals":           db.ProfileTierCheap,
+		"worker":          db.ProfileTierStrong,
+		"worker-cheap":    db.ProfileTierCheap,
+		"worker-standard": db.ProfileTierStandard,
+		"worker-strong":   db.ProfileTierStrong,
+		"compress":        db.ProfileTierCheap,
+		"mainagent":       "",
+		"retester":        "",
+		"":                "",
 	}
 	for key, want := range cases {
 		if got := autoTierForAgent(key); got != want {

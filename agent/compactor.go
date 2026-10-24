@@ -478,6 +478,13 @@ var _ iter.Seq2[llm.StreamEvent, error]
 // InstallContextManager 在 opts 上装 P14 领域上下文管理器。调用点必须在 enableNoa 之后：
 // noa 与它抢同一个 Options.Compactor 槽位，noa 已占用时本函数不动它（互斥而非静默覆盖）。
 func InstallContextManager(opts *agentcore.Options, windowTokens int, dumpDir string, index func() string) {
+	InstallContextManagerWithSummarizer(opts, windowTokens, dumpDir, index, nil)
+}
+
+// InstallContextManagerWithSummarizer is InstallContextManager with an independent
+// summary provider. A nil summary provider falls back to the execution provider —
+// so callers that don't care keep the old behavior byte for byte.
+func InstallContextManagerWithSummarizer(opts *agentcore.Options, windowTokens int, dumpDir string, index func() string, summary llm.Provider) {
 	if opts == nil {
 		return
 	}
@@ -488,7 +495,10 @@ func InstallContextManager(opts *agentcore.Options, windowTokens int, dumpDir st
 	if cfg == nil {
 		cfg = &compaction.Config{}
 	}
-	opts.Compactor = NewDomainCompactor(*cfg, opts.Provider, opts.MaxTokens, opts.NonStreaming, dumpDir, index)
+	if summary == nil {
+		summary = opts.Provider
+	}
+	opts.Compactor = NewDomainCompactor(*cfg, summary, opts.MaxTokens, opts.NonStreaming, dumpDir, index)
 	// Compactor 与 Compaction 互斥（SDK 会告警并忽略后者），显式清掉。
 	opts.Compaction = nil
 }

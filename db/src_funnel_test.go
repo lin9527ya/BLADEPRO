@@ -21,7 +21,7 @@ func TestSrcFunnelAggregates(t *testing.T) {
 	}
 	t.Cleanup(func() { _, _ = d.Exec(`DELETE FROM tasks WHERE id=$1`, task.ID) })
 
-	campaign, err := d.CreateCampaign(fmt.Sprintf("funnel-campaign-%d", time.Now().UnixNano()), "漏斗战役", nil)
+	campaign, err := d.CreateCampaign(fmt.Sprintf("funnel-campaign-%d", time.Now().UnixNano()), "漏斗战役", nil, 0, 0)
 	if err != nil {
 		t.Fatalf("campaign: %v", err)
 	}

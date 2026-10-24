@@ -176,6 +176,7 @@ func (e *Engine) deadlineCoordinator(ctx context.Context, t *Task) {
 	var lastLeaseSweep time.Time       // 零值 → 首轮立即扫一次，之后按 leaseSweepInterval 节流
 	var lastStallCheck time.Time       // 同上（P20 策略停摆判定）
 	var lastAssetBudgetCheck time.Time // 资产级 token 预算扫描节流
+	var lastCampaignCheck time.Time    // 战役级 token 预算扫描节流
 	for {
 		select {
 		case <-ctx.Done():
@@ -214,6 +215,13 @@ func (e *Engine) deadlineCoordinator(ctx context.Context, t *Task) {
 			lastAssetBudgetCheck = time.Now()
 			e.checkAssetTokenBudgets(ctx, t)
 			e.checkAssetTimeBudgets(ctx, t)
+		}
+		// 战役级 token 预算：跨分片累计，达到后本任务进入收尾时序。
+		if time.Since(lastCampaignCheck) >= 30*time.Second && !e.isSettling(t.ID) {
+			lastCampaignCheck = time.Now()
+			if e.checkCampaignBudget(ctx, t) {
+				return
+			}
 		}
 		// P20 探索策略停摆：策略内已无可行方向（窗口内被拒达阈值、期间没有任何成功
 		// 创建的意图、也没有在跑的活）——再唤醒 planner 只会继续烧 token，主动收尾。

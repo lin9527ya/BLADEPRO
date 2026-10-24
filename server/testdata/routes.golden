@@ -14,6 +14,7 @@ DELETE /api/mcp/{id}	server.(*Server).pgDeleteMCP-fm
 DELETE /api/notify/channels/{id}	server.(*Server).notifyDeleteChannel-fm
 DELETE /api/skills/{name}	server.(*Server).fsDeleteSkill-fm
 DELETE /api/skills/{name}/files/{file...}	server.(*Server).fsDeletePath-fm
+DELETE /api/src/platform-templates/{key}	server.(*Server).deleteSrcSubmitTemplate-fm
 DELETE /api/src/programs/{id}	server.(*Server).deleteSrcProgram-fm
 DELETE /api/task-archives/{id}	server.(*Server).queueTaskArchiveDelete-fm
 DELETE /api/task-categories/{id}	server.(*Server).pgDeleteTaskCategory-fm
@@ -125,7 +126,9 @@ GET /api/skills/missing	server.(*Server).fsMissingSkills-fm
 GET /api/skills/{name}/files	server.(*Server).fsListFiles-fm
 GET /api/skills/{name}/files/{file...}	server.(*Server).fsReadFile-fm
 GET /api/skills/{name}/usage	server.(*Server).fsSkillUsage-fm
+GET /api/src/duplicate-groups	server.(*Server).listSrcDuplicateGroups-fm
 GET /api/src/funnel	server.(*Server).getSrcFunnel-fm
+GET /api/src/platform-templates	server.(*Server).listSrcSubmitTemplates-fm
 GET /api/src/programs	server.(*Server).listSrcPrograms-fm
 GET /api/src/programs/{id}	server.(*Server).getSrcProgram-fm
 GET /api/src/programs/{id}/scope	server.(*Server).getSrcProgramScope-fm
@@ -268,6 +271,7 @@ POST /api/side-questions/{requestID}/cancel	server.(*Server).cancelSideRequest-f
 POST /api/skills	server.(*Server).fsCreateSkill-fm
 POST /api/skills/upload	server.(*Server).fsUploadSkill-fm
 POST /api/skills/{name}/dirs	server.(*Server).fsCreateDir-fm
+POST /api/src/platform-templates	server.(*Server).saveSrcSubmitTemplate-fm
 POST /api/src/programs	server.(*Server).createSrcProgram-fm
 POST /api/storage/clean	server.(*Server).cleanStorage-fm
 POST /api/sync/scopesentry/datasource	server.(*Server).syncSSDatasource-fm

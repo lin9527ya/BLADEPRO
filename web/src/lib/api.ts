@@ -110,7 +110,10 @@ import type {
   SrcPrepareResult,
   ProgramScopeInput,
   ProgramScopeRow,
+  SrcDuplicateGroup,
   SrcFunnel,
+  SrcSubmitField,
+  SrcSubmitTemplate,
   SrcProgram,
   SrcProgramInput,
   SrcStats,
@@ -319,6 +322,8 @@ export interface CreateTaskBatchInput extends CreateTaskInput {
   maxShards?: number;
   maxAssets?: number;
   campaignName?: string;
+  /** 战役级 token 上限（0=不限，跨分片累计）。 */
+  campaignTokenBudget?: number;
   dryRun?: boolean;
   onlyNewAssets?: boolean;
   onlyUntestedAssets?: boolean;
@@ -380,6 +385,7 @@ export const api = {
       max_shards: input.maxShards ?? 100,
       max_assets: input.maxAssets ?? 5000,
       campaign_name: input.campaignName,
+      campaign_token_budget: input.campaignTokenBudget ?? 0,
       dry_run: input.dryRun ?? false,
       only_new_assets: input.onlyNewAssets ?? false,
       only_untested_assets: input.onlyUntestedAssets ?? false,
@@ -591,6 +597,28 @@ export const api = {
   // ---- SRC 平台项目（P3）----
   // 项目 = 一个平台的规则集（禁用手段/写操作、限速、时间窗、等级映射、必做面）。
   srcPrograms: () => get<{ programs: SrcProgram[]; total: number }>("/src/programs"),
+  // 平台提交模板：内置 + 用户自定义（custom: 前缀）。
+  srcSubmitTemplates: () =>
+    get<{ templates: SrcSubmitTemplate[] }>("/src/platform-templates").then((r) => r?.templates ?? []),
+  saveSrcSubmitTemplate: (input: {
+    key: string;
+    name: string;
+    header?: string;
+    rule_url?: string;
+    rule_date?: string;
+    fields: SrcSubmitField[];
+  }) => post<SrcSubmitTemplate>("/src/platform-templates", input),
+  deleteSrcSubmitTemplate: (key: string) =>
+    del<{ deleted: string }>(`/src/platform-templates/${encodeURIComponent(key)}`),
+  // 重复组：同指纹的发现聚成一组；只读，不自动合并。
+  srcDuplicateGroups: (params?: { taskId?: string | number; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.taskId) qs.set("task_id", String(params.taskId));
+    if (params?.limit) qs.set("limit", String(params.limit));
+    return get<{ groups: SrcDuplicateGroup[]; total: number }>(
+      `/src/duplicate-groups${qs.toString() ? `?${qs}` : ""}`,
+    );
+  },
   srcFunnel: (params?: { days?: number; programId?: number }) => {
     const qs = new URLSearchParams();
     if (params?.days) qs.set("days", String(params.days));
@@ -973,8 +1001,12 @@ export const api = {
   // ---- campaigns（战役：任务之上的一层；归属 + 聚合）----
   campaigns: () => get<{ campaigns: Campaign[] }>("/campaigns").then((r) => r?.campaigns ?? []),
   campaign: (id: number) => get<CampaignSummary>(`/campaigns/${id}`),
-  createCampaign: (name: string, note = "") => post<Campaign>("/campaigns", { name, note }),
-  updateCampaign: (id: number, body: { name?: string; note?: string; company_id?: number }) =>
+  createCampaign: (name: string, note = "", opts?: { priority?: number; tokenBudget?: number }) =>
+    post<Campaign>("/campaigns", { name, note, priority: opts?.priority ?? 0, token_budget: opts?.tokenBudget ?? 0 }),
+  updateCampaign: (
+    id: number,
+    body: { name?: string; note?: string; company_id?: number; priority?: number; token_budget?: number },
+  ) =>
     patch<Campaign>(`/campaigns/${id}`, body),
   deleteCampaign: (id: number) => del<{ deleted: boolean; tasks_unbound: number }>(`/campaigns/${id}`),
   // 声明式：给出这次作业应当包含的全部任务，多退少补。

@@ -75,12 +75,17 @@ type Worker struct {
 	model            string
 	workDir          string
 	proxyAddr        string
-	proxyCACert      string            // recording proxy's CA cert path (for WebFetch HTTPS verify)
-	webSearch        WebSearchOpts     // web_search tool backend selection (off by default)
-	tx               *transcript.Store // raw LLM conversation persistence (nil = off)
-	window           int               // context window in tokens (for compaction)
-	windowFn         func() int        // optional dynamic task-chain minimum
-	maxTurns         int               // max agent turns per run (0 = unlimited)
+	proxyCACert      string // recording proxy's CA cert path (for WebFetch HTTPS verify)
+	// 模型分层（可选）：tierProviders 按 cheap/standard/strong 提供 provider，
+	// 由意图 payload 的 worker_tier 选择；summaryProvider 专门用于上下文压缩，
+	// 与执行模型解耦（压缩是低价值重复劳动，用便宜档即可）。
+	tierProviders   map[string]llm.Provider
+	summaryProvider llm.Provider
+	webSearch       WebSearchOpts     // web_search tool backend selection (off by default)
+	tx              *transcript.Store // raw LLM conversation persistence (nil = off)
+	window          int               // context window in tokens (for compaction)
+	windowFn        func() int        // optional dynamic task-chain minimum
+	maxTurns        int               // max agent turns per run (0 = unlimited)
 	// runTimeout is the wall-clock budget for the main exploration of one intent
 	// (0 = unlimited). When it fires, the run is cut and a settlement round is
 	// forced so already-identified facts get written back instead of being lost.
@@ -222,6 +227,25 @@ func (w *Worker) compactionWindow() int {
 // traffic through, plus the CA cert path WebFetch trusts to verify HTTPS through
 // that MITM proxy. Empty addr disables the hint.
 func (w *Worker) SetProxy(addr, caCert string) { w.proxyAddr, w.proxyCACert = addr, caCert }
+
+// SetModelTiers installs per-risk-area providers and an independent compaction
+// provider. nil/empty keeps the worker on its default provider.
+func (w *Worker) SetModelTiers(providers map[string]llm.Provider, summary llm.Provider) {
+	w.tierProviders = providers
+	w.summaryProvider = summary
+}
+
+// intentWorkerTier reads the tier chosen when the planner created the intent.
+func intentWorkerTier(intent *db.Node) string {
+	if intent == nil || len(intent.Payload) == 0 {
+		return ""
+	}
+	var p struct {
+		Tier string `json:"worker_tier"`
+	}
+	_ = json.Unmarshal(intent.Payload, &p)
+	return strings.TrimSpace(p.Tier)
+}
 
 // SetWebSearch selects the web_search backend for this worker (off by default).
 func (w *Worker) SetWebSearch(o WebSearchOpts) { w.webSearch = o }
@@ -578,8 +602,14 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	if tc.DeadlineUnix > 0 {
 		settle = wrapupSettlementForTask("worker", []string{"Bash", "run_execution"}, clamped)
 	}
+	provider := w.prov
+	if tier := intentWorkerTier(intent); tier != "" && w.tierProviders != nil {
+		if p, ok := w.tierProviders[tier]; ok && p != nil {
+			provider = p
+		}
+	}
 	opts := agentcore.Options{
-		Provider:        w.prov,
+		Provider:        provider,
 		SystemPrompt:    system,
 		DynamicBoundary: boundary,
 		Tools:           tools,
@@ -647,9 +677,9 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	enableNoa(&opts, w.noaEnabledFn, w.workDir, noaSession, noaWarn(noaSession))
 	// P14 领域上下文：领域化摘要（7 段 + 原文落盘回读）+ 每请求附常驻索引（目标/约束/
 	// 活跃方向/发现一行式）。noa 开启时它已占 Compactor 槽位，这里自动让位（互斥）。
-	InstallContextManager(&opts, w.compactionWindow(), runDir, func() string {
+	InstallContextManagerWithSummarizer(&opts, w.compactionWindow(), runDir, func() string {
 		return BuildContextIndex(ContextIndexVars{Store: ts, Intent: intent, CompanyLines: tsx.companyKnowledgeLines()})
-	})
+	}, w.summaryProvider)
 	ctx = attachSideCapture(ctx, &opts)
 	s := agentcore.NewSession(opts)
 	defer s.Close() // release the session's background-task manager (temp dir + processes)

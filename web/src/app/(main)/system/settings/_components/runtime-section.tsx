@@ -7,6 +7,7 @@ import { CpuIcon, GaugeIcon } from "lucide-react";
 import { Field, Section, SubBlock } from "@/components/page-sections";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 
 import type { useSettingsState } from "./use-settings-state";
 
@@ -47,6 +48,10 @@ export function RuntimeSection({ s }: { s: ReturnType<typeof useSettingsState> }
     setAssetTimeBudget,
     savingAssetTimeBudget,
     saveAssetTimeBudget,
+    areaTiers,
+    setAreaTiers,
+    savingAreaTiers,
+    saveAreaTiers,
     egressGlobalQPS,
     setEgressGlobalQPS,
     egressHostQPS,
@@ -154,6 +159,39 @@ export function RuntimeSection({ s }: { s: ReturnType<typeof useSettingsState> }
                 onChange={(e) => setAssetTimeBudget(e.target.value)}
               />
               <Button type="button" onClick={saveAssetTimeBudget} disabled={!loaded || savingAssetTimeBudget}>
+                保存
+              </Button>
+            </div>
+          </Field>
+        </SubBlock>
+
+        <SubBlock title="风险面模型分层（SRC）" icon={<GaugeIcon className="text-muted-foreground size-4" />}>
+          <Field
+            label="风险面 → cheap / standard / strong"
+            htmlFor="area-tiers"
+            hint={
+              <>
+                仅在开启「模型自动分层」且任务/角色没有显式模型绑定时生效。高价值面用 strong，
+                清点/枚举面用 cheap；未列出的面用内建默认。JSON 对象，例如{" "}
+                <code>{'{"authz":"strong","paths":"cheap"}'}</code>。
+              </>
+            }
+          >
+            <div className="grid gap-2">
+              <Textarea
+                id="area-tiers"
+                className="max-w-xl font-mono text-xs"
+                rows={3}
+                value={areaTiers}
+                disabled={!loaded || savingAreaTiers}
+                onChange={(e) => setAreaTiers(e.target.value)}
+              />
+              <Button
+                type="button"
+                className="w-fit"
+                onClick={saveAreaTiers}
+                disabled={!loaded || savingAreaTiers}
+              >
                 保存
               </Button>
             </div>

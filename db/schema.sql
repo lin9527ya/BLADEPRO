@@ -686,6 +686,8 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS coverage_enabled BOOLEAN NOT NULL DEF
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS queued_at TIMESTAMPTZ;
 -- 任务级 token 预算覆盖（0 = 用全局 setting `task_token_budget`）。批量扇出时每片可单独设预算。
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS token_budget BIGINT NOT NULL DEFAULT 0;
+-- 队列优先级：越大越先被调度。0 = 普通；只在排队任务之间生效，不抢占运行中任务。
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS priority INT NOT NULL DEFAULT 0;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS queue_mode TEXT NOT NULL DEFAULT '';
 -- 可选的任务名称;补旧库。空串=未命名,前端展示时回退到描述。
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT '';

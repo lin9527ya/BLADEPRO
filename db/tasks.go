@@ -43,9 +43,11 @@ type Task struct {
 	// 任务级超时(见 docs/任务级超时与收尾设计.md)。
 	TimeoutSeconds int `json:"timeout_seconds"` // 0=不限时
 	// TokenBudget 是本任务的 token 预算覆盖（0 = 用全局 setting task_token_budget）。
-	TokenBudget int64      `json:"token_budget,omitempty"`
-	FirstRunAt  *time.Time `json:"first_run_at,omitempty"` // 首次真正开始运行的时刻(非 created_at);nil=尚未运行
-	DeadlineAt  *time.Time `json:"deadline_at,omitempty"`  // = first_run_at + timeout_seconds;nil=不限或未运行
+	TokenBudget int64 `json:"token_budget,omitempty"`
+	// Priority 是排队优先级（越大越先）；只在 queued 任务之间排序，不抢占运行中任务。
+	Priority   int        `json:"priority,omitempty"`
+	FirstRunAt *time.Time `json:"first_run_at,omitempty"` // 首次真正开始运行的时刻(非 created_at);nil=尚未运行
+	DeadlineAt *time.Time `json:"deadline_at,omitempty"`  // = first_run_at + timeout_seconds;nil=不限或未运行
 	// planner 心跳触发间隔(秒)：距上轮 plan 结束/任务开始满该值且期间无触发 → 触发一轮。
 	// 下限=默认=300(5min)，低于一律抬到 300(在 CreateTask 归一)。见 docs/planner-trigger-impl-plan.md
 	PlanHeartbeatSeconds int `json:"plan_heartbeat_seconds"`
@@ -182,6 +184,7 @@ type TaskCreateOptions struct {
 	LLMProfileIDs        []int64
 	TimeoutSeconds       int
 	TokenBudget          int64 // 0 = 继承全局 task_token_budget
+	Priority             int   // 越大越先；只在排队任务之间生效
 	PlanHeartbeatSeconds int
 	// CoverageEnabled 是「资产覆盖度功能」开关;nil=默认开(true)，让不关心该开关的创建
 	// 路径(编排 spawn、老 API)沿用原行为。仅 web 创建任务时可显式传 false 关闭。
@@ -282,7 +285,7 @@ VALUES ($1, 'fact', $2, 0, 'origin', 'system')`, expID, string(originPayload)); 
 		LLMProfileIDs:  append([]int64(nil), opts.LLMProfileIDs...),
 		SourceTaskIDs:  append([]int64(nil), opts.SourceTaskIDs...),
 		CompanyIDs:     append([]int64(nil), opts.CompanyIDs...),
-		TimeoutSeconds: opts.TimeoutSeconds, TokenBudget: opts.TokenBudget, PlanHeartbeatSeconds: opts.PlanHeartbeatSeconds,
+		TimeoutSeconds: opts.TimeoutSeconds, TokenBudget: opts.TokenBudget, Priority: opts.Priority, PlanHeartbeatSeconds: opts.PlanHeartbeatSeconds,
 		CoverageEnabled: coverageEnabled,
 	}
 	// P20：创建时就把「全局默认 + 创建页覆盖」解析成 effective 快照落库，此后执行点
@@ -298,9 +301,9 @@ VALUES ($1, 'fact', $2, 0, 'origin', 'system')`, expID, string(originPayload)); 
 	t.Mode = opts.Mode
 	t.ModeDoc = append(json.RawMessage(nil), opts.ModeDoc...)
 	if err := tx.QueryRow(`
-INSERT INTO tasks(name, category_id, description, goal, exploration_id, llm_profile_id, active_llm_profile_id, timeout_seconds, token_budget, plan_heartbeat_seconds, coverage_enabled, exploration_policy, mode, mode_doc, src_program_id)
-VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10,$11,$12,COALESCE($13,'{}'::jsonb),$14)
-RETURNING id, status, paused, created_at`, opts.Name, opts.CategoryID, description, goal, expID, active, opts.TimeoutSeconds, opts.TokenBudget, opts.PlanHeartbeatSeconds, coverageEnabled, policyRaw, opts.Mode, modeDocRaw, opts.SrcProgramID).Scan(&t.ID, &t.Status, &t.Paused, &t.CreatedAt); err != nil {
+INSERT INTO tasks(name, category_id, description, goal, exploration_id, llm_profile_id, active_llm_profile_id, timeout_seconds, token_budget, priority, plan_heartbeat_seconds, coverage_enabled, exploration_policy, mode, mode_doc, src_program_id)
+VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10,$11,$12,$13,COALESCE($14,'{}'::jsonb),$15)
+RETURNING id, status, paused, created_at`, opts.Name, opts.CategoryID, description, goal, expID, active, opts.TimeoutSeconds, opts.TokenBudget, opts.Priority, opts.PlanHeartbeatSeconds, coverageEnabled, policyRaw, opts.Mode, modeDocRaw, opts.SrcProgramID).Scan(&t.ID, &t.Status, &t.Paused, &t.CreatedAt); err != nil {
 		return nil, err
 	}
 	t.ExplorationPolicy = append(json.RawMessage(nil), opts.ExplorationPolicy...)
@@ -488,11 +491,11 @@ func insertTaskLLMProfiles(tx *sql.Tx, taskID int64, profileIDs []int64) error {
 
 const taskCols = `id, COALESCE(name,''), category_id,
 COALESCE((SELECT category.name FROM task_categories category WHERE category.id=tasks.category_id),''),
-description, goal, exploration_id, status, paused, queued, queued_at, COALESCE(queue_mode,''), llm_profile_id, active_llm_profile_id, COALESCE(parent_ref,''), pinned_at, created_at, completed_at, COALESCE(timeout_seconds,0), COALESCE(token_budget,0), COALESCE(plan_heartbeat_seconds,300), COALESCE(coverage_enabled,true), first_run_at, deadline_at, COALESCE(exploration_policy,'{}'::jsonb), COALESCE(mode,''), COALESCE(mode_doc,'{}'::jsonb), src_program_id, COALESCE(src_cells_total,0), COALESCE(src_cells_done,0), COALESCE(src_checks_total,0), COALESCE(src_checks_done,0), COALESCE(src_gaps_total,0)`
+description, goal, exploration_id, status, paused, queued, queued_at, COALESCE(queue_mode,''), llm_profile_id, active_llm_profile_id, COALESCE(parent_ref,''), pinned_at, created_at, completed_at, COALESCE(timeout_seconds,0), COALESCE(token_budget,0), COALESCE(priority,0), COALESCE(plan_heartbeat_seconds,300), COALESCE(coverage_enabled,true), first_run_at, deadline_at, COALESCE(exploration_policy,'{}'::jsonb), COALESCE(mode,''), COALESCE(mode_doc,'{}'::jsonb), src_program_id, COALESCE(src_cells_total,0), COALESCE(src_cells_done,0), COALESCE(src_checks_total,0), COALESCE(src_checks_done,0), COALESCE(src_gaps_total,0)`
 
 func scanTask(sc interface{ Scan(...any) error }) (*Task, error) {
 	var t Task
-	if err := sc.Scan(&t.ID, &t.Name, &t.CategoryID, &t.CategoryName, &t.Description, &t.Goal, &t.ExplorationID, &t.Status, &t.Paused, &t.Queued, &t.QueuedAt, &t.QueueMode, &t.LLMProfileID, &t.ActiveLLMProfileID, &t.ParentRef, &t.PinnedAt, &t.CreatedAt, &t.CompletedAt, &t.TimeoutSeconds, &t.TokenBudget, &t.PlanHeartbeatSeconds, &t.CoverageEnabled, &t.FirstRunAt, &t.DeadlineAt, &t.ExplorationPolicy, &t.Mode, &t.ModeDoc, &t.SrcProgramID, &t.SrcCellsTotal, &t.SrcCellsDone, &t.SrcChecksTotal, &t.SrcChecksDone, &t.SrcGapsTotal); err != nil {
+	if err := sc.Scan(&t.ID, &t.Name, &t.CategoryID, &t.CategoryName, &t.Description, &t.Goal, &t.ExplorationID, &t.Status, &t.Paused, &t.Queued, &t.QueuedAt, &t.QueueMode, &t.LLMProfileID, &t.ActiveLLMProfileID, &t.ParentRef, &t.PinnedAt, &t.CreatedAt, &t.CompletedAt, &t.TimeoutSeconds, &t.TokenBudget, &t.Priority, &t.PlanHeartbeatSeconds, &t.CoverageEnabled, &t.FirstRunAt, &t.DeadlineAt, &t.ExplorationPolicy, &t.Mode, &t.ModeDoc, &t.SrcProgramID, &t.SrcCellsTotal, &t.SrcCellsDone, &t.SrcChecksTotal, &t.SrcChecksDone, &t.SrcGapsTotal); err != nil {
 		return nil, err
 	}
 	t.Pinned = t.PinnedAt != nil
@@ -545,8 +548,9 @@ ORDER BY (pinned_at IS NOT NULL) DESC, pinned_at DESC NULLS LAST, id DESC`)
 
 // TaskPatch updates task list metadata without changing execution state.
 type TaskPatch struct {
-	Name   *string
-	Pinned *bool
+	Name     *string
+	Pinned   *bool
+	Priority *int
 }
 
 // UpdateTask applies a partial task name/pin mutation and returns the updated row.
@@ -558,9 +562,10 @@ func (d *DB) UpdateTask(id int64, patch TaskPatch) (*Task, error) {
 		WHEN $4::boolean IS NULL THEN pinned_at
 		WHEN $4::boolean THEN COALESCE(pinned_at, now())
 		ELSE NULL
-	END
+	END,
+	priority = CASE WHEN $5::boolean THEN $6 ELSE priority END
 WHERE id=$1 AND deleted_at IS NULL
-RETURNING `+taskCols, id, patch.Name != nil, patch.Name, patch.Pinned))
+RETURNING `+taskCols, id, patch.Name != nil, patch.Name, patch.Pinned, patch.Priority != nil, patch.Priority))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

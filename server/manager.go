@@ -59,6 +59,7 @@ type Task struct {
 	// 任务级超时(见 docs/任务级超时与收尾设计.md)。DeadlineAt/FirstRunAt 为 unix 秒,0=未设/未运行。
 	TimeoutSeconds       int   `json:"timeout_seconds"`
 	TokenBudget          int64 `json:"token_budget,omitempty"` // 0 = 用全局 task_token_budget
+	Priority             int   `json:"priority,omitempty"`     // 排队优先级：越大越先（只排队间生效）
 	PlanHeartbeatSeconds int   `json:"plan_heartbeat_seconds"` // planner 心跳触发间隔(秒)
 	CoverageEnabled      bool  `json:"coverage_enabled"`       // 资产覆盖度功能开关(创建时定,默认开)
 	// ExplorationPolicy 是任务级探索策略文档（P20，JSONB 快照）。nil/空 = 无策略。
@@ -1128,7 +1129,7 @@ func taskFromPG(pt *pgdb.Task, store *pgdb.ExplorationStore, ic *intercept.Inter
 		LLMFailoverState: pt.LLMFailoverState, LLMFailoverReason: pt.LLMFailoverReason,
 		SourceTaskIDs:  append([]int64(nil), pt.SourceTaskIDs...),
 		CompanyIDs:     append([]int64(nil), pt.CompanyIDs...),
-		TimeoutSeconds: pt.TimeoutSeconds, TokenBudget: pt.TokenBudget, PlanHeartbeatSeconds: pt.PlanHeartbeatSeconds,
+		TimeoutSeconds: pt.TimeoutSeconds, TokenBudget: pt.TokenBudget, Priority: pt.Priority, PlanHeartbeatSeconds: pt.PlanHeartbeatSeconds,
 		CoverageEnabled:   pt.CoverageEnabled,
 		ExplorationPolicy: append(json.RawMessage(nil), pt.ExplorationPolicy...),
 		Mode:              pt.Mode,

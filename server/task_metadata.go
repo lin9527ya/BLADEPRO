@@ -25,8 +25,9 @@ func (s *Server) updateTaskMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxTaskMetadataRequestSize)
 	var request struct {
-		Name   *string `json:"name"`
-		Pinned *bool   `json:"pinned"`
+		Name     *string `json:"name"`
+		Pinned   *bool   `json:"pinned"`
+		Priority *int    `json:"priority"`
 	}
 	if err := decode(r, &request); err != nil {
 		var tooLarge *http.MaxBytesError
@@ -37,9 +38,15 @@ func (s *Server) updateTaskMetadata(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if request.Name == nil && request.Pinned == nil {
-		writeErr(w, http.StatusBadRequest, "至少需要提供 name 或 pinned")
+	if request.Name == nil && request.Pinned == nil && request.Priority == nil {
+		writeErr(w, http.StatusBadRequest, "至少需要提供 name、pinned 或 priority")
 		return
+	}
+	if request.Priority != nil {
+		if *request.Priority < -1000 || *request.Priority > 1000 {
+			writeErr(w, http.StatusBadRequest, "队列优先级必须在 -1000–1000 之间")
+			return
+		}
 	}
 	if request.Name != nil {
 		name := strings.TrimSpace(*request.Name)
@@ -53,7 +60,7 @@ func (s *Server) updateTaskMetadata(w http.ResponseWriter, r *http.Request) {
 		}
 		request.Name = &name
 	}
-	task, err := s.m.UpdateTaskMetadata(taskID, db.TaskPatch{Name: request.Name, Pinned: request.Pinned})
+	task, err := s.m.UpdateTaskMetadata(taskID, db.TaskPatch{Name: request.Name, Pinned: request.Pinned, Priority: request.Priority})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

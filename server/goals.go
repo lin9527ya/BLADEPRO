@@ -262,6 +262,44 @@ func (s *Server) startAdmittedTask(t *Task, mode string) {
 	s.engine.startDeadlineCoordinator(s.ctx, t)
 }
 
+// queuedTaskEntry is one queued task plus its lifecycle snapshot, captured while
+// the admission loop holds no locks.
+type queuedTaskEntry struct {
+	task      *Task
+	lifecycle taskLifecycleState
+}
+
+// sortQueuedTasks orders the admission queue: explicit priority first (larger
+// wins), then FIFO by queued_at, then task id. Priority never preempts a running
+// task — it only decides who gets the next free slot.
+func sortQueuedTasks(queued []queuedTaskEntry) {
+	sort.SliceStable(queued, func(i, j int) bool {
+		lp, rp := queued[i].task.Priority, queued[j].task.Priority
+		if lp != rp {
+			return lp > rp
+		}
+		left, right := queued[i].lifecycle.QueuedAt, queued[j].lifecycle.QueuedAt
+		if left == 0 {
+			left = queued[i].task.CreatedAt * int64(1e9)
+		}
+		if right == 0 {
+			right = queued[j].task.CreatedAt * int64(1e9)
+		}
+		if left != right {
+			return left < right
+		}
+		// Old rows may not have queued_at and task creation timestamps are only
+		// kept to second precision in memory. Task ids are monotonic, providing a
+		// deterministic oldest-first fallback for those ties.
+		leftID, leftErr := strconv.ParseInt(queued[i].task.ID, 10, 64)
+		rightID, rightErr := strconv.ParseInt(queued[j].task.ID, 10, 64)
+		if leftErr == nil && rightErr == nil {
+			return leftID < rightID
+		}
+		return queued[i].task.ID < queued[j].task.ID
+	})
+}
+
 func (s *Server) reconcileConcurrency() {
 	s.concMu.Lock()
 	defer s.concMu.Unlock()
@@ -295,38 +333,14 @@ func (s *Server) reconcileConcurrency() {
 		}
 	}
 
-	type queuedTask struct {
-		task      *Task
-		lifecycle taskLifecycleState
-	}
-	queued := []queuedTask{}
+	queued := []queuedTaskEntry{}
 	for _, task := range s.m.List() {
 		lifecycle := task.lifecycleSnapshot()
 		if lifecycle.Queued && !isTerminalStatus(lifecycle.Status) {
-			queued = append(queued, queuedTask{task: task, lifecycle: lifecycle})
+			queued = append(queued, queuedTaskEntry{task: task, lifecycle: lifecycle})
 		}
 	}
-	sort.SliceStable(queued, func(i, j int) bool {
-		left, right := queued[i].lifecycle.QueuedAt, queued[j].lifecycle.QueuedAt
-		if left == 0 {
-			left = queued[i].task.CreatedAt * int64(1e9)
-		}
-		if right == 0 {
-			right = queued[j].task.CreatedAt * int64(1e9)
-		}
-		if left != right {
-			return left < right
-		}
-		// Old rows may not have queued_at and task creation timestamps are only
-		// kept to second precision in memory. Task ids are monotonic, providing a
-		// deterministic oldest-first fallback for those ties.
-		leftID, leftErr := strconv.ParseInt(queued[i].task.ID, 10, 64)
-		rightID, rightErr := strconv.ParseInt(queued[j].task.ID, 10, 64)
-		if leftErr == nil && rightErr == nil {
-			return leftID < rightID
-		}
-		return queued[i].task.ID < queued[j].task.ID
-	})
+	sortQueuedTasks(queued)
 	slots := len(queued)
 	if enabled {
 		slots = limit - s.runningTaskCount("")

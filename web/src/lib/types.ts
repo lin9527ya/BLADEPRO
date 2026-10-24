@@ -43,6 +43,8 @@ export interface Task {
   coverage_enabled?: boolean; // 资产覆盖度功能开关(创建时定,默认开)；false=不计算/不展示覆盖度
   /** 本任务 token 预算覆盖（0/缺省 = 用全局设置）；批量扇出按片设置。 */
   token_budget?: number;
+  /** 排队优先级（越大越先；只在排队任务之间生效，不抢占运行中任务）。 */
+  priority?: number;
   // SRC 挖掘模式：''/缺省=普通渗透，'src'=按「站点 × 风险面」补格收尾。
   mode?: TaskMode;
   /** 最近一次收尾门判定的冗余计数（不是列表页实时重算）。 */

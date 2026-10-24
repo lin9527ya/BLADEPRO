@@ -72,6 +72,12 @@ func (s *Server) prepareTaskCreate(ctx context.Context, req createTaskReq) (*pre
 	if req.TokenBudget < 0 {
 		req.TokenBudget = 0
 	}
+	if req.Priority < -1000 {
+		req.Priority = -1000
+	}
+	if req.Priority > 1000 {
+		req.Priority = 1000
+	}
 	if len(req.SourceTaskIDs) > db.MaxTaskSourceCount {
 		return nil, taskErr(400, fmt.Sprintf("关联任务最多选择 %d 个", db.MaxTaskSourceCount))
 	}
@@ -248,6 +254,7 @@ func (s *Server) persistPreparedTask(ctx context.Context, prep *preparedTaskCrea
 		Name: strings.TrimSpace(name), CategoryID: prep.req.CategoryID,
 		SourceTaskIDs: prep.sourceIDs, CompanyIDs: companyIDs, LLMProfileIDs: prep.req.LLMProfileIDs,
 		TimeoutSeconds: prep.req.TimeoutSeconds, TokenBudget: tokenBudget,
+		Priority:             prep.req.Priority,
 		PlanHeartbeatSeconds: prep.req.PlanHeartbeatSeconds,
 		CoverageEnabled:      prep.req.CoverageEnabled,
 		InterceptRules:       prep.interceptRules,

@@ -288,6 +288,8 @@ export interface CreateTaskInput {
   coverageEnabled?: boolean;
   /** P2：任务级 token 预算覆盖；0/省略 = 用全局设置。 */
   tokenBudget?: number;
+  /** 排队优先级（越大越先；只在排队任务之间生效）。 */
+  priority?: number;
   // SRC 挖掘模式：创建时定死（""=普通渗透）。modeDoc 是模式配置快照，省略=后端默认。
   mode?: TaskMode;
   modeDoc?: unknown;
@@ -324,6 +326,7 @@ function createTaskPayload(input: CreateTaskInput) {
     company_ids: input.companyIds ?? [],
     timeout_seconds: input.timeoutSeconds ?? 0,
     token_budget: input.tokenBudget ?? 0,
+    priority: input.priority ?? 0,
     seed_first_intent: input.seedFirstIntent ?? false,
     plan_heartbeat_seconds: input.planHeartbeatSeconds ?? 0, // 0 = 后端归一到默认 600(10min)
     coverage_enabled: input.coverageEnabled ?? true, // 默认开;false=关闭资产覆盖度功能
@@ -371,7 +374,8 @@ export const api = {
       dry_run: input.dryRun ?? false,
     }),
   taskCategories: () => get<{ categories: TaskCategory[] }>("/task-categories").then((r) => arr(r.categories)),
-  updateTask: (id: string, input: { name?: string; pinned?: boolean }) => patch<Task>(`/tasks/${id}`, input),
+  updateTask: (id: string, input: { name?: string; pinned?: boolean; priority?: number }) =>
+    patch<Task>(`/tasks/${id}`, input),
   renameTask: (id: string, name: string) => patch<Task>(`/tasks/${id}`, { name }),
   pinTask: (id: string, pinned: boolean) => patch<Task>(`/tasks/${id}`, { pinned }),
   createTaskCategory: (name: string) => post<TaskCategory>("/task-categories", { name }),

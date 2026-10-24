@@ -162,6 +162,8 @@ export function CreateTaskSheet({
   const [maxShards, setMaxShards] = React.useState("50");
   const [batchTokenBudget, setBatchTokenBudget] = React.useState("0");
   const [campaignName, setCampaignName] = React.useState("");
+  // 排队优先级：越大越先拿到并发槽；不抢占运行中任务。
+  const [queuePriority, setQueuePriority] = React.useState("0");
   const [description, setDescription] = React.useState("");
   const [goal, setGoal] = React.useState("");
   const [selectedTemplateID, setSelectedTemplateID] = React.useState<number | null>(null);
@@ -273,6 +275,7 @@ export function CreateTaskSheet({
       seedFirstIntent,
       planHeartbeatSeconds: heartbeatSec,
       coverageEnabled,
+      priority: Math.max(-1000, Math.min(1000, Math.trunc(Number(queuePriority) || 0))),
       mode,
       srcProgramID,
       inheritCoverage: mode === "src" ? inheritCoverage : false,
@@ -372,6 +375,7 @@ export function CreateTaskSheet({
       setMaxShards("50");
       setBatchTokenBudget("0");
       setCampaignName("");
+      setQueuePriority("0");
       setSelectedTemplateID(null);
       setSourceTaskIDs([]);
       setCompanyIDs([]);
@@ -752,6 +756,22 @@ export function CreateTaskSheet({
                   <p className="text-muted-foreground text-xs">
                     距上轮规划结束/任务开始满该时长且期间无触发，自动触发一轮规划（兜底卡死 + 唤醒去监督在跑的
                     worker）。下限 10 分钟。
+                  </p>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="queue-priority">排队优先级（越大越先）</Label>
+                  <Input
+                    id="queue-priority"
+                    type="number"
+                    className="w-40"
+                    min={-1000}
+                    max={1000}
+                    value={queuePriority}
+                    onChange={(e) => setQueuePriority(e.target.value)}
+                  />
+                  <p className="text-muted-foreground text-xs">
+                    只在任务排队等待并发槽时生效（-1000–1000，默认 0）；不会抢占正在运行的任务。
+                    批量扇出时每个分片使用同一优先级。
                   </p>
                 </div>
                 <div className="grid gap-2">

@@ -228,7 +228,9 @@ export const TaskRow = React.memo(function TaskRow({
   onSelectedChange: (id: string, checked: boolean) => void;
 }) {
   const tokenUsed = task.tokens ? task.tokens.input_tokens + task.tokens.output_tokens : 0;
-  const budgetPct = tokenBudget > 0 ? (tokenUsed / tokenBudget) * 100 : 0;
+  // 任务级预算覆盖优先于全局设置。
+  const effectiveBudget = (task.token_budget ?? 0) > 0 ? (task.token_budget ?? 0) : tokenBudget;
+  const budgetPct = effectiveBudget > 0 ? (tokenUsed / effectiveBudget) * 100 : 0;
   return (
     <TableRow className="group border-border/60" data-state={selected ? "selected" : undefined}>
       <TableCell>
@@ -246,6 +248,14 @@ export const TaskRow = React.memo(function TaskRow({
           <TaskNameEditor task={task} onRename={onRename} />
           {task.active && <StarIcon className="size-4 shrink-0 fill-amber-400 text-amber-400" />}
           {taskIsPinned(task) && <PinIcon className="text-primary size-4 shrink-0" aria-label="已置顶" />}
+          {task.priority ? (
+            <span
+              className="text-muted-foreground rounded border px-1 py-0.5 text-[10px] tabular-nums"
+              title="排队优先级：越大越先拿到并发槽（不抢占运行中任务）"
+            >
+              P{task.priority}
+            </span>
+          ) : null}
         </div>
       </TableCell>
       <TableCell className="text-muted-foreground max-w-40">
@@ -344,7 +354,7 @@ export const TaskRow = React.memo(function TaskRow({
         title={
           task.tokens
             ? `输入 ${task.tokens.input_tokens} · 缓存 ${task.tokens.cache_read_tokens} · 输出 ${task.tokens.output_tokens}` +
-              (tokenBudget > 0 ? ` · 任务预算 ${tokenBudget}（已用 ${Math.round(budgetPct)}%）` : "")
+              (effectiveBudget > 0 ? ` · 任务预算 ${effectiveBudget}（已用 ${Math.round(budgetPct)}%）` : "")
             : undefined
         }
       >
@@ -355,7 +365,7 @@ export const TaskRow = React.memo(function TaskRow({
             <span className="text-foreground">{fmtTokens(task.tokens.cache_read_tokens)}</span>
             {" · 出 "}
             <span className="text-foreground">{fmtTokens(task.tokens.output_tokens)}</span>
-            {tokenBudget > 0 && (
+            {effectiveBudget > 0 && (
               <>
                 {" · "}
                 <span className={cn("font-medium", budgetTextTone(budgetPct))}>{Math.round(budgetPct)}%</span>

@@ -1712,3 +1712,31 @@ func scanAssets(rows *sql.Rows) ([]*Asset, error) {
 	}
 	return out, rows.Err()
 }
+
+// SetAssetTier stores an explicit SRC asset tier in assets.extra.asset_tier.
+// Using extra (rather than a dedicated column) keeps the tier available to every
+// asset type without widening the six-column upsert paths; the SRC gate reads it
+// through srcTargetCTE. Empty clears the classification.
+func (s *AssetStore) SetAssetTier(id int64, tier string) (bool, error) {
+	if s == nil || s.db == nil || id <= 0 {
+		return false, nil
+	}
+	tier = strings.TrimSpace(tier)
+	var res sql.Result
+	var err error
+	if tier == "" {
+		res, err = s.db.Exec(`UPDATE assets
+SET extra = COALESCE(extra,'{}'::jsonb) - 'asset_tier', updated_at=now()
+WHERE id=$1`, id)
+	} else {
+		res, err = s.db.Exec(`UPDATE assets
+SET extra = jsonb_set(COALESCE(extra,'{}'::jsonb), '{asset_tier}', to_jsonb($2::text), true),
+    updated_at=now()
+WHERE id=$1`, id, tier)
+	}
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}

@@ -35,6 +35,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api";
@@ -98,6 +99,22 @@ const TABS: { key: string; label: string; icon: LucideIcon }[] = [
   { key: "service", label: "服务", icon: LayoutTemplateIcon },
   { key: "endpoint", label: "接口", icon: LinkIcon },
 ];
+
+// SRC 资产分级：只影响补格优先级（主站/API/后台优先，第三方/CDN 降权），
+// 不改变授权范围；未分级 = 空，按 1.0 参与。
+const ASSET_TIER_LABEL: Record<string, string> = {
+  primary: "主站",
+  api: "API",
+  admin: "后台",
+  mobile: "移动端",
+  third_party: "第三方",
+  other: "其他",
+};
+
+function assetTierOf(asset: Asset): string {
+  const raw = asset.extra?.asset_tier;
+  return typeof raw === "string" ? raw : "";
+}
 
 export default function AssetsPage() {
   const [rows, setRows] = React.useState<Asset[]>([]);
@@ -174,6 +191,18 @@ export default function AssetsPage() {
       }
       return next;
     });
+  };
+
+  const saveTier = async (id: number, tier: string) => {
+    try {
+      await api.setAssetTier(id, tier);
+      setRows((prev) =>
+        prev.map((a) => (a.id === id ? { ...a, extra: { ...(a.extra ?? {}), asset_tier: tier } } : a)),
+      );
+      toast.success(tier ? `已标记为${ASSET_TIER_LABEL[tier] ?? tier}` : "已清除资产分级");
+    } catch (error) {
+      toast.error("保存分级失败：" + (error as Error).message);
+    }
   };
 
   const openDelete = (ids: number[]) => {
@@ -481,8 +510,8 @@ export default function AssetsPage() {
             <AssetCard
               cols={
                 kind === "all"
-                  ? ["", "类型", "目标", "端口 / 状态", "标题 / 技术", "归属企业", "最后发现", ""]
-                  : ["", "目标", "端口 / 状态", "标题 / 技术", "归属企业", "最后发现", ""]
+                  ? ["", "类型", "目标", "端口 / 状态", "标题 / 技术", "分级", "归属企业", "最后发现", ""]
+                  : ["", "目标", "端口 / 状态", "标题 / 技术", "分级", "归属企业", "最后发现", ""]
               }
               loaded={loaded}
               total={total}
@@ -510,6 +539,22 @@ export default function AssetsPage() {
                   <TableCell className="text-xs text-muted-foreground">{assetPortStatus(a)}</TableCell>
                   <TableCell className="max-w-[22rem] truncate text-xs text-muted-foreground" title={assetExtras(a)}>
                     {assetExtras(a)}
+                  </TableCell>
+                  <TableCell className="w-28">
+                    <NativeSelect
+                      aria-label={`资产 ${assetTarget(a)} 的 SRC 分级`}
+                      className="h-7 text-xs"
+                      value={assetTierOf(a)}
+                      onChange={(event) => void saveTier(a.id, event.target.value)}
+                    >
+                      <NativeSelectOption value="">未分级</NativeSelectOption>
+                      <NativeSelectOption value="primary">主站</NativeSelectOption>
+                      <NativeSelectOption value="api">API</NativeSelectOption>
+                      <NativeSelectOption value="admin">后台</NativeSelectOption>
+                      <NativeSelectOption value="mobile">移动端</NativeSelectOption>
+                      <NativeSelectOption value="third_party">第三方</NativeSelectOption>
+                      <NativeSelectOption value="other">其他</NativeSelectOption>
+                    </NativeSelect>
                   </TableCell>
                   <TableCell className="text-xs">
                     {companyName(a.company_id) || <span className="text-muted-foreground">未归属</span>}

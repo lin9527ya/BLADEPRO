@@ -448,3 +448,23 @@ func TestReconMissing(t *testing.T) {
 		t.Fatalf("check gate off should not report recon: %v", got)
 	}
 }
+
+// TestAssetTierMultiplier pins the explicit asset-tier influence on补格 priority:
+// unclassified assets keep the old behavior (1.0), high-value surfaces rank up,
+// third-party/CDN surfaces rank down.
+func TestAssetTierMultiplier(t *testing.T) {
+	cases := map[string]float64{"": 1, "primary": 1.4, "api": 1.25, "admin": 1.2, "mobile": 1.1, "third_party": 0.6, "other": 0.8, "nope": 1}
+	for tier, want := range cases {
+		if got := AssetTierMultiplier(tier); got != want {
+			t.Fatalf("AssetTierMultiplier(%q)=%v want %v", tier, got, want)
+		}
+	}
+	for _, tier := range append([]string{""}, AssetTiers...) {
+		if !AssetTierAllowed(tier) {
+			t.Fatalf("tier %q should be allowed", tier)
+		}
+	}
+	if AssetTierAllowed("bogus") {
+		t.Fatal("unknown tier must be rejected")
+	}
+}

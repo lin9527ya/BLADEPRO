@@ -874,6 +874,9 @@ export const api = {
     get<Record<string, number>>(`/assets/counts${taskId ? `?task_id=${encodeURIComponent(taskId)}` : ""}`),
   deleteAssets: (ids: number[]) =>
     http<{ deleted: number }>("/assets", { method: "DELETE", body: JSON.stringify({ ids }) }),
+  // SRC 资产分级：只影响补格优先级，不改变授权范围；空串 = 清除分级。
+  setAssetTier: (id: number, assetTier: string) =>
+    patch<{ id: number; asset_tier: string }>(`/assets/${id}/tier`, { asset_tier: assetTier }),
   // CSV 目标清单导入。同一份 CSV 喂两条路径：preview 只读、import 才写——所以
   // 「预览说会新增 N 条」与「导入真的新增几条」出自服务端同一段代码。
   previewAssetImport: (csv: string, taskId = 0) =>

@@ -341,8 +341,14 @@ tested AS (
 
 // srcTargetCTE 只有 target 一半：SRC 收尾门只认显式 src_cells，不用意图推导的
 // tested（见 src_cells.go）。同一套匹配谓词，保证"范围内"的口径只有一处定义。
+// 比 scopeTargetSelect 多一列 tier（assets.extra.asset_tier），用于补格优先级。
 const srcTargetCTE = `
-target AS (` + scopeTargetSelect + `
+target AS (
+  SELECT DISTINCT a.id, a.type,
+         COALESCE(a.url, a.domain, a.ip, a.app_name, a.root_domain, '') AS label,
+         COALESCE(NULLIF(a.extra->>'asset_tier',''), '') AS tier
+  FROM assets a
+  JOIN task_scope ts ON ts.task_id = $1 AND ` + scopeJoinPredicate + `
 )`
 
 // CoverageMatrixCell is one (in-scope asset × risk area) cell of the coverage matrix.

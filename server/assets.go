@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/srcmode"
 )
 
 // companyScopeInputs accepts both the new [{kind,value}] contract and the
@@ -546,4 +547,41 @@ func (s *Server) insertAssets(w http.ResponseWriter, r *http.Request) {
 		results = append(results, result{Index: i, ID: id, Type: a.Type})
 	}
 	writeJSON(w, 200, map[string]any{"results": results, "errors": errs})
+}
+
+// PATCH /api/assets/{id}/tier — 设置 SRC 资产分级。
+// 分级只影响补格优先级（主站/API/后台优先，第三方/CDN 降权），不改变授权范围：
+// 未分级的资产仍按 1.0 参与，不会被排除在收尾门之外。
+func (s *Server) setAssetTier(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathInt(r, "id")
+	if !ok {
+		writeErr(w, 400, "bad asset id")
+		return
+	}
+	var req struct {
+		AssetTier *string `json:"asset_tier"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, 400, "bad json: "+err.Error())
+		return
+	}
+	if req.AssetTier == nil {
+		writeErr(w, 400, "asset_tier 必填（空串表示清除分级）")
+		return
+	}
+	tier := strings.TrimSpace(*req.AssetTier)
+	if !srcmode.AssetTierAllowed(tier) {
+		writeErr(w, 400, "asset_tier 只能是 primary / api / admin / mobile / third_party / other（或空）")
+		return
+	}
+	found, err := s.m.pg.Assets().SetAssetTier(id, tier)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if !found {
+		writeErr(w, 404, "asset not found")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"id": id, "asset_tier": tier})
 }

@@ -1,6 +1,9 @@
 package srcmode
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 // Area 是一个「风险面」：SRC 挖掘里"这个站点的这一类问题测过没有"的单位。
 // 它比 db.RiskAreas 的意图标签粗，但**必须可判定**——一个面要么有终态，要么是空格。
@@ -148,6 +151,46 @@ func DefaultRequiredAreas(assetType string) []string {
 		return nil
 	}
 	return append([]string(nil), areas...)
+}
+
+// AssetTiers 是人工资产分级的合法取值（assets.extra.asset_tier）。
+var AssetTiers = []string{"primary", "api", "admin", "mobile", "third_party", "other"}
+
+// AssetTierAllowed reports whether tier is a known explicit asset tier. Empty is
+// also accepted (unclassified).
+func AssetTierAllowed(tier string) bool {
+	tier = strings.TrimSpace(tier)
+	if tier == "" {
+		return true
+	}
+	for _, t := range AssetTiers {
+		if t == tier {
+			return true
+		}
+	}
+	return false
+}
+
+// AssetTierMultiplier turns an explicit asset tier into a补格 priority factor.
+// 主站/API/后台优先下沉到深挖，第三方/CDN 面降权；未分级保持 1.0，避免改变
+// 既有任务的行为。
+func AssetTierMultiplier(tier string) float64 {
+	switch strings.TrimSpace(tier) {
+	case "primary":
+		return 1.4
+	case "api":
+		return 1.25
+	case "admin":
+		return 1.2
+	case "mobile":
+		return 1.1
+	case "third_party":
+		return 0.6
+	case "other":
+		return 0.8
+	default:
+		return 1.0
+	}
 }
 
 // AssetValue 是补格优先级里的资产价值因子。

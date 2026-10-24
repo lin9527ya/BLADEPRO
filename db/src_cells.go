@@ -69,6 +69,9 @@ type SrcAsset struct {
 	ID    int64  `json:"id"`
 	Type  string `json:"type"`
 	Label string `json:"label"`
+	// Tier 是人工设置的资产分级（assets.extra.asset_tier）：primary/api/admin/
+	// mobile/third_party/other。空 = 未分级，按 1.0 参与补格优先级。
+	Tier string `json:"tier,omitempty"`
 }
 
 // SrcStore is the SRC coverage store (cells + mode snapshot reads).
@@ -231,7 +234,7 @@ func (s *SrcStore) InScopeSrcAssets(ctx context.Context, taskID int64) ([]SrcAss
 		return nil, nil
 	}
 	rows, err := s.db.QueryContext(ctx, `WITH `+srcTargetCTE+`
-SELECT t.id, t.type, t.label FROM target t
+SELECT t.id, t.type, t.label, t.tier FROM target t
 WHERE t.type IN ('root_domain','subdomain','ip','app','service','endpoint')
 ORDER BY t.type, t.label`, taskID)
 	if err != nil {
@@ -241,7 +244,7 @@ ORDER BY t.type, t.label`, taskID)
 	out := []SrcAsset{}
 	for rows.Next() {
 		var a SrcAsset
-		if err := rows.Scan(&a.ID, &a.Type, &a.Label); err != nil {
+		if err := rows.Scan(&a.ID, &a.Type, &a.Label, &a.Tier); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -257,9 +260,9 @@ func (s *SrcStore) SrcAssetInScope(ctx context.Context, taskID, assetID int64) (
 		return nil, nil
 	}
 	row := s.db.QueryRowContext(ctx, `WITH `+srcTargetCTE+`
-SELECT t.id, t.type, t.label FROM target t WHERE t.id=$2`, taskID, assetID)
+SELECT t.id, t.type, t.label, t.tier FROM target t WHERE t.id=$2`, taskID, assetID)
 	var a SrcAsset
-	if err := row.Scan(&a.ID, &a.Type, &a.Label); err != nil {
+	if err := row.Scan(&a.ID, &a.Type, &a.Label, &a.Tier); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}

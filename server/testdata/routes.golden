@@ -180,6 +180,7 @@ GET /api/workspace/download	server.(*Server).wsDownload-fm
 GET /api/workspace/list	server.(*Server).wsList-fm
 GET /api/workspace/read	server.(*Server).wsRead-fm
 PATCH /api/agents/{key}	server.(*Server).pgUpdateAgent-fm
+PATCH /api/assets/{id}/tier	server.(*Server).setAssetTier-fm
 PATCH /api/campaigns/{id}	server.(*Server).patchCampaign-fm
 PATCH /api/companies/{id}/knowledge/{kid}	server.(*Server).patchCompanyKnowledge-fm
 PATCH /api/conversations/{id}	server.(*Server).pgRenameConversation-fm

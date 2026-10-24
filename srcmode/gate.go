@@ -105,6 +105,7 @@ type AssetYield struct {
 	Asset    string `json:"asset"`
 	Terminal int    `json:"terminal"`
 	Found    int    `json:"found"`
+	Tier     string `json:"tier,omitempty"`
 	Cold     bool   `json:"cold,omitempty"`
 }
 
@@ -113,7 +114,7 @@ const coldAssetTerminal = 4
 
 // assetYield 统计一个资产的终态/发现；已投入 ≥4 个终态格仍零发现 → 冷资产。
 func assetYield(asset db.SrcAsset, cells []db.SrcCell) AssetYield {
-	st := AssetYield{AssetID: asset.ID, Asset: asset.Label}
+	st := AssetYield{AssetID: asset.ID, Asset: asset.Label, Tier: asset.Tier}
 	for _, c := range cells {
 		switch c.State {
 		case db.SrcStateFound:
@@ -184,9 +185,9 @@ func CheckFinish(ctx context.Context, store *db.SrcStore, taskID int64, doc Mode
 			})
 			continue
 		}
-		assetMult := 1.0
+		assetMult := AssetTierMultiplier(asset.Tier)
 		if st := yieldByAsset[asset.ID]; st.Cold {
-			assetMult = 0.3
+			assetMult *= 0.3
 		}
 		byArea := map[string]map[string]db.SrcCell{}
 		for _, cell := range cellsByAsset[asset.ID] {

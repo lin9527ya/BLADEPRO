@@ -6,9 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -308,6 +310,41 @@ func (s *Server) buildSrcZip(ctx context.Context, t *Task, plan *srcBatchPlan) (
 				"poc.sh": poc.Script, "request.http": poc.HTTP, "README.txt": poc.Readme,
 			} {
 				if err := add(poc.Dir+"/"+name, []byte(data)); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	// P2 截图自动化：把本任务的图片产物放进 attachments/screenshots/，报告与截图同包交付。
+	if taskID := parseIntDefault(t.ID); taskID > 0 {
+		if artifacts, err := s.m.pg.ListEvidenceArtifacts(ctx, taskID); err == nil {
+			for _, a := range artifacts {
+				if !strings.HasPrefix(a.MIME, "image/") {
+					continue
+				}
+				rc, _, err := s.evidenceStore().OpenArtifact(ctx, a.ID)
+				if err != nil {
+					log.Printf("[src] 交付包：读取证据产物 #%d 失败: %v", a.ID, err)
+					continue
+				}
+				data, err := io.ReadAll(io.LimitReader(rc, 25<<20))
+				rc.Close()
+				if err != nil {
+					log.Printf("[src] 交付包：读取证据产物 #%d 失败: %v", a.ID, err)
+					continue
+				}
+				ext := strings.ToLower(filepath.Ext(a.Filename))
+				if ext == "" {
+					switch a.MIME {
+					case "image/jpeg":
+						ext = ".jpg"
+					default:
+						ext = ".png"
+					}
+				}
+				baseName := strings.TrimSuffix(a.Filename, filepath.Ext(a.Filename))
+				name := fmt.Sprintf("attachments/screenshots/%d-%s%s", a.ID, srcFileSlug(baseName, "screenshot"), ext)
+				if err := add(name, data); err != nil {
 					return nil, err
 				}
 			}

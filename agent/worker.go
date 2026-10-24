@@ -68,17 +68,18 @@ type Worker struct {
 	// srcVerifier 由宿主注入：从流量核验收尾项指标（nil = 不核验）。
 	srcVerifier SrcVerifier
 	// srcProber 由宿主注入：确定性只读探针（nil = src_probe 报未接线）。
-	srcProber   SrcProber
-	prov        llm.Provider
-	model       string
-	workDir     string
-	proxyAddr   string
-	proxyCACert string            // recording proxy's CA cert path (for WebFetch HTTPS verify)
-	webSearch   WebSearchOpts     // web_search tool backend selection (off by default)
-	tx          *transcript.Store // raw LLM conversation persistence (nil = off)
-	window      int               // context window in tokens (for compaction)
-	windowFn    func() int        // optional dynamic task-chain minimum
-	maxTurns    int               // max agent turns per run (0 = unlimited)
+	srcProber        SrcProber
+	srcScreenshotter SrcScreenshotter
+	prov             llm.Provider
+	model            string
+	workDir          string
+	proxyAddr        string
+	proxyCACert      string            // recording proxy's CA cert path (for WebFetch HTTPS verify)
+	webSearch        WebSearchOpts     // web_search tool backend selection (off by default)
+	tx               *transcript.Store // raw LLM conversation persistence (nil = off)
+	window           int               // context window in tokens (for compaction)
+	windowFn         func() int        // optional dynamic task-chain minimum
+	maxTurns         int               // max agent turns per run (0 = unlimited)
 	// runTimeout is the wall-clock budget for the main exploration of one intent
 	// (0 = unlimited). When it fires, the run is cut and a settlement round is
 	// forced so already-identified facts get written back instead of being lost.
@@ -459,6 +460,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 				tsx.SetSrcPreparer(w.srcPreparer)
 				tsx.SetSrcVerifier(w.srcVerifier)
 				tsx.SetSrcProber(w.srcProber)
+				tsx.SetSrcScreenshotter(w.srcScreenshotter)
 			}
 		}
 	}

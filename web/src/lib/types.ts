@@ -1085,6 +1085,8 @@ export interface SrcCheckItem {
   evidence_node_id?: number;
   /** >0 = 这项 done 数字继承自该任务。 */
   inherited_from_task_id?: number;
+  /** screenshots 项关联的证据产物 id（GET /api/evidence/artifacts/{id}）。 */
+  artifact_id?: number;
   /** 从录制流量推导出的实测值（P0-7）；仅在可核验的收尾项上出现。 */
   observed_metrics?: Record<string, number>;
   /** 自报数字与实测对不上的告警（不阻断，只提示）。 */

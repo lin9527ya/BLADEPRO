@@ -32,6 +32,7 @@ type Planner struct {
 	srcVerifier SrcVerifier
 	// srcProber 由宿主注入：确定性只读探针（nil = src_probe 报未接线）。
 	srcProber         SrcProber
+	srcScreenshotter  SrcScreenshotter
 	prov              llm.Provider
 	model             string
 	tx                *transcript.Store                      // raw LLM conversation persistence (nil = off)
@@ -479,6 +480,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 				tsx.SetSrcPreparer(p.srcPreparer)
 				tsx.SetSrcVerifier(p.srcVerifier)
 				tsx.SetSrcProber(p.srcProber)
+				tsx.SetSrcScreenshotter(p.srcScreenshotter)
 			}
 		}
 	}

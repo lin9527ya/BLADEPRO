@@ -231,6 +231,18 @@ func ValidateCheck(ctx context.Context, store *db.SrcStore, taskID int64, doc Mo
 		return fmt.Errorf("未知收尾项：%s（合法值：%s）", check.CheckKey, strings.Join(CheckKeys(), " / "))
 	}
 	check.CheckKey = def.Key
+	// 调用方（agent 工具 / HTTP 人工点格）只给 asset_id；资产类型必须从库里解析，
+	// 否则 checkAppliesTo 会拿空串把每一项都判成"不适用"。
+	if strings.TrimSpace(check.AssetType) == "" && store != nil {
+		asset, err := store.SrcAssetInScope(ctx, taskID, check.AssetID)
+		if err != nil {
+			return err
+		}
+		if asset == nil {
+			return fmt.Errorf("资产 %d 不在本任务测试范围内，不能标收尾项", check.AssetID)
+		}
+		check.AssetType = asset.Type
+	}
 	if !checkAppliesTo(def, check.AssetType) {
 		return fmt.Errorf("收尾项 %s 不适用于资产类型 %s", def.Key, check.AssetType)
 	}
@@ -279,6 +291,16 @@ func ValidateCheck(ctx context.Context, store *db.SrcStore, taskID int64, doc Mo
 		}
 		if !ok {
 			return fmt.Errorf("evidence_node_id=%d 不是本任务的节点", check.EvidenceNodeID)
+		}
+	}
+	// 截图项不是"挂个节点就算"：节点必须指向一张真实图片产物（sha256/MIME 可核对）。
+	if def.Key == "screenshots" && check.State == db.SrcCheckDone {
+		artifact, err := store.ScreenshotArtifactForNode(ctx, taskID, check.EvidenceNodeID)
+		if err != nil {
+			return err
+		}
+		if artifact == nil {
+			return fmt.Errorf("screenshots 标 done 必须挂一张已验证的截图产物：请用 src_screenshot 生成，或把截图登记成证据节点")
 		}
 	}
 	return nil

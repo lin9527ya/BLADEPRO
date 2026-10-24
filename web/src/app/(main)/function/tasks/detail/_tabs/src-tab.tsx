@@ -1094,6 +1094,20 @@ export function SrcTab({ taskId }: { taskId: string }) {
             <DialogTitle>{checkTarget?.item.title ?? "收尾项"}</DialogTitle>
             <DialogDescription>
               {checkTarget?.item.hint}
+              {checkTarget?.item.artifact_id ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    void api
+                      .viewEvidenceArtifact(checkTarget.item.artifact_id as number)
+                      .catch((e: Error) => toast.error("打开截图失败：" + e.message))
+                  }
+                >
+                  查看截图产物 #{checkTarget.item.artifact_id}
+                </Button>
+              ) : null}
               {checkTarget?.item.na_codes && Object.keys(checkTarget.item.na_codes).length > 0
                 ? " · 可标 N/A（需理由码）"
                 : " · 本项不接受 N/A，必须实际做完"}

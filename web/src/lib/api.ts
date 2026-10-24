@@ -743,6 +743,22 @@ export const api = {
     if (!r.ok) throw new Error(`上传失败: ${r.status}`);
     return r.json() as Promise<{ uploaded: number }>;
   },
+  // 证据产物（截图/附件）需要 Bearer 头，不能用裸 <a href> 打开；先取 blob 再开新窗口。
+  viewEvidenceArtifact: async (id: number) => {
+    const token = getToken();
+    const r = await fetch(`/api/evidence/artifacts/${id}`, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    });
+    if (!r.ok) throw new Error(`打开证据失败: ${r.status}`);
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noreferrer";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  },
   // downloadSrcReport 下载单条发现的 SRC 交付件（md 简报 / docx 可提交件）。
   // 服务端按 src-dig 报告规范渲染 8 块骨架；文件名取 Content-Disposition（= 漏洞标题）。
   downloadSrcReport: async (findingId: string, format: "md" | "docx") => {

@@ -86,6 +86,8 @@ type ToolSet struct {
 	srcVerifier SrcVerifier
 	// srcProber 由宿主注入（server）：确定性只读探针（P2）。nil = src_probe 报未接线。
 	srcProber SrcProber
+	// srcScreenshotter 由宿主注入（server）：headless 浏览器截图并落成证据产物。
+	srcScreenshotter SrcScreenshotter
 	// intentsRound 计本 ToolSet 生命周期内成功创建的意图数 —— planner 每轮新建一个
 	// ToolSet，所以它天然是"本轮已用额度"。
 	intentsRound int
@@ -252,10 +254,10 @@ func (t *ToolSet) AppendSrcTools(tools []actool.CoreTool, role string) []actool.
 	switch role {
 	case "planner":
 		return append(tools, t.srcState(), t.srcFinishCheck(), t.srcMarkCell(), t.srcMarkCheck(),
-			t.srcPrepareSubmission(), t.srcDedupe(), t.srcProbeTool())
+			t.srcPrepareSubmission(), t.srcDedupe(), t.srcProbeTool(), t.srcScreenshotTool())
 	case "worker":
 		return append(tools, t.srcMarkCell(), t.srcMarkCheck(), t.srcState(),
-			t.srcPrepareSubmission(), t.srcDedupe(), t.srcProbeTool())
+			t.srcPrepareSubmission(), t.srcDedupe(), t.srcProbeTool(), t.srcScreenshotTool())
 	case "main":
 		// 主 agent 只读 + 可交付/定案；点格/点收尾项仍归 planner/worker，避免绕过覆盖判定。
 		return append(tools, t.srcState(), t.srcPrepareSubmission(), t.srcDedupe())

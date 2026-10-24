@@ -12,6 +12,7 @@ func (s *Server) registerTaskRoutes(mux routeRegistrar) {
 	// 人工复核队列（P2）：聚合报告缺段/复验存疑/疑似重复/预算停/四件套全 N/A，支持批量裁决。
 	mux.HandleFunc("GET /api/review/queue", s.listReviewQueue)
 	mux.HandleFunc("POST /api/review/actions", s.postReviewActions)
+	mux.HandleFunc("GET /api/evidence/artifacts/{id}", s.getEvidenceArtifact) // 截图/附件原文件
 	// 战役：任务之上的一层（归属 + 聚合）。归属走声明式的 PUT —— 一次给出应当包含的全部任务。
 	mux.HandleFunc("GET /api/campaigns", s.listCampaigns)
 	mux.HandleFunc("POST /api/campaigns", s.createCampaign)

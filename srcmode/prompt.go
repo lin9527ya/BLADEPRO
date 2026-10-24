@@ -134,6 +134,7 @@ func WorkerOverlay(doc ModeDoc) string {
 %s
 %s
 - 结束前**必须**调用 src_mark_cell：tested_found 带 finding_id / tested_clear 带 evidence_node_id（一条 fact；项目显式允许时才可只写说明）/ na 写 reason + na_code（理由码只能选自该面允许的码；platform_exempt 还需要 program 声明）/ budget_stop 写 reason。
+- 平台要求截图（require_screenshots）时，用 **src_screenshot** 对资产截图；返回的 node_id 直接填进 src_mark_check 的 screenshots 项。screenshots 只认真实图片产物，不能只写一个 fact 节点。
 - 如果这条意图做的是收尾动作（抽 JS、枚举路径、复测非 404、方法矩阵、参数变体、防护对照），优先用 **src_probe**（paths/js/methods/non404）跑确定性探针——它走录制代理、按程序 QPS 限速，返回的 metrics 直接可用于 src_mark_check；不要再用 ffuf/curl 重复跑一遍。做完要调 **src_mark_check** 并把数字填进 metrics（例如 paths=214 / retested=6 / methods=7），同时给 evidence_node_id——收尾门只认数字，不认"做过了"。
 - 什么算测过：真的发过请求、看过响应。只读代码、只凭指纹猜、只"看起来像"，都只能写 fact（confidence 标 inferred），不能标 tested_clear。
 - 只读证明：命令执行证明到 whoami/id 即止；不写 webshell、不建账号、不改配置、不横向移动。禁止对目标做破坏性写操作。

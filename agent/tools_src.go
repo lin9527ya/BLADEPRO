@@ -139,6 +139,12 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 				if c.InheritedFromTaskID > 0 {
 					entry["inherited_from_task_id"] = c.InheritedFromTaskID
 				}
+				// 截图项把产物 id 一并给出，UI 可直接预览（不再只看到一个 fact 节点）。
+				if def.Key == "screenshots" && c.EvidenceNodeID > 0 {
+					if art, err := t.srcStore.ScreenshotArtifactForNode(ctx, t.taskID, c.EvidenceNodeID); err == nil && art != nil {
+						entry["artifact_id"] = art.ID
+					}
+				}
 				// 继承项只核对数字与流量，不重跑写入校验（证据在源任务）。
 				if c.State == db.SrcCheckDone && c.InheritedFromTaskID == 0 && t.srcVerifier != nil {
 					warns, obs := t.srcVerifier(ctx, t.taskID, a.ID, def.Key, c.Metrics)

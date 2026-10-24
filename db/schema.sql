@@ -1766,6 +1766,24 @@ DROP TRIGGER IF EXISTS trg_src_cells_upd ON src_cells;
 CREATE TRIGGER trg_src_cells_upd BEFORE UPDATE ON src_cells
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+-- 证据产物（截图/附件）：内容按 sha256 存到 data/evidence/artifacts/，这里只存元数据。
+-- 与 exploration_nodes 的关系：一条 fact 节点通过 payload.artifact_id 指向本表。
+CREATE TABLE IF NOT EXISTS evidence_artifacts (
+    id         BIGSERIAL PRIMARY KEY,
+    task_id    BIGINT REFERENCES tasks(id) ON DELETE CASCADE,
+    asset_id   BIGINT REFERENCES assets(id) ON DELETE SET NULL,
+    node_id    BIGINT REFERENCES exploration_nodes(id) ON DELETE SET NULL,
+    kind       TEXT NOT NULL DEFAULT 'screenshot',
+    filename   TEXT NOT NULL DEFAULT '',
+    mime       TEXT NOT NULL DEFAULT '',
+    sha256     TEXT NOT NULL,
+    size       BIGINT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_evidence_artifacts_task ON evidence_artifacts(task_id, kind, id);
+CREATE INDEX IF NOT EXISTS idx_evidence_artifacts_node ON evidence_artifacts(node_id) WHERE node_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_evidence_artifacts_sha  ON evidence_artifacts(sha256);
+
 -- 人工复核队列的裁决留痕：队列项按 (kind, ref_key) 去重；已裁决的项不再重复出现。
 -- reject/retest 会改底层状态，但留痕仍保留，便于事后审计。
 CREATE TABLE IF NOT EXISTS review_decisions (

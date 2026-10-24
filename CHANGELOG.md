@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+### 新增：截图自动化（P2）
+
+- 新工具 `src_screenshot`（planner/worker）：宿主用本机 headless Chromium/Chrome
+  对资产（或同 host 的指定 URL）截图，走录制代理、校验任务范围与作业时间窗。
+- 截图落成 `evidence_artifacts`（sha256 内容寻址、MIME/大小可核对），并自动创建
+  一条 fact 证据节点；返回的 `node_id` 可直接作为 `src_mark_check` 的 evidence。
+- screenshots 收尾项不再"挂个节点就算"：done 必须关联真实 `image/*` 产物。
+  平台 `require_screenshots` 时，done 且未给证据节点会自动截一张。
+- 新增 `GET /api/evidence/artifacts/{id}` 原文件读取；SRC 页收尾项弹窗可直接查看
+  截图；批量交付 zip 增加 `attachments/screenshots/`。
+- 顺带修复：`ValidateCheck` 现在从 asset_id 解析资产类型（此前 agent/HTTP 点收尾项
+  只传 asset_id，导致所有收尾项被误判为"不适用于资产类型"）。
+- 回归：证据产物存取/哈希校验、headless 截图端到端（截图→产物→节点→收尾项校验）、
+  普通 fact 节点不能冒充截图。
+
 ### 新增：人工复核队列（P2）
 
 - 新接口 `GET /api/review/queue`：聚合五类需要人看的项——报告缺段（medium+ 无可提交件）、

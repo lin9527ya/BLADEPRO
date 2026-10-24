@@ -60,6 +60,47 @@ type Asset struct {
 	TaskSourceNodeID  *int64         `json:"task_source_node_id,omitempty"`
 }
 
+// TargetURL 返回资产可用于"目标 URL"的地址：优先显式 URL，其次 domain/IP。
+// SRC 降级指纹与导出都只需要 host/path，scheme 统一按 https 补。
+func (a *Asset) TargetURL() string {
+	if a == nil {
+		return ""
+	}
+	if u := strings.TrimSpace(a.URL); u != "" {
+		return u
+	}
+	if d := strings.TrimSpace(a.Domain); d != "" {
+		return "https://" + d
+	}
+	if ip := strings.TrimSpace(a.IP); ip != "" {
+		return "https://" + ip
+	}
+	return ""
+}
+
+// ParamNames 抽出参数名（endpoint 资产的 params 结构通常是 [{name:...}]）；
+// 同时接受 key 字段，供降级指纹使用。
+func (a *Asset) ParamNames() []string {
+	if a == nil || len(a.Params) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(a.Params))
+	seen := map[string]bool{}
+	for _, p := range a.Params {
+		for _, k := range []string{"name", "key"} {
+			if v, ok := p[k].(string); ok {
+				v = strings.TrimSpace(v)
+				if v != "" && !seen[v] {
+					seen[v] = true
+					out = append(out, v)
+				}
+				break
+			}
+		}
+	}
+	return out
+}
+
 // AuthItem is one entry in the auth array.
 type AuthItem struct {
 	Type        string `json:"type,omitempty"`

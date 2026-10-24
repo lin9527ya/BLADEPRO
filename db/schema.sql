@@ -1731,6 +1731,9 @@ CREATE TABLE IF NOT EXISTS src_finding_meta (
     finding_id   BIGINT PRIMARY KEY REFERENCES findings(id) ON DELETE CASCADE,
     task_id      BIGINT REFERENCES tasks(id) ON DELETE CASCADE,
     fingerprint  TEXT NOT NULL DEFAULT '',
+    -- degraded_fingerprint 是"没有绑定流量"时的低置信指纹（类型 + host/路径 + 参数名），
+    -- 只用于疑似重复提示，不自动写 dedupe_of。
+    degraded_fingerprint TEXT NOT NULL DEFAULT '',
     -- compliance: {ok: bool, issues: [{code, detail, binding_id}]}，由 srcmode.CheckCompliance 产出。
     compliance   JSONB NOT NULL DEFAULT '{}'::jsonb,
     report_ready BOOLEAN NOT NULL DEFAULT false,
@@ -1738,7 +1741,10 @@ CREATE TABLE IF NOT EXISTS src_finding_meta (
     dedupe_of    BIGINT REFERENCES findings(id) ON DELETE SET NULL,
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- 旧库幂等补列（必须排在索引前面：旧库建索引时列还不存在）。
+ALTER TABLE src_finding_meta ADD COLUMN IF NOT EXISTS degraded_fingerprint TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_src_finding_meta_fp   ON src_finding_meta(fingerprint) WHERE fingerprint <> '';
+CREATE INDEX IF NOT EXISTS idx_src_finding_meta_dfp  ON src_finding_meta(degraded_fingerprint) WHERE degraded_fingerprint <> '';
 CREATE INDEX IF NOT EXISTS idx_src_finding_meta_task ON src_finding_meta(task_id);
 
 CREATE TABLE IF NOT EXISTS src_submissions (

@@ -101,13 +101,16 @@ type SrcSubmission struct {
 
 // SrcFindingMeta is the delivery-side metadata of one finding.
 type SrcFindingMeta struct {
-	FindingID   int64           `json:"finding_id"`
-	TaskID      int64           `json:"task_id"`
-	Fingerprint string          `json:"fingerprint"`
-	Compliance  json.RawMessage `json:"compliance"`
-	ReportReady bool            `json:"report_ready"`
-	DedupeOf    int64           `json:"dedupe_of,omitempty"`
-	UpdatedAt   time.Time       `json:"updated_at"`
+	FindingID   int64  `json:"finding_id"`
+	TaskID      int64  `json:"task_id"`
+	Fingerprint string `json:"fingerprint"`
+	// DegradedFingerprint 是没有绑定流量时的低置信指纹（d1: 前缀），只用于疑似重复
+	// 提示，不自动定案。
+	DegradedFingerprint string          `json:"degraded_fingerprint,omitempty"`
+	Compliance          json.RawMessage `json:"compliance"`
+	ReportReady         bool            `json:"report_ready"`
+	DedupeOf            int64           `json:"dedupe_of,omitempty"`
+	UpdatedAt           time.Time       `json:"updated_at"`
 }
 
 // SrcDeliveryFinding 是收尾门判"能不能交付"用的一行：发现本身 + 台账 + 元数据。
@@ -161,13 +164,15 @@ type SrcSubmissionInput struct {
 	Title       string
 	Severity    string
 	Fingerprint string
-	Description string
-	Impact      string
-	Fix         string
-	ReportMD    string
-	Status      string // "" = draft
-	ReportReady bool
-	Compliance  json.RawMessage
+	// DegradedFingerprint 见 SrcFindingMeta；空 = 没有可用的降级指纹。
+	DegradedFingerprint string
+	Description         string
+	Impact              string
+	Fix                 string
+	ReportMD            string
+	Status              string // "" = draft
+	ReportReady         bool
+	Compliance          json.RawMessage
 	// P3：绑定的平台项目 + 该项目等级映射后的平台等级（没有映射时为空）。
 	ProgramID     int64
 	PlatformLevel string
@@ -229,15 +234,16 @@ RETURNING id`,
 		return nil, nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `
-INSERT INTO src_finding_meta(finding_id, task_id, fingerprint, compliance, report_ready)
-VALUES ($1,$2,$3,$4,$5)
+INSERT INTO src_finding_meta(finding_id, task_id, fingerprint, degraded_fingerprint, compliance, report_ready)
+VALUES ($1,$2,$3,$4,$5,$6)
 ON CONFLICT (finding_id) DO UPDATE SET
-    task_id      = EXCLUDED.task_id,
-    fingerprint  = EXCLUDED.fingerprint,
-    compliance   = EXCLUDED.compliance,
-    report_ready = EXCLUDED.report_ready,
-    updated_at   = now()`,
-		in.FindingID, in.TaskID, in.Fingerprint, string(compliance), in.ReportReady); err != nil {
+    task_id              = EXCLUDED.task_id,
+    fingerprint          = EXCLUDED.fingerprint,
+    degraded_fingerprint = EXCLUDED.degraded_fingerprint,
+    compliance           = EXCLUDED.compliance,
+    report_ready         = EXCLUDED.report_ready,
+    updated_at           = now()`,
+		in.FindingID, in.TaskID, in.Fingerprint, in.DegradedFingerprint, string(compliance), in.ReportReady); err != nil {
 		return nil, nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -462,9 +468,9 @@ func (s *SrcStore) GetSrcFindingMeta(ctx context.Context, findingID int64) (*Src
 	var dedupe sql.NullInt64
 	var compliance []byte
 	err := s.db.QueryRowContext(ctx, `
-SELECT finding_id, COALESCE(task_id,0), fingerprint, compliance, report_ready, dedupe_of, updated_at
+SELECT finding_id, COALESCE(task_id,0), fingerprint, degraded_fingerprint, compliance, report_ready, dedupe_of, updated_at
 FROM src_finding_meta WHERE finding_id=$1`, findingID).
-		Scan(&m.FindingID, &m.TaskID, &m.Fingerprint, &compliance, &m.ReportReady, &dedupe, &m.UpdatedAt)
+		Scan(&m.FindingID, &m.TaskID, &m.Fingerprint, &m.DegradedFingerprint, &compliance, &m.ReportReady, &dedupe, &m.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -476,6 +482,42 @@ FROM src_finding_meta WHERE finding_id=$1`, findingID).
 		m.DedupeOf = dedupe.Int64
 	}
 	return &m, nil
+}
+
+// SrcSuspectsByDegradedFingerprint 查"低置信相似"的发现：没有绑定流量时用类型 +
+// host/路径 + 参数名算出的降级指纹。命中只作提示，不写 dedupe_of、不阻断交付。
+func (s *SrcStore) SrcSuspectsByDegradedFingerprint(ctx context.Context, fingerprint string, excludeFindingID int64, limit int) ([]SrcDuplicate, error) {
+	fingerprint = strings.TrimSpace(fingerprint)
+	if s == nil || s.db == nil || fingerprint == "" {
+		return nil, nil
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT f.task_id, COALESCE(t.name,''), f.id, COALESCE(NULLIF(f.name,''), f.vulnclass),
+       f.severity, f.status, COALESCE(s.platform,''), COALESCE(s.external_id,''),
+       COALESCE(s.status,''), to_char(f.created_at,'YYYY-MM-DD HH24:MI')
+FROM src_finding_meta m
+JOIN findings f ON f.id = m.finding_id
+LEFT JOIN tasks t ON t.id = f.task_id
+LEFT JOIN src_submissions s ON s.finding_id = f.id AND s.platform = ''
+WHERE m.degraded_fingerprint = $1 AND f.id <> $2
+ORDER BY f.id DESC LIMIT $3`, fingerprint, excludeFindingID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []SrcDuplicate{}
+	for rows.Next() {
+		var d SrcDuplicate
+		if err := rows.Scan(&d.TaskID, &d.TaskName, &d.FindingID, &d.Title, &d.Severity,
+			&d.Status, &d.Platform, &d.ExternalID, &d.SubmissionSt, &d.CreatedAtText); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }
 
 // SetSrcDedupeOf records "this finding looks like that one" (0 clears it).

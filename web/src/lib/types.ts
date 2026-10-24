@@ -1139,6 +1139,19 @@ export interface SrcPrepareResult {
     external_id?: string;
     submission_status?: string;
   }>;
+  /** 低置信相似发现（无流量时的降级指纹命中）：只提示，不自动定案。 */
+  suspects?: Array<{
+    task_id: number;
+    task_name?: string;
+    finding_id: number;
+    title: string;
+    severity: string;
+    status: string;
+    platform?: string;
+    external_id?: string;
+    submission_status?: string;
+  }>;
+  degraded_fingerprint?: string;
   dedupe_of?: number;
   markdown?: string;
   gaps_total: number;

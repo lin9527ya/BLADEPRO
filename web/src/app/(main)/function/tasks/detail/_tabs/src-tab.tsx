@@ -32,6 +32,7 @@ import type {
   SrcCheckItem,
   SrcMatrixAsset,
   SrcMatrixCell,
+  SrcPrepareResult,
   SrcSubmission,
   SrcTaskState,
 } from "@/lib/types";
@@ -210,6 +211,7 @@ export function SrcTab({ taskId }: { taskId: string }) {
   const [prepImpact, setPrepImpact] = React.useState("");
   const [prepFix, setPrepFix] = React.useState("");
   const [prepIssues, setPrepIssues] = React.useState<string[]>([]);
+  const [prepSuspects, setPrepSuspects] = React.useState<NonNullable<SrcPrepareResult["suspects"]>>([]);
   const [prepNote, setPrepNote] = React.useState("");
   const [prepError, setPrepError] = React.useState("");
   const [prepSaving, setPrepSaving] = React.useState(false);
@@ -387,6 +389,7 @@ export function SrcTab({ taskId }: { taskId: string }) {
     setPrepSaving(true);
     setPrepError("");
     setPrepIssues([]);
+    setPrepSuspects([]);
     setPrepNote("");
     try {
       const result = await api.prepareSrcSubmission(findingID, {
@@ -395,6 +398,7 @@ export function SrcTab({ taskId }: { taskId: string }) {
         fix: prepFix.trim() || undefined,
       });
       setPrepIssues(result.issues ?? []);
+      setPrepSuspects(result.suspects ?? []);
       setPrepNote(result.note ?? "");
       if (result.report_ready) {
         toast.success("可提交件已齐备（status=ready）");
@@ -1155,6 +1159,18 @@ export function SrcTab({ taskId }: { taskId: string }) {
                 <ul className="text-muted-foreground list-disc space-y-0.5 pl-4 text-xs [overflow-wrap:anywhere]">
                   {prepIssues.map((issue) => (
                     <li key={issue}>{issue}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {prepSuspects.length > 0 ? (
+              <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
+                <p className="mb-1 text-xs font-medium">疑似重复（低置信，未自动定案）：</p>
+                <ul className="text-muted-foreground list-disc space-y-0.5 pl-4 text-xs [overflow-wrap:anywhere]">
+                  {prepSuspects.map((s) => (
+                    <li key={`${s.finding_id}-${s.task_id}`}>
+                      #{s.finding_id} {s.title} · {s.severity} · {s.task_name || `任务 ${s.task_id}`}
+                    </li>
                   ))}
                 </ul>
               </div>

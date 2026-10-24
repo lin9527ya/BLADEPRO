@@ -155,6 +155,13 @@ func (s *Server) prepareSrcSubmission(ctx context.Context, req agent.SrcPrepareR
 	if err != nil {
 		return nil, err
 	}
+	// 降级指纹：没有可核实的端点时，用类型 + 资产 host/路径 + 参数名给一个低置信
+	// 指纹。它只用来提示"疑似重复"，不自动写 dedupe_of（见 src_finding_meta 注释）。
+	degradedFP := s.srcDegradedFingerprint(f)
+	var suspects []db.SrcDuplicate
+	if degradedFP != "" {
+		suspects, _ = store.SrcSuspectsByDegradedFingerprint(ctx, degradedFP, f.ID, 10)
+	}
 
 	complianceJSON, _ := json.Marshal(map[string]any{
 		"ok":     len(issues) == 0,
@@ -172,7 +179,8 @@ func (s *Server) prepareSrcSubmission(ctx context.Context, req agent.SrcPrepareR
 	sub, meta, err := store.PrepareSrcSubmission(ctx, db.SrcSubmissionInput{
 		TaskID: req.TaskID, FindingID: f.ID, Platform: req.Platform,
 		Title: title, Severity: f.Severity, Fingerprint: fingerprint,
-		Description: description, Impact: impact, Fix: fix, ReportMD: markdown,
+		DegradedFingerprint: degradedFP,
+		Description:         description, Impact: impact, Fix: fix, ReportMD: markdown,
 		Status: status, ReportReady: ready, Compliance: complianceJSON,
 		ProgramID: programID, PlatformLevel: platformLevel,
 	})
@@ -193,7 +201,8 @@ func (s *Server) prepareSrcSubmission(ctx context.Context, req agent.SrcPrepareR
 
 	res := &agent.SrcPrepareResult{
 		SubmissionID: sub.ID, Status: sub.Status, Fingerprint: fingerprint, ReportReady: ready,
-		Issues: issues, Duplicates: srcDuplicateRefs(dupes), DedupeOf: dedupeOf,
+		Issues: issues, Duplicates: srcDuplicateRefs(dupes), Suspects: srcDuplicateRefs(suspects),
+		DegradedFP: degradedFP, DedupeOf: dedupeOf,
 		Markdown: clipRunes(markdown, 4000),
 	}
 	if doc := s.srcDocForTask(req.TaskID); doc.IsSrc() {
@@ -209,7 +218,41 @@ func (s *Server) prepareSrcSubmission(ctx context.Context, req agent.SrcPrepareR
 	} else {
 		res.Note = "可提交件已齐备（status=ready）。"
 	}
+	if len(suspects) > 0 {
+		res.Note = strings.TrimSpace(res.Note + " " + srcSuspectNote(suspects))
+	}
 	return res, nil
+}
+
+// srcDegradedFingerprint 用发现关联的第一个可解析资产算降级指纹；没有资产 URL 时为空。
+func (s *Server) srcDegradedFingerprint(f *db.DBFinding) string {
+	if f == nil || len(f.AssetIDs) == 0 {
+		return ""
+	}
+	assets := s.resolveAssetIDs(f.AssetIDs)
+	for _, id := range f.AssetIDs {
+		a := assets[id]
+		if a == nil {
+			continue
+		}
+		if u := a.TargetURL(); u != "" {
+			return report.DegradedFingerprint(f.VulnClass, u, a.ParamNames())
+		}
+	}
+	return ""
+}
+
+func srcSuspectNote(suspects []db.SrcDuplicate) string {
+	parts := make([]string, 0, 3)
+	for i, d := range suspects {
+		if i >= 3 {
+			parts = append(parts, "…")
+			break
+		}
+		parts = append(parts, fmt.Sprintf("#%d %s", d.FindingID, d.Title))
+	}
+	return fmt.Sprintf("另有 %d 条低置信相似发现（仅提示，不自动定案）：%s。确认是同一个洞请手动 mark duplicate，否则忽略。",
+		len(suspects), strings.Join(parts, "、"))
 }
 
 // srcDocForTask 读出任务的 SRC 模式快照（非 SRC 任务返回零值——注意不能只 Parse：

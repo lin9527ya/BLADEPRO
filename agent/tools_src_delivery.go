@@ -50,11 +50,14 @@ type SrcPrepareResult struct {
 	ReportReady  bool              `json:"report_ready"`
 	Issues       []string          `json:"issues,omitempty"`
 	Duplicates   []SrcDuplicateRef `json:"duplicates,omitempty"`
-	DedupeOf     int64             `json:"dedupe_of,omitempty"`
-	Markdown     string            `json:"markdown,omitempty"`
-	GapsTotal    int               `json:"gaps_total"`
-	Finishable   bool              `json:"finishable"`
-	Note         string            `json:"note,omitempty"`
+	// Suspects 是低置信相似发现（无流量时的降级指纹命中）：只提示，不自动定案。
+	Suspects   []SrcDuplicateRef `json:"suspects,omitempty"`
+	DegradedFP string            `json:"degraded_fingerprint,omitempty"`
+	DedupeOf   int64             `json:"dedupe_of,omitempty"`
+	Markdown   string            `json:"markdown,omitempty"`
+	GapsTotal  int               `json:"gaps_total"`
+	Finishable bool              `json:"finishable"`
+	Note       string            `json:"note,omitempty"`
 }
 
 // SrcPreparer is the host implementation of submission preparation.
@@ -130,7 +133,7 @@ func (t *ToolSet) srcDedupe() actool.CoreTool {
 			"  check   —— 返回指纹与跨任务命中的同类发现（默认）；\n"+
 			"  mark    —— 确认「这条是 of_finding_id 的重复」，写 dedupe_of（收尾门会要求台账标 duplicate）；\n"+
 			"  clear   —— 解除 dedupe_of（人工确认「不是同一个洞」）。\n"+
-			"指纹只在有绑定流量时才有值；没有证据的发现不参与归并。",
+			"指纹优先用绑定流量（类型 + 归一化端点，对象 ID 已折叠）；没有流量时用类型 + 资产 host/路径 + 参数名给低置信疑似重复（suspects，只提示，不自动定案）。",
 		obj(map[string]any{
 			"finding_id":    intp("要查重/定案的发现 id"),
 			"action":        str("check（默认）| mark | clear"),
@@ -203,6 +206,20 @@ func (t *ToolSet) srcDedupe() actool.CoreTool {
 				"fingerprint": fingerprint,
 				"duplicates":  toSrcDuplicateRefs(dupes),
 			}
+			// 没有绑定流量时给低置信提示：类型 + 资产 host/路径 + 参数名。它不写
+			// dedupe_of，也不进交付门；agent/人自己决定要不要 mark。
+			degraded := ""
+			if fingerprint == "" {
+				degraded = t.srcDegradedFingerprintFor(ctx, f)
+				if degraded != "" {
+					suspects, sErr := t.srcStore.SrcSuspectsByDegradedFingerprint(ctx, degraded, req.FindingID, 20)
+					if sErr != nil {
+						return actool.Errorf("低置信查重失败：" + sErr.Error()), nil
+					}
+					out["degraded_fingerprint"] = degraded
+					out["suspects"] = toSrcDuplicateRefs(suspects)
+				}
+			}
 			if meta != nil && meta.DedupeOf > 0 {
 				out["dedupe_of"] = meta.DedupeOf
 			}
@@ -214,7 +231,11 @@ func (t *ToolSet) srcDedupe() actool.CoreTool {
 				out["note"] = "已登记重复：把台账状态标为 duplicate 后收尾门才会放行"
 			}
 			if fingerprint == "" {
-				out["note"] = "该发现没有绑定流量，算不出指纹：无法查重（先绑证据）"
+				if degraded != "" {
+					out["note"] = "该发现没有绑定流量：只能用降级指纹给低置信疑似重复（不自动定案）。确认是同一个洞请手动 mark duplicate；要精确查重请先绑证据。"
+				} else {
+					out["note"] = "该发现没有绑定流量，也算不出降级指纹（缺资产 URL）：无法查重（先绑证据）"
+				}
 			}
 			return jsonResult(out)
 		})
@@ -231,6 +252,26 @@ func (t *ToolSet) srcFingerprintFor(ctx context.Context, f *db.DBFinding) string
 		refs = append(refs, report.EndpointRef{Method: b.Snapshot.Method, URL: b.Snapshot.URL})
 	}
 	return report.Fingerprint(f.VulnClass, refs)
+}
+
+// srcDegradedFingerprintFor 用发现关联的第一个可解析资产算降级指纹。
+func (t *ToolSet) srcDegradedFingerprintFor(ctx context.Context, f *db.DBFinding) string {
+	if t.as == nil || f == nil || len(f.AssetIDs) == 0 {
+		return ""
+	}
+	assets, err := t.as.GetByIDs(f.AssetIDs)
+	if err != nil {
+		return ""
+	}
+	for _, a := range assets {
+		if a == nil {
+			continue
+		}
+		if u := a.TargetURL(); u != "" {
+			return report.DegradedFingerprint(f.VulnClass, u, a.ParamNames())
+		}
+	}
+	return ""
 }
 
 func toSrcDuplicateRefs(in []db.SrcDuplicate) []SrcDuplicateRef {

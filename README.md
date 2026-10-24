@@ -88,7 +88,7 @@ report_finding → 绑 proof/verification 流量 → src_prepare_submission（�
 
 **独立复验**：中危及以上在准备交付件前必须有一次 `verdict=reproduced` 的独立复验（retester 会话，干净上下文，只按原始证据做最小重放）。第一次准备会自动发起并落 `draft`；等结论回来后再准备一次才会 `ready`。`fixed`/`inconclusive` 不会自动重试。program 可用 `require_retest:false` 关闭。
 
-**去重**：指纹 = 漏洞类型 + 归一化端点集合（`report.Fingerprint`），只在有绑定流量时才有值。跨任务命中会写 `dedupe_of` 并把 `delivery/duplicate` 顶到收尾门上，必须有人定案（台账标 `duplicate` 或 `src_dedupe clear`）才放行。
+**去重**：精确指纹 = 受控漏洞类型 + 归一化端点集合（路径里的对象 ID 折叠为 `{id}`），只在有绑定流量时才有值。跨任务命中会写 `dedupe_of` 并把 `delivery/duplicate` 顶到收尾门上，必须有人定案（台账标 `duplicate` 或 `src_dedupe clear`）才放行。没有流量时用「类型 + 资产 host/路径 + 参数名」算 `d1:` 降级指纹，只作低置信疑似重复提示（`suspects`），**不自动定案**。
 
 **台账状态机**：`draft → ready → submitted → accepted | duplicate | rejected`，`accepted → paid`，任意 → `withdrawn`。`submitted` 必须带 `external_id`（平台编号或提交凭证）；`duplicate` 必须已登记 `dedupe_of`。
 

@@ -58,6 +58,21 @@
 - 回归：clear 证据/allow 开关、platform_exempt 豁免依据、static_page 按面白名单、
   Program→mode_doc 编译；集成测试夹具显式打开 allow 以聚焦各自断言。
 
+### 优化：语义去重（P1）
+
+- **指纹 v2**：路径对象 ID（数字 / UUID / 长 hex）折叠为 `{id}`，`/user/123` 与
+  `/user/456` 不再算成两个洞；漏洞类型走受控词表（`sqli` / `SQL注入` / `SQL Injection`
+  归一为 `sql_injection`，越权/IDOR 归一为 `authorization`），未知类型退化为稳定 slug。
+  指纹输入加 `v2|` 前缀，新旧口径不会半匹配。
+- **降级指纹**：没有绑定流量时，用「受控类型 + 资产 host/路径 + 参数名」算 `d1:` 前缀
+  的低置信指纹，存入 `src_finding_meta.degraded_fingerprint`。它只用于**疑似重复提示**：
+  `src_dedupe check` 返回 `suspects`，`src_prepare_submission` 在 Note 里列出，
+  不写 `dedupe_of`、不进交付门。
+- 精确指纹仍只由「类型 + 归一化端点集合」计算；升级前已准备的台账指纹不重算（可能不再
+  自动命中新指纹），新准备会写入 v2 指纹与降级指纹。
+- 回归：ID 折叠/类型归一/降级指纹单测；PG 用例验证 degraded 字段落库、查询排除自己、
+  且不会被精确查重命中。
+
 ### 新增：提交前独立复验（P1）
 
 - medium+ 发现在 `src_prepare_submission` 准备交付件前，必须有一次

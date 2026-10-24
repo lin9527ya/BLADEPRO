@@ -246,3 +246,73 @@ func TestSrcHostInScope(t *testing.T) {
 		t.Fatalf("没有可判定的 scope 时应返回不可判定：in=%v decidable=%v err=%v", in, decidable, err)
 	}
 }
+
+// TestSrcDegradedFingerprintSuspects 钉住低置信查重：degraded_fingerprint 落库，
+// 查询排除自己、只按该字段命中（不会误用精确指纹）。
+func TestSrcDegradedFingerprintSuspects(t *testing.T) {
+	dsn, _, err := DSN()
+	if err != nil {
+		t.Skipf("no postgres configured (%v) — skipping", err)
+	}
+	d, err := Open(dsn)
+	if err != nil {
+		t.Skipf("postgres unavailable (%v) — skipping", err)
+	}
+	t.Cleanup(func() { d.Close() })
+
+	task, err := d.CreateTaskWithOptions("src-degraded-test", "降级指纹", TaskCreateOptions{})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	var expID int64
+	if err := d.QueryRow(`SELECT exploration_id FROM tasks WHERE id=$1`, task.ID).Scan(&expID); err != nil {
+		t.Fatalf("exploration: %v", err)
+	}
+	f1, err := d.AddFinding(task.ID, 0, "authz", "越权 A", "high", "same shape", "", "test", nil)
+	if err != nil {
+		t.Fatalf("add finding 1: %v", err)
+	}
+	f2, err := d.AddFinding(task.ID, 0, "authz", "越权 B", "high", "same shape", "", "test", nil)
+	if err != nil {
+		t.Fatalf("add finding 2: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = d.Exec(`DELETE FROM src_submissions WHERE task_id=$1`, task.ID)
+		_, _ = d.Exec(`DELETE FROM src_finding_meta WHERE task_id=$1`, task.ID)
+		_, _ = d.Exec(`DELETE FROM findings WHERE task_id=$1`, task.ID)
+		_, _ = d.Exec(`DELETE FROM tasks WHERE id=$1`, task.ID)
+		_, _ = d.Exec(`DELETE FROM explorations WHERE id=$1`, expID)
+	})
+
+	store := d.Src()
+	ctx := context.Background()
+	const dfp = "d1:deadbeefdeadbeef"
+	for _, fid := range []int64{f1, f2} {
+		if _, _, err := store.PrepareSrcSubmission(ctx, SrcSubmissionInput{
+			TaskID: task.ID, FindingID: fid, Title: "越权", Severity: "high",
+			DegradedFingerprint: dfp,
+			Description:         "描述", Impact: "危害", Fix: "修复",
+			Status: SrcSubDraft, ReportReady: false,
+		}); err != nil {
+			t.Fatalf("prepare %d: %v", fid, err)
+		}
+	}
+	meta, err := store.GetSrcFindingMeta(ctx, f1)
+	if err != nil || meta == nil || meta.DegradedFingerprint != dfp {
+		t.Fatalf("degraded_fingerprint 未落库：%+v err=%v", meta, err)
+	}
+	suspects, err := store.SrcSuspectsByDegradedFingerprint(ctx, dfp, f2, 10)
+	if err != nil {
+		t.Fatalf("suspects: %v", err)
+	}
+	if len(suspects) != 1 || suspects[0].FindingID != f1 {
+		t.Fatalf("应只命中另一条发现：%+v", suspects)
+	}
+	exact, err := store.SrcDuplicatesByFingerprint(ctx, dfp, f2, 10)
+	if err != nil {
+		t.Fatalf("exact query: %v", err)
+	}
+	if len(exact) != 0 {
+		t.Fatalf("降级指纹不该被精确查重命中：%+v", exact)
+	}
+}

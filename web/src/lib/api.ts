@@ -1336,6 +1336,11 @@ export const api = {
     max_tokens_field?: string; // ""=max_tokens(默认) | "max_completion_tokens"（仅 openai 格式）
     session_header_key?: string; // 非空=每次请求带该 HTTP 头，头值=当前会话 session id；""=不发送
     retry?: LLMRetryOverride; // 本配置的重试覆盖；各项留 0 = 跟随全局重试策略
+    tier?: string; // cheap | standard | strong；llm_auto_tier 自动路由的选择依据
+    input_price_per_mtok?: number; // 单价（USD / 1M tokens）；0 = 未配置，成本记 0
+    output_price_per_mtok?: number;
+    cache_read_price_per_mtok?: number;
+    cache_write_price_per_mtok?: number;
   }) => post<{ id: number }>("/llm/profiles", p),
   deleteLLMProfile: (id: string) => del<{ deleted: number }>(`/llm/profiles/${id}`),
   activateLLMProfile: (id: string) => post<{ ok: boolean }>("/llm/profiles/active", { id: Number(id) }),

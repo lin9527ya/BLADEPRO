@@ -1699,6 +1699,8 @@ export interface ProfileUsage {
   output_tokens: number;
   cache_read_tokens: number;
   cache_write_tokens: number;
+  // 按调用时单价的成本归因（USD）。单价 0 的配置贡献 0。
+  cost_usd: number;
 }
 
 // One (profile, UTC day) token bucket for the dashboard's daily chart (new source).
@@ -1708,6 +1710,7 @@ export interface ProfileDayUsage {
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens: number;
+  cost_usd: number;
 }
 
 // Response of GET /api/tokens/usage — the dashboard's "new" (llm_usage) token view.
@@ -1725,6 +1728,8 @@ export interface ModelTokenStat {
   output_tokens: number;
   cache_read_tokens: number;
   cache_write_tokens: number;
+  // 该模型（按调用时 profile 单价折算）的成本，USD。
+  cost_usd: number;
 }
 
 export interface Session {
@@ -1853,6 +1858,9 @@ export interface Settings {
   llm_pool_enabled?: boolean; // 默认 false
   // 绑定了指定配置的 agent/任务失败时是否也回落到轮询链。默认 false = 绑定即独占。
   llm_pool_bind_fallback?: boolean;
+  // 模型分层自动路由（默认关）：没有显式绑定、也没有任务配置链时，
+  // planner/goals 用 cheap、worker 用 strong。显式绑定/任务链优先。
+  llm_auto_tier?: boolean;
   // 操作约束注入范围(默认都开):把任务的 allow/deny 约束拼进对应 agent 的系统提示。
   constraints_inject_planner?: boolean;
   constraints_inject_worker?: boolean;
@@ -1993,6 +2001,14 @@ export interface LLMProfile {
   session_header_key?: string;
   // 本配置对重试的覆盖（建连/空响应/同 provider 安全窗口）。留空/全 0 = 跟随全局策略。
   retry?: LLMRetryOverride;
+  // 成本分层：cheap / standard / strong。开启 llm_auto_tier 后，未显式绑定的
+  // planner/goals 用 cheap、worker 用 strong；standard 不参与自动路由。
+  tier?: string;
+  // 单价（USD / 1M tokens）。0 = 未配置，成本记 0。用于 llm_usage.cost_usd 归因。
+  input_price_per_mtok?: number;
+  output_price_per_mtok?: number;
+  cache_read_price_per_mtok?: number;
+  cache_write_price_per_mtok?: number;
 }
 
 // ---- LLM 重试策略 ----

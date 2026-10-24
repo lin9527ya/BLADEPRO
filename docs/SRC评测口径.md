@@ -34,7 +34,7 @@
 | 报告可提交率 | `findings_report_ready / findings_medium_plus` | `/api/src/stats` |
 | 重复率 | 台账标 `duplicate` 数 ÷ 台账总数 | `/api/src/stats` |
 | 交付节奏 | `submitted_at − created_at` 的中位数 | 台账 |
-| 成本 | 任务 token 总量 / 有效发现数 | 任务 DTO `tokens` |
+| 成本 | 任务 token 总量与 `cost_usd` / 有效发现数 | 任务 DTO `tokens`、按模型明细的 `cost_usd` |
 | 误报率 | 人工抽检 10 条 finding 中不成立的比例 | 人工 |
 
 判读建议：
@@ -46,7 +46,8 @@
 - **N/A 占比突然变高**要抽检：`na_code` 保证了"有依据才能标"，但依据本身可能是错的（例如把 WAF 拦
   当成"无入口"）。`suspicious_na > 0` 的资产必须人看；
 - **B 的"有效发现数 ÷ token"不应低于 A 太多**：SRC 是广度换深度，单条成本会上升，
-  但"每条可提交件的成本"应该可接受；
+  但"每条可提交件的成本"应该可接受；配置了单价的 profile 直接看 `cost_usd`，
+  0 单价只代表未配置，不能当作"零成本"；
 - **报告可提交率 < 80%** 说明交付门在起作用但 agent 没跟上——看 `src_state` 的
   `delivery` 缺口里是 `report_missing`（没写正文）还是 `duplicate`（没定案）；
 - **重复率突然变高**：查是否同一目标被多任务重复挖（指纹跨任务命中），这时应该合并任务，

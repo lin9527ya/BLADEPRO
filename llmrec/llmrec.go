@@ -60,6 +60,52 @@ func workerFrom(ctx context.Context) string {
 	return strings.TrimSpace(worker)
 }
 
+type intentContextKey struct{}
+
+// WithIntent attaches the owning intent id to an LLM call so usage rows can be
+// attributed to a specific worker run (0/absent = planner/compaction/non-intent).
+func WithIntent(ctx context.Context, intentID int64) context.Context {
+	if intentID <= 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, intentContextKey{}, intentID)
+}
+
+// IntentFrom returns the explicit intent id attached by the engine.
+func IntentFrom(ctx context.Context) int64 {
+	if ctx == nil {
+		return 0
+	}
+	id, _ := ctx.Value(intentContextKey{}).(int64)
+	return id
+}
+
+// Prices is one profile's USD unit prices per 1M tokens. Zero values = unknown
+// (cost is recorded as 0 rather than guessed).
+type Prices struct {
+	InputPerMTok      float64
+	OutputPerMTok     float64
+	CacheReadPerMTok  float64
+	CacheWritePerMTok float64
+}
+
+// Cost returns the USD cost of one call's token usage.
+//
+// llm.Usage.InputTokens is the TOTAL prompt tokens INCLUDING cached tokens
+// (OpenAI prompt_tokens semantics; Norma folds Anthropic's cache read/creation
+// into it). Charging the full input rate on top of the cache rates would bill the
+// cached subset twice, so the uncached remainder is what pays the input rate.
+func (p Prices) Cost(u llm.Usage) float64 {
+	uncached := u.InputTokens - u.CacheReadTokens - u.CacheWriteTokens
+	if uncached < 0 {
+		uncached = 0
+	}
+	return (float64(uncached)*p.InputPerMTok +
+		float64(u.OutputTokens)*p.OutputPerMTok +
+		float64(u.CacheReadTokens)*p.CacheReadPerMTok +
+		float64(u.CacheWriteTokens)*p.CacheWritePerMTok) / 1e6
+}
+
 // Recorder wraps an llm.Provider and records every completion call.
 type Recorder struct {
 	inner llm.Provider
@@ -71,6 +117,7 @@ type Recorder struct {
 	// CompletionRequest 上,故 Recorder 需在此单独带一份,序列化时写进录制。
 	thinkingType    string
 	reasoningEffort string
+	prices          Prices
 	enabled         func() bool // reports whether recording is currently on; nil = always record
 }
 
@@ -79,9 +126,15 @@ type Recorder struct {
 // reasoningEffort are the config-level thinking params actually sent to the API
 // (empty = not sent). A nil enabled predicate records unconditionally.
 func Wrap(inner llm.Provider, pg *db.DB, model, profName, thinkingType, reasoningEffort string, enabled func() bool) *Recorder {
+	return WrapPriced(inner, pg, model, profName, thinkingType, reasoningEffort, Prices{}, enabled)
+}
+
+// WrapPriced is Wrap with per-profile unit prices for cost attribution.
+func WrapPriced(inner llm.Provider, pg *db.DB, model, profName, thinkingType, reasoningEffort string, prices Prices, enabled func() bool) *Recorder {
 	return &Recorder{
 		inner: inner, pg: pg, model: model, prof: profName,
-		thinkingType: thinkingType, reasoningEffort: reasoningEffort, enabled: enabled,
+		thinkingType: thinkingType, reasoningEffort: reasoningEffort,
+		prices: prices, enabled: enabled,
 	}
 }
 
@@ -167,7 +220,7 @@ func (r *Recorder) Stream(ctx context.Context, req llm.CompletionRequest) iter.S
 				status = "error"
 			}
 			// Lightweight metering row — always written.
-			r.recordUsage(taskID, expID, worker, usage, int(time.Since(start).Milliseconds()), status)
+			r.recordUsage(taskID, expID, worker, IntentFrom(ctx), usage, int(time.Since(start).Milliseconds()), status)
 			// Heavy trace row — only when body recording is on.
 			if recordBodies {
 				r.record(req, session, taskID, worker, reqBody, capt, start, textBuf.String(), thinkingBuf.String(), usage, stopReason, err)
@@ -245,7 +298,7 @@ func (r *Recorder) Complete(ctx context.Context, req llm.CompletionRequest) (llm
 	if err != nil {
 		status = "error"
 	}
-	r.recordUsage(taskID, expID, worker, usage, int(time.Since(start).Milliseconds()), status)
+	r.recordUsage(taskID, expID, worker, IntentFrom(ctx), usage, int(time.Since(start).Milliseconds()), status)
 	if recordBodies {
 		r.record(req, session, taskID, worker, reqBody, capt, start, msg.Text(), thinkingText(msg), usage, stopReason, err)
 	}
@@ -264,7 +317,7 @@ func thinkingText(msg llm.Message) string {
 
 // recordUsage appends one lightweight metering row to llm_usage (no bodies). Skips
 // zero-token calls with no model, which carry nothing worth metering.
-func (r *Recorder) recordUsage(taskID string, expID int64, worker string, usage llm.Usage, latencyMs int, status string) {
+func (r *Recorder) recordUsage(taskID string, expID int64, worker string, intentID int64, usage llm.Usage, latencyMs int, status string) {
 	if r.pg == nil {
 		return
 	}
@@ -283,6 +336,8 @@ func (r *Recorder) recordUsage(taskID string, expID int64, worker string, usage 
 		OutputTokens:  usage.OutputTokens,
 		CacheRead:     usage.CacheReadTokens,
 		CacheWrite:    usage.CacheWriteTokens,
+		IntentID:      intentID,
+		CostUSD:       r.prices.Cost(usage),
 		Status:        status,
 	})
 	if err != nil {

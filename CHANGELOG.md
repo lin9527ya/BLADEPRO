@@ -4,6 +4,25 @@
 
 ## [Unreleased]
 
+### 新增：模型分层与成本归因（P2）
+
+- `llm_profiles` 增加 `tier`（cheap / standard / strong）与四个单价
+  （`input/output/cache_read/cache_write_price_per_mtok`，USD / 1M tokens）。
+  tier 拼错/空值在 store 层回落 standard，负单价归零；旧库幂等补列并加 CHECK。
+- `llm_usage` 增加 `intent_id` 与 `cost_usd`：每次调用按**调用时**的 profile 单价折算，
+  改价不回溯历史账；0 单价记 0（表示未配置，不是"免费"）。
+  `TokenByModel` / `UsageByProfile` / `UsageDaily` 一并聚合成本。
+- 新设置 `llm_auto_tier`（默认关）：任务角色在既没有 Agent 显式绑定、也没有任务配置链时，
+  planner/goals 自动选 `cheap`、worker 自动选 `strong`；同档候选按「激活配置 → priority
+  降序 → id 升序」选择且必须能构建 provider。显式绑定与任务链永远优先，自动选择不会覆盖。
+- `llmrec` 新增 `Prices.Cost` / `WrapPriced` / `WithIntent`；engine 在 worker 运行时把
+  `intent_id` 注入 context，成本可归因到具体意图。legacy `saveLLMConfig` 不再清空
+  tier/单价。
+- UI：配置弹窗增加 tier 与四个单价输入；任务总览的 token 卡片显示成本（合计 + 按模型）。
+- 文档/评测：`docs/SRC评测口径.md` 的成本口径补上 `cost_usd`，可直接算
+  「每条有效发现的成本」。
+- 回归：`Prices.Cost`/意图 context、tier/单价存取归一、按模型成本聚合、
+  自动分层角色映射与候选排序。
 ### 修复：SRC 收尾门的三处绕过
 
 - **超时/预算收尾不再绕过收尾门**：`settleTask` 的终局 planner 轮返回 `met` 时也要过

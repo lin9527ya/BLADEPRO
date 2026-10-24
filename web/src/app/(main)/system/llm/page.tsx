@@ -8,6 +8,8 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api";
 import type { LLMPoolMember, LLMPoolStatus, LLMProfile } from "@/lib/types";
@@ -61,6 +63,10 @@ export default function LLMPage() {
   const [profiles, setProfiles] = React.useState<LLMProfile[]>([]);
   const [pool, setPool] = React.useState<LLMPoolStatus | null>(null);
   const [poolOpen, setPoolOpen] = React.useState(false);
+  // 模型分层自动路由（默认关）。打开后未显式绑定的 planner/goals 用 cheap、
+  // worker 用 strong；这里只做一个开关，具体档位在配置弹窗里填。
+  const [autoTier, setAutoTier] = React.useState(false);
+  const [autoTierBusy, setAutoTierBusy] = React.useState(false);
   // 抽屉的开关和内容分开存：关闭时 editing 保持不变，否则关闭动画期间标题会从
   // 「编辑 X」闪成「新建」。editing = null 表示新建。
   const [editOpen, setEditOpen] = React.useState(false);
@@ -81,6 +87,12 @@ export default function LLMPage() {
   const load = React.useCallback(async () => {
     try {
       setProfiles(await api.llmProfiles());
+    } catch {
+      /* ignore */
+    }
+    try {
+      const st = await api.settings();
+      setAutoTier(st.llm_auto_tier ?? false);
     } catch {
       /* ignore */
     }
@@ -122,6 +134,20 @@ export default function LLMPage() {
     }
   }
 
+  async function toggleAutoTier(v: boolean) {
+    if (autoTierBusy) return;
+    setAutoTierBusy(true);
+    try {
+      const st = await api.setSettings({ llm_auto_tier: v });
+      setAutoTier(st.llm_auto_tier ?? v);
+      toast.success(v ? "已开启模型分层自动路由" : "已关闭模型分层自动路由");
+    } catch (e) {
+      toast.error(`设置失败：${(e as Error).message}`);
+    } finally {
+      setAutoTierBusy(false);
+    }
+  }
+
   const poolOn = pool?.enabled ?? false;
 
   return (
@@ -133,7 +159,19 @@ export default function LLMPage() {
             全 Agent 共享的格式 / 模型 / 限速配置。点击卡片编辑，星标为当前激活配置。
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2 rounded-md border px-2.5 py-1.5">
+            <Label htmlFor="llm-auto-tier" className="text-xs">
+              模型分层自动路由
+            </Label>
+            <Switch
+              id="llm-auto-tier"
+              checked={autoTier}
+              disabled={autoTierBusy}
+              onCheckedChange={(v) => void toggleAutoTier(v)}
+              aria-label="模型分层自动路由"
+            />
+          </div>
           <Button size="sm" variant="outline" onClick={() => setPoolOpen(true)}>
             <ZapIcon /> 轮询配置
             {poolOn && (
@@ -190,6 +228,11 @@ export default function LLMPage() {
                           <Badge variant="outline" className="uppercase">
                             {p.format}
                           </Badge>
+                          {p.tier && p.tier !== "standard" && (
+                            <Badge variant="outline" className="text-[10px]">
+                              {p.tier}
+                            </Badge>
+                          )}
                           <Badge variant="outline" className={cn("ml-auto", h.cls)} title={h.hint}>
                             {h.label}
                           </Badge>

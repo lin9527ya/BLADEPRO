@@ -495,6 +495,14 @@ CREATE TABLE IF NOT EXISTS llm_profiles (
     retry_empty_interval_ms   INTEGER NOT NULL DEFAULT 0,
     retry_stream_attempts     INTEGER NOT NULL DEFAULT 0,
     retry_stream_interval_ms  INTEGER NOT NULL DEFAULT 0,
+    -- 模型分层：cheap/standard/strong。llm_auto_tier 打开时 planner 系用 cheap、
+    -- worker 用 strong（显式绑定/任务 pin 优先，不覆盖）。
+    tier              TEXT NOT NULL DEFAULT 'standard',
+    -- 成本归因单价（USD / 1M tokens；0 = 未知，成本记 0）。
+    input_price_per_mtok       DOUBLE PRECISION NOT NULL DEFAULT 0,
+    output_price_per_mtok      DOUBLE PRECISION NOT NULL DEFAULT 0,
+    cache_read_price_per_mtok  DOUBLE PRECISION NOT NULL DEFAULT 0,
+    cache_write_price_per_mtok DOUBLE PRECISION NOT NULL DEFAULT 0,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -517,6 +525,16 @@ ALTER TABLE llm_profiles ADD  CONSTRAINT llm_profiles_format_check
 -- 旧配置行为完全不变。
 ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS max_tokens       INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS max_tokens_field TEXT    NOT NULL DEFAULT '';
+-- 模型分层与成本单价；补旧库。默认 standard / 0 = 行为不变。
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS tier                       TEXT NOT NULL DEFAULT 'standard';
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS input_price_per_mtok       DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS output_price_per_mtok      DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS cache_read_price_per_mtok  DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS cache_write_price_per_mtok DOUBLE PRECISION NOT NULL DEFAULT 0;
+-- 归一历史脏值后加约束（幂等：先删再建）。
+UPDATE llm_profiles SET tier='standard' WHERE tier IS NULL OR tier NOT IN ('cheap','standard','strong');
+ALTER TABLE llm_profiles DROP CONSTRAINT IF EXISTS llm_profiles_tier_check;
+ALTER TABLE llm_profiles ADD  CONSTRAINT llm_profiles_tier_check CHECK (tier IN ('cheap','standard','strong'));
 -- 同 format：先删再建，保证每次启动幂等。
 ALTER TABLE llm_profiles DROP CONSTRAINT IF EXISTS llm_profiles_max_tokens_field_check;
 ALTER TABLE llm_profiles ADD  CONSTRAINT llm_profiles_max_tokens_field_check

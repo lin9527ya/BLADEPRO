@@ -29,6 +29,14 @@ import { ProfileRetryFields, ZERO_OVERRIDE } from "./retry";
 
 // LLM 配置档（provider / 模型 / 代理 / 参数）的编辑弹窗。
 
+// 成本分层。开启「模型分层自动路由」后，未显式绑定的 planner/goals 用 cheap、
+// worker 用 strong；standard 是普通配置的默认标签，不参与自动路由。
+const TIERS = [
+  { value: "cheap", label: "cheap（便宜模型）" },
+  { value: "standard", label: "standard（常规）" },
+  { value: "strong", label: "strong（强模型）" },
+] as const;
+
 export function ProfileDialog({
   profile,
   open,
@@ -59,6 +67,12 @@ export function ProfileDialog({
   const [maxTokens, setMaxTokens] = React.useState("0"); // 单次回复输出上限;0=不发送
   const [maxTokensField, setMaxTokensField] = React.useState(NONE); // 上限用哪个字段名;NONE=max_tokens
   const [sessionHeaderKey, setSessionHeaderKey] = React.useState(""); // 自定义会话头名;空=不发送
+  const [tier, setTier] = React.useState("standard"); // 分层标签;standard=不参与自动路由
+  // 单价(USD / 1M tokens);0=未知。用于 llm_usage.cost_usd 的成本归因。
+  const [inputPrice, setInputPrice] = React.useState("0");
+  const [outputPrice, setOutputPrice] = React.useState("0");
+  const [cacheReadPrice, setCacheReadPrice] = React.useState("0");
+  const [cacheWritePrice, setCacheWritePrice] = React.useState("0");
 
   // opencode zen 网关强制要求 x-opencode-session（缺了 400 MissingSessionID）：
   // 地址是 opencode.ai 且输入框留空时，测试/保存都自动按该头名走（后端也有同款兜底）。
@@ -94,6 +108,11 @@ export function ProfileDialog({
     setMaxTokens(String(profile?.max_tokens ?? 0));
     setMaxTokensField(fromStore(profile?.max_tokens_field));
     setSessionHeaderKey(profile?.session_header_key ?? "");
+    setTier(profile?.tier ?? "standard");
+    setInputPrice(String(profile?.input_price_per_mtok ?? 0));
+    setOutputPrice(String(profile?.output_price_per_mtok ?? 0));
+    setCacheReadPrice(String(profile?.cache_read_price_per_mtok ?? 0));
+    setCacheWritePrice(String(profile?.cache_write_price_per_mtok ?? 0));
     setRetry(profile?.retry ?? ZERO_OVERRIDE);
     setApiKey("");
     setKeyHint(profile?.api_key_hint ?? "");
@@ -183,6 +202,11 @@ export function ProfileDialog({
         // 后端也会再做一次同样的归一化，这里只是别让 UI 送出自相矛盾的值。
         max_tokens_field: format === "openai" ? toStore(maxTokensField) : "",
         session_header_key: effectiveSessionHeader(baseUrl, sessionHeaderKey),
+        tier,
+        input_price_per_mtok: Math.max(0, Number(inputPrice) || 0),
+        output_price_per_mtok: Math.max(0, Number(outputPrice) || 0),
+        cache_read_price_per_mtok: Math.max(0, Number(cacheReadPrice) || 0),
+        cache_write_price_per_mtok: Math.max(0, Number(cacheWritePrice) || 0),
         retry,
       });
       if (isNew) toast.success(`已新建：${name.trim()}（在卡片上「设为激活」以启用）`);
@@ -501,6 +525,93 @@ export function ProfileDialog({
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+          </div>
+
+          <div className="grid gap-3 rounded-lg border p-3">
+            <div className="flex items-center justify-between gap-4">
+              <div className="grid gap-0.5">
+                <Label className="text-sm">成本分层 · tier</Label>
+                <p className="text-muted-foreground text-xs">
+                  开启「模型分层自动路由」后，未显式绑定的 planner/goals 自动用 cheap、worker 用
+                  strong。显式 Agent 绑定与任务配置链优先级更高，不会被覆盖。
+                </p>
+              </div>
+              <Select value={tier} onValueChange={setTier}>
+                <SelectTrigger className="w-44 shrink-0">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TIERS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2 border-t pt-3">
+              <div className="grid gap-0.5">
+                <Label className="text-sm">单价（USD / 1M tokens）</Label>
+                <p className="text-muted-foreground text-xs">
+                  用于把每次 LLM 调用折算成 cost_usd，做「每条有效发现的成本」归因。0 =
+                  未配置，成本记 0（不代表免费）。单价按调用时的配置计算，改价不会回溯历史账。
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div className="grid gap-1">
+                  <Label htmlFor="p-price-in" className="text-muted-foreground text-xs">
+                    输入
+                  </Label>
+                  <Input
+                    id="p-price-in"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={inputPrice}
+                    onChange={(e) => setInputPrice(e.target.value)}
+                  />
+                </div>
+                <div className="grid gap-1">
+                  <Label htmlFor="p-price-out" className="text-muted-foreground text-xs">
+                    输出
+                  </Label>
+                  <Input
+                    id="p-price-out"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={outputPrice}
+                    onChange={(e) => setOutputPrice(e.target.value)}
+                  />
+                </div>
+                <div className="grid gap-1">
+                  <Label htmlFor="p-price-cr" className="text-muted-foreground text-xs">
+                    缓存读
+                  </Label>
+                  <Input
+                    id="p-price-cr"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={cacheReadPrice}
+                    onChange={(e) => setCacheReadPrice(e.target.value)}
+                  />
+                </div>
+                <div className="grid gap-1">
+                  <Label htmlFor="p-price-cw" className="text-muted-foreground text-xs">
+                    缓存写
+                  </Label>
+                  <Input
+                    id="p-price-cw"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={cacheWritePrice}
+                    onChange={(e) => setCacheWritePrice(e.target.value)}
+                  />
+                </div>
+              </div>
             </div>
           </div>
 

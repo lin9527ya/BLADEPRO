@@ -716,30 +716,42 @@ type LLMProfileDTO struct {
 	// 0=继承全局策略 | -1=关闭该层重试 | >0=次数；interval_ms: 0=用默认指数退避 |
 	// >0=改用该固定毫秒间隔。全 0 = 完全跟随全局，即历史行为。
 	Retry db.RetryOverride `json:"retry"`
+	// 成本分层：cheap / standard / strong。开启 llm_auto_tier 后，planner 系默认
+	// 绑 cheap、worker 默认绑 strong；显式绑定/任务 pin 永远优先。
+	Tier string `json:"tier"`
+	// 单价（USD / 1M token），用于 llm_usage.cost_usd 的成本归因。0 = 未配置，
+	// 该配置产生的调用成本记 0（不是"免费"，只是没填）。
+	InputPricePerMTok      float64 `json:"input_price_per_mtok"`
+	OutputPricePerMTok     float64 `json:"output_price_per_mtok"`
+	CacheReadPricePerMTok  float64 `json:"cache_read_price_per_mtok"`
+	CacheWritePricePerMTok float64 `json:"cache_write_price_per_mtok"`
 }
 
 func llmProfileDTO(p *db.LLMProfile) LLMProfileDTO {
 	return LLMProfileDTO{
-		ID:               i64s(p.ID),
-		Name:             p.Name,
-		Format:           p.Format,
-		BaseURL:          p.BaseURL,
-		Proxy:            p.Proxy,
-		Model:            p.Model,
-		APIKeyHint:       p.APIKeyHint,
-		RatePerSecond:    p.RatePerSecond,
-		RatePerMinute:    p.RatePerMinute,
-		ContextWindowK:   p.ContextWindowK,
-		ThinkingType:     p.ThinkingType,
-		ReasoningEffort:  p.ReasoningEffort,
-		IsDefault:        p.IsDefault,
-		Priority:         p.Priority,
-		PoolExclude:      p.PoolExclude,
-		Streaming:        p.Streaming,
-		MaxTokens:        p.MaxTokens,
-		MaxTokensField:   p.MaxTokensField,
-		SessionHeaderKey: p.SessionHeaderKey,
-		Retry:            p.Retry,
+		ID:                i64s(p.ID),
+		Name:              p.Name,
+		Format:            p.Format,
+		BaseURL:           p.BaseURL,
+		Proxy:             p.Proxy,
+		Model:             p.Model,
+		APIKeyHint:        p.APIKeyHint,
+		RatePerSecond:     p.RatePerSecond,
+		RatePerMinute:     p.RatePerMinute,
+		ContextWindowK:    p.ContextWindowK,
+		ThinkingType:      p.ThinkingType,
+		ReasoningEffort:   p.ReasoningEffort,
+		IsDefault:         p.IsDefault,
+		Priority:          p.Priority,
+		PoolExclude:       p.PoolExclude,
+		Streaming:         p.Streaming,
+		MaxTokens:         p.MaxTokens,
+		MaxTokensField:    p.MaxTokensField,
+		SessionHeaderKey:  p.SessionHeaderKey,
+		Retry:             p.Retry,
+		Tier:              p.Tier,
+		InputPricePerMTok: p.InputPricePerMTok, OutputPricePerMTok: p.OutputPricePerMTok,
+		CacheReadPricePerMTok: p.CacheReadPricePerMTok, CacheWritePricePerMTok: p.CacheWritePricePerMTok,
 	}
 }
 

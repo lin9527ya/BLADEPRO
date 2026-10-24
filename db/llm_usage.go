@@ -23,7 +23,11 @@ type LLMUsage struct {
 	OutputTokens  int    `json:"output_tokens"`
 	CacheRead     int    `json:"cache_read"`
 	CacheWrite    int    `json:"cache_write"`
-	Status        string `json:"status"` // ok | error
+	// IntentID 是本次调用归属的意图 id（0 = planner/压缩/非意图调用）。
+	IntentID int64 `json:"intent_id,omitempty"`
+	// CostUSD 按调用时 profile 的单价折算（USD）；单价未配置时记 0。
+	CostUSD float64 `json:"cost_usd"`
+	Status  string  `json:"status"` // ok | error
 }
 
 const llmUsageSchema = `
@@ -33,6 +37,7 @@ CREATE TABLE IF NOT EXISTS llm_usage (
     task_id        TEXT,
     exploration_id BIGINT,
     worker         TEXT,
+    intent_id      BIGINT NOT NULL DEFAULT 0,
     model          TEXT,
     profile_name   TEXT,
     latency_ms     INTEGER,
@@ -40,9 +45,15 @@ CREATE TABLE IF NOT EXISTS llm_usage (
     output_tokens  INTEGER NOT NULL DEFAULT 0,
     cache_read     INTEGER NOT NULL DEFAULT 0,
     cache_write    INTEGER NOT NULL DEFAULT 0,
+    -- cost_usd 按调用时的 profile 单价折算；单价为 0 时成本为 0。
+    cost_usd       DOUBLE PRECISION NOT NULL DEFAULT 0,
     status         TEXT
 );
+-- 旧库补列（EnsureLLMUsageTable 每次启动幂等执行）。
+ALTER TABLE llm_usage ADD COLUMN IF NOT EXISTS intent_id BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE llm_usage ADD COLUMN IF NOT EXISTS cost_usd  DOUBLE PRECISION NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_llm_usage_task  ON llm_usage(task_id);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_intent ON llm_usage(task_id, intent_id);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_model ON llm_usage(task_id, model);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_exp   ON llm_usage(exploration_id);
 -- 数据保留按 ts 清理。上面三个索引前导列都不是时间，全表扫；本表是 always-on
@@ -90,10 +101,10 @@ func (d *DB) InsertLLMUsage(u *LLMUsage) error {
 		expID = u.ExplorationID
 	}
 	_, err := d.Exec(`
-INSERT INTO llm_usage(task_id, exploration_id, worker, model, profile_name, latency_ms, input_tokens, output_tokens, cache_read, cache_write, status)
-VALUES (NULLIF($1,''),$2,NULLIF($3,''),NULLIF($4,''),NULLIF($5,''),$6,$7,$8,$9,$10,$11)`,
-		u.TaskID, expID, u.Worker, u.Model, u.ProfileName,
-		u.LatencyMs, u.InputTokens, u.OutputTokens, u.CacheRead, u.CacheWrite, u.Status)
+INSERT INTO llm_usage(task_id, exploration_id, worker, intent_id, model, profile_name, latency_ms, input_tokens, output_tokens, cache_read, cache_write, cost_usd, status)
+VALUES (NULLIF($1,''),$2,NULLIF($3,''),$4,NULLIF($5,''),NULLIF($6,''),$7,$8,$9,$10,$11,$12,$13)`,
+		u.TaskID, expID, u.Worker, u.IntentID, u.Model, u.ProfileName,
+		u.LatencyMs, u.InputTokens, u.OutputTokens, u.CacheRead, u.CacheWrite, u.CostUSD, u.Status)
 	return err
 }
 
@@ -111,7 +122,8 @@ func (d *DB) TokenByModel(taskID string) ([]ModelTokenStat, error) {
 	rows, err := d.Query(`
 SELECT COALESCE(NULLIF(model,''),'(unknown)') AS model, COUNT(*) AS calls,
        COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
-       COALESCE(SUM(cache_read),0), COALESCE(SUM(cache_write),0)
+       COALESCE(SUM(cache_read),0), COALESCE(SUM(cache_write),0),
+       COALESCE(SUM(cost_usd),0)
 FROM llm_usage
 WHERE task_id = $1
 GROUP BY model
@@ -124,7 +136,7 @@ ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC, model`, taskID)
 	for rows.Next() {
 		var m ModelTokenStat
 		if err := rows.Scan(&m.Model, &m.Calls, &m.InputTokens, &m.OutputTokens,
-			&m.CacheReadTokens, &m.CacheWriteTokens); err != nil {
+			&m.CacheReadTokens, &m.CacheWriteTokens, &m.CostUSD); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -135,13 +147,14 @@ ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC, model`, taskID)
 // ProfileUsage aggregates the whole ledger's token spend for one LLM profile
 // (global, all tasks). Powers the dashboard's per-profile token card (new source).
 type ProfileUsage struct {
-	ProfileName      string `json:"profile_name"`
-	Calls            int    `json:"calls"`
-	Tasks            int    `json:"tasks"`
-	InputTokens      int    `json:"input_tokens"`
-	OutputTokens     int    `json:"output_tokens"`
-	CacheReadTokens  int    `json:"cache_read_tokens"`
-	CacheWriteTokens int    `json:"cache_write_tokens"`
+	ProfileName      string  `json:"profile_name"`
+	Calls            int     `json:"calls"`
+	Tasks            int     `json:"tasks"`
+	InputTokens      int     `json:"input_tokens"`
+	OutputTokens     int     `json:"output_tokens"`
+	CacheReadTokens  int     `json:"cache_read_tokens"`
+	CacheWriteTokens int     `json:"cache_write_tokens"`
+	CostUSD          float64 `json:"cost_usd"`
 }
 
 // UsageByProfile returns global token spend grouped by profile name, most-used
@@ -151,7 +164,8 @@ func (d *DB) UsageByProfile() ([]ProfileUsage, error) {
 SELECT COALESCE(profile_name,'') AS profile_name, COUNT(*) AS calls,
        COUNT(DISTINCT task_id) AS tasks,
        COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
-       COALESCE(SUM(cache_read),0), COALESCE(SUM(cache_write),0)
+       COALESCE(SUM(cache_read),0), COALESCE(SUM(cache_write),0),
+       COALESCE(SUM(cost_usd),0)
 FROM llm_usage
 GROUP BY profile_name
 ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC`)
@@ -163,7 +177,7 @@ ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC`)
 	for rows.Next() {
 		var p ProfileUsage
 		if err := rows.Scan(&p.ProfileName, &p.Calls, &p.Tasks,
-			&p.InputTokens, &p.OutputTokens, &p.CacheReadTokens, &p.CacheWriteTokens); err != nil {
+			&p.InputTokens, &p.OutputTokens, &p.CacheReadTokens, &p.CacheWriteTokens, &p.CostUSD); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -211,11 +225,12 @@ ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC`)
 // chart. Unlike the activity-based chart, ts is the real call time, so this is
 // actual per-day consumption rather than tokens bucketed by task creation date.
 type ProfileDayUsage struct {
-	ProfileName     string `json:"profile_name"`
-	Date            string `json:"date"` // YYYY-MM-DD (UTC)
-	InputTokens     int    `json:"input_tokens"`
-	OutputTokens    int    `json:"output_tokens"`
-	CacheReadTokens int    `json:"cache_read_tokens"`
+	ProfileName     string  `json:"profile_name"`
+	Date            string  `json:"date"` // YYYY-MM-DD (UTC)
+	InputTokens     int     `json:"input_tokens"`
+	OutputTokens    int     `json:"output_tokens"`
+	CacheReadTokens int     `json:"cache_read_tokens"`
+	CostUSD         float64 `json:"cost_usd"`
 }
 
 // UsageDaily returns per-(profile, day) token buckets for the past `days` days
@@ -227,7 +242,8 @@ func (d *DB) UsageDaily(days int) ([]ProfileDayUsage, error) {
 	rows, err := d.Query(`
 SELECT COALESCE(profile_name,'') AS profile_name,
        to_char(ts AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
-       COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(cache_read),0)
+       COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(cache_read),0),
+       COALESCE(SUM(cost_usd),0)
 FROM llm_usage
 WHERE ts >= now() - ($1 * interval '1 day')
 GROUP BY profile_name, day
@@ -239,7 +255,7 @@ ORDER BY day`, days)
 	out := []ProfileDayUsage{}
 	for rows.Next() {
 		var p ProfileDayUsage
-		if err := rows.Scan(&p.ProfileName, &p.Date, &p.InputTokens, &p.OutputTokens, &p.CacheReadTokens); err != nil {
+		if err := rows.Scan(&p.ProfileName, &p.Date, &p.InputTokens, &p.OutputTokens, &p.CacheReadTokens, &p.CostUSD); err != nil {
 			return nil, err
 		}
 		out = append(out, p)

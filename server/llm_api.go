@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"sort"
 
 	"github.com/lin9527ya/Norma/llm"
 	"github.com/lin9527ya/Norma/transcript"
@@ -82,6 +83,8 @@ func (s *Server) saveLLMConfig(cfg agent.Config) error {
 	var maxTokensField string
 	var sessionHeaderKey string
 	var retry db.RetryOverride
+	tier := db.ProfileTierStandard
+	var inputPrice, outputPrice, cacheReadPrice, cacheWritePrice float64
 	if profs, _ := s.m.pg.ListProfiles(); profs != nil {
 		for _, p := range profs {
 			if p.Name == "default" {
@@ -89,6 +92,9 @@ func (s *Server) saveLLMConfig(cfg agent.Config) error {
 				maxTokens, maxTokensField = p.MaxTokens, p.MaxTokensField
 				sessionHeaderKey = p.SessionHeaderKey
 				retry = p.Retry
+				tier = p.Tier
+				inputPrice, outputPrice = p.InputPricePerMTok, p.OutputPricePerMTok
+				cacheReadPrice, cacheWritePrice = p.CacheReadPricePerMTok, p.CacheWritePricePerMTok
 				break
 			}
 		}
@@ -100,6 +106,10 @@ func (s *Server) saveLLMConfig(cfg agent.Config) error {
 		Priority: priority, PoolExclude: poolExclude, Streaming: streaming,
 		MaxTokens: maxTokens, MaxTokensField: maxTokensField, SessionHeaderKey: sessionHeaderKey,
 		Retry: retry,
+		// 这个 legacy 端点不认识分层/单价，但也不能把用户在配置卡片里填好的值清空。
+		Tier:              tier,
+		InputPricePerMTok: inputPrice, OutputPricePerMTok: outputPrice,
+		CacheReadPricePerMTok: cacheReadPrice, CacheWritePricePerMTok: cacheWritePrice,
 	})
 	if err != nil {
 		return err
@@ -167,7 +177,13 @@ func (s *Server) applyLLM(cfg agent.Config) error {
 		s.llm.mu.Lock()
 		profName := s.llm.profile
 		s.llm.mu.Unlock()
-		prov = llmrec.Wrap(prov, s.m.PG(), cfg.Model, profName, cfg.ThinkingType, cfg.ReasoningEffort, s.m.LLMRecordEnabled)
+		var prices llmrec.Prices
+		if profName != "" {
+			if p, _ := s.m.pg.ProfileByName(profName); p != nil {
+				prices = profilePrices(p)
+			}
+		}
+		prov = llmrec.WrapPriced(prov, s.m.PG(), cfg.Model, profName, cfg.ThinkingType, cfg.ReasoningEffort, prices, s.m.LLMRecordEnabled)
 		prov = bindSideProvider(prov, cfg, 0, profName)
 	}
 	s.llm.mu.Lock()
@@ -248,6 +264,79 @@ func (s *Server) effectiveProfileForAgent(agentKey string, pinID *int64) *int64 
 	return pinID
 }
 
+// settingLLMAutoTier 打开后，任务里没有显式绑定、也没有任务级配置链的角色按分层
+// 自动选配置：planner/goals → cheap，worker → strong。默认关，行为与旧版一致。
+const settingLLMAutoTier = "llm_auto_tier"
+
+func (s *Server) llmAutoTierEnabled() bool {
+	return s.m.pg != nil && s.m.pg.GetBool(settingLLMAutoTier, false)
+}
+
+// autoTierForAgent maps a task role to the tier it should run on. Empty = the role
+// is not tier-routed (mainagent/chat/custom agents keep the existing precedence).
+func autoTierForAgent(agentKey string) string {
+	switch agentKey {
+	case "planner", "goals":
+		return db.ProfileTierCheap
+	case "worker":
+		return db.ProfileTierStrong
+	default:
+		return ""
+	}
+}
+
+// autoTierProfileForAgent resolves the profile a role should use under llm_auto_tier,
+// or nil when auto-tier is off / the role is not tier-routed / no usable profile has
+// that tier. Callers must apply it BELOW explicit agent bindings and the task profile
+// chain: this is a default, never an override.
+//
+// Candidates are ordered active profile first, then priority DESC, then id ASC, so a
+// user who marks a profile active keeps it when it matches the role's tier; among
+// equals the same ordering as the failover pool applies.
+func (s *Server) autoTierProfileForAgent(agentKey string) *int64 {
+	if s.m.pg == nil || !s.llmAutoTierEnabled() {
+		return nil
+	}
+	tier := autoTierForAgent(agentKey)
+	if tier == "" {
+		return nil
+	}
+	profs, err := s.m.pg.ListProfiles()
+	if err != nil {
+		return nil
+	}
+	for _, p := range tierProfileCandidates(profs, tier) {
+		if _, _, ok := s.providerForProfile(p.ID); ok {
+			id := p.ID
+			return &id
+		}
+	}
+	return nil
+}
+
+// tierProfileCandidates filters profiles by tier and orders them: active profile
+// first, then priority DESC, then id ASC — the same ordering rule as the failover
+// pool, so "cheap" among equals is stable. Pure so the selection rule is testable
+// without a database or provider construction.
+func tierProfileCandidates(profs []*db.LLMProfile, tier string) []*db.LLMProfile {
+	out := make([]*db.LLMProfile, 0, len(profs))
+	for _, p := range profs {
+		if p != nil && db.NormalizeProfileTier(p.Tier) == tier {
+			out = append(out, p)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].IsDefault != out[j].IsDefault {
+			return out[i].IsDefault
+		}
+		if out[i].Priority != out[j].Priority {
+			return out[i].Priority > out[j].Priority
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
 // resolveChatAgent picks the ChatAgent for one conversation: the agent's own
 // binding or this conversation's chosen profile first, the global active config
 // only as a fallback. Both the send precheck and the background runner MUST use
@@ -279,6 +368,17 @@ func (s *Server) chatUnavailableReason() string {
 	return "LLM 未就绪，无法对话：请检查 系统 → LLM 配置是否有可用且已激活的配置"
 }
 
+// profilePrices converts a stored profile's unit prices for the recorder.
+func profilePrices(p *db.LLMProfile) llmrec.Prices {
+	if p == nil {
+		return llmrec.Prices{}
+	}
+	return llmrec.Prices{
+		InputPerMTok: p.InputPricePerMTok, OutputPerMTok: p.OutputPricePerMTok,
+		CacheReadPerMTok: p.CacheReadPricePerMTok, CacheWritePerMTok: p.CacheWritePricePerMTok,
+	}
+}
+
 // providerForProfile returns a cached provider+cfg for a profile id, so every agent
 // bound/pinned to the same profile shares one provider instance (one rate limiter).
 // ok=false when the profile is missing/invalid → caller falls back to the global pair.
@@ -299,9 +399,9 @@ func (s *Server) providerForProfile(id int64) (llm.Provider, agent.Config, bool)
 		log.Printf("[engine] build provider for LLM profile %d failed: %v", id, err)
 		return nil, agent.Config{}, false
 	}
-	// Wrap with recorder, tagged with this profile's name.
+	// Wrap with recorder, tagged with this profile's name and unit prices.
 	if p, _ := s.m.pg.ProfileByID(id); p != nil {
-		prov = llmrec.Wrap(prov, s.m.PG(), cfg.Model, p.Name, cfg.ThinkingType, cfg.ReasoningEffort, s.m.LLMRecordEnabled)
+		prov = llmrec.WrapPriced(prov, s.m.PG(), cfg.Model, p.Name, cfg.ThinkingType, cfg.ReasoningEffort, profilePrices(p), s.m.LLMRecordEnabled)
 		prov = bindSideProvider(prov, cfg, id, p.Name)
 	}
 	s.providers.cacheMu.Lock()

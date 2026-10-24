@@ -102,7 +102,7 @@ type taskLLMStreamHooks struct {
 }
 
 // current resolves the provider this role runs on, by precedence:
-// Agent 绑定 → 任务 LLM 配置链 → 全局/环境配置。
+// Agent 绑定 → 任务 LLM 配置链 → llm_auto_tier 分层默认 → 全局/环境配置。
 // 绑定优先于任务链：某个角色被显式指定了模型，就一直跑在那个模型上；绑定不存在或
 // 构建失败时才降级到任务链，任务链为空时再降级到全局配置。
 // 返回的 profile id 只有走任务链时才非零 —— streamTaskLLM 以此判断额度错误是否
@@ -138,6 +138,14 @@ func (r *taskLLMRuntime) current() (taskLLMSelection, error) {
 		sel.provider, sel.retry = prov, cfg.Retry
 		return sel, nil
 	}
+	// 分层默认：只在该角色既没有显式绑定、任务也没有配置链时生效。profileID 保持
+	// 为 0 —— 这不是任务链的一部分，额度错误不应推进任务的故障转移状态。
+	if id := r.s.autoTierProfileForAgent(r.agentKey); id != nil {
+		if prov, cfg, ok := r.s.providerForProfile(*id); ok {
+			sel.provider, sel.retry = prov, cfg.Retry
+			return sel, nil
+		}
+	}
 	prov, cfg, ok := r.s.globalProvider()
 	if !ok {
 		return sel, fmt.Errorf("task %s has no available fallback LLM provider", r.taskID)
@@ -165,6 +173,11 @@ func (r *taskLLMRuntime) activeCfg() (agent.Config, bool) {
 	}
 	if len(pt.LLMProfileIDs) > 0 && pt.ActiveLLMProfileID != nil {
 		if _, cfg, ok := r.s.providerForProfile(*pt.ActiveLLMProfileID); ok {
+			return cfg, true
+		}
+	}
+	if id := r.s.autoTierProfileForAgent(r.agentKey); id != nil {
+		if _, cfg, ok := r.s.providerForProfile(*id); ok {
 			return cfg, true
 		}
 	}
@@ -517,7 +530,7 @@ func (s *Server) globalProvider() (llm.Provider, agent.Config, bool) {
 
 // taskRuntimeAvailable reports whether every listed role can resolve a provider
 // under the runtime precedence in current(): the role's own binding first, then
-// the task chain, then global. An exhausted chain is a hard stop for unbound
+// the task chain, then the llm_auto_tier default, then global. An exhausted chain is a hard stop for unbound
 // roles rather than a silent fall through to global — same as current().
 func (s *Server) taskRuntimeAvailable(t *Task, agentKeys ...string) bool {
 	if t == nil || len(agentKeys) == 0 {
@@ -536,7 +549,13 @@ func (s *Server) taskRuntimeAvailable(t *Task, agentKeys ...string) bool {
 		if _, _, ok := s.agentBindingProvider(key); ok {
 			continue
 		}
-		if !unboundReady {
+		ready := unboundReady
+		if !ready {
+			if id := s.autoTierProfileForAgent(key); id != nil {
+				_, _, ready = s.providerForProfile(*id)
+			}
+		}
+		if !ready {
 			return false
 		}
 	}

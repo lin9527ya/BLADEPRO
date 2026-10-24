@@ -17,6 +17,7 @@ import (
 	"github.com/lin9527ya/bladepro/agent"
 	"github.com/lin9527ya/bladepro/db"
 	"github.com/lin9527ya/bladepro/intercept"
+	"github.com/lin9527ya/bladepro/llmrec"
 	"github.com/lin9527ya/bladepro/srcmode"
 )
 
@@ -1085,6 +1086,8 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	}
 	// per-work child context so the planner's kill_work can stop just this work.
 	workCtx, workCancel := context.WithCancelCause(ectx)
+	// 成本归因：这次 run 的所有 LLM 调用都记到该意图（llm_usage.intent_id）。
+	workCtx = llmrec.WithIntent(workCtx, intent.ID)
 	e.registerWork(intent.ID, workCancel)
 	// wrap the guard hooks so steer_work can inject a mid-run course-correction
 	// for THIS intent (drained before the worker's next tool call).

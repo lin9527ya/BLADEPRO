@@ -32,6 +32,14 @@ function fmtTokens(n: number): string {
   return String(n);
 }
 
+// 成本展示：小额给 4 位小数（一次调用常常不到 1 美分），大额收敛到 2 位。
+function fmtCost(usd: number): string {
+  if (!usd || !Number.isFinite(usd)) return "—";
+  if (usd < 0.01) return "$" + usd.toFixed(4);
+  if (usd < 1) return "$" + usd.toFixed(3);
+  return "$" + usd.toFixed(2);
+}
+
 // 缓存命中率 = 缓存读 / 输入（InputTokens 已含 cache_read 子集，故比值在 0–100%）。
 function cacheHitRate(cacheRead: number, input: number): string {
   if (input <= 0) return "—";
@@ -683,6 +691,10 @@ export function OverviewTab({ taskId }: { taskId: string }) {
                     {cacheHitRate(tokenTotals.cacheRead, tokenTotals.input)}
                   </span>
                 </span>
+                <span className="tabular-nums">
+                  <span className="text-muted-foreground">成本 </span>
+                  <span className="font-semibold">{fmtCost(tokenTotals.cost)}</span>
+                </span>
               </div>
               {/* 按模型明细表 */}
               <div className="overflow-x-auto">
@@ -694,6 +706,7 @@ export function OverviewTab({ taskId }: { taskId: string }) {
                       <th className="py-1.5 pr-3 text-right font-medium">输入</th>
                       <th className="py-1.5 pr-3 text-right font-medium">输出</th>
                       <th className="py-1.5 pr-3 text-right font-medium">缓存读</th>
+                      <th className="py-1.5 pr-3 text-right font-medium">成本</th>
                       <th className="py-1.5 text-right font-medium">命中率</th>
                     </tr>
                   </thead>
@@ -707,6 +720,7 @@ export function OverviewTab({ taskId }: { taskId: string }) {
                         <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens(m.input_tokens)}</td>
                         <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens(m.output_tokens)}</td>
                         <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens(m.cache_read_tokens)}</td>
+                        <td className="py-1.5 pr-3 text-right tabular-nums">{fmtCost(m.cost_usd)}</td>
                         <td className="py-1.5 text-right tabular-nums text-emerald-500">
                           {cacheHitRate(m.cache_read_tokens, m.input_tokens)}
                         </td>

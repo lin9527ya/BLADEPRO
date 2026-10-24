@@ -94,6 +94,9 @@ func (s *Server) settingsPayload() map[string]any {
 		// 自动切到下一个配置。bind_fallback 仅在轮询开启时有意义(默认关)。
 		"llm_pool_enabled":       s.m.LLMPoolEnabled(),
 		"llm_pool_bind_fallback": s.m.LLMPoolBindFallback(),
+		// 模型分层自动路由（默认关）。开启后未显式绑定的 planner/goals 走 cheap、
+		// worker 走 strong；任务配置链仍是更高优先级。
+		"llm_auto_tier": s.llmAutoTierEnabled(),
 		// 操作约束注入范围(默认都开):把本任务的 allow/deny 约束拼进对应 agent 的系统提示。
 		"constraints_inject_planner": s.constraintInjectPlanner(),
 		"constraints_inject_worker":  s.constraintInjectWorker(),
@@ -211,6 +214,8 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		// 重建 provider 链才生效，走下面的 changed → applyLLM 路径。
 		LLMPoolEnabled      *bool `json:"llm_pool_enabled"`
 		LLMPoolBindFallback *bool `json:"llm_pool_bind_fallback"`
+		// 模型分层自动路由（默认关）。运行时每次解析角色时现读，无需重建 agent。
+		LLMAutoTier *bool `json:"llm_auto_tier"`
 		// 操作约束注入范围开关(默认都开);即时生效(planner/worker 每轮读),无需重建 agent。
 		ConstraintsInjectPlanner *bool `json:"constraints_inject_planner"`
 		ConstraintsInjectWorker  *bool `json:"constraints_inject_worker"`
@@ -536,6 +541,12 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		changed = true
+	}
+	if req.LLMAutoTier != nil {
+		if err := s.m.pg.SetBool(settingLLMAutoTier, *req.LLMAutoTier); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
 	}
 	if req.LLMPoolEnabled != nil || req.LLMPoolBindFallback != nil {
 		// Pinned tasks' planner/worker and per-profile chat agents hold providers

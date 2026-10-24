@@ -406,9 +406,10 @@ export function useOverviewState(taskId: string) {
       acc.cacheRead += m.cache_read_tokens;
       acc.cacheWrite += m.cache_write_tokens;
       acc.calls += m.calls;
+      acc.cost += m.cost_usd ?? 0;
       return acc;
     },
-    { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0 },
+    { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0, cost: 0 },
   );
 
   // 预算对照：用量 = 输入+输出（与后端 BudgetStage 的计量口径一致）。

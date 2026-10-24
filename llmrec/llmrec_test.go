@@ -124,3 +124,37 @@ FROM llm_usage WHERE profile_name=$1`, profile).Scan(&count, &input, &output, &w
 		}
 	}
 }
+
+func TestPricesCost(t *testing.T) {
+	p := Prices{InputPerMTok: 3, OutputPerMTok: 15, CacheReadPerMTok: 0.3, CacheWritePerMTok: 3.75}
+	// InputTokens 1M 全是未缓存输入；2M 的情况里 1M 是缓存读（不应再按输入价计）。
+	got := p.Cost(llm.Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000,
+		CacheReadTokens: 1_000_000, CacheWriteTokens: 1_000_000})
+	want := 15.0 + 0.3 + 3.75 // uncached input clamped to 0
+	if diff := got - want; diff > 1e-9 || diff < -1e-9 {
+		t.Fatalf("Cost()=%v want %v", got, want)
+	}
+	got = p.Cost(llm.Usage{InputTokens: 2_000_000, OutputTokens: 1_000_000, CacheReadTokens: 1_000_000})
+	want = 3.0 + 15.0 + 0.3
+	if diff := got - want; diff > 1e-9 || diff < -1e-9 {
+		t.Fatalf("Cost()=%v want %v", got, want)
+	}
+	// 未配置单价 = 成本 0，而不是凭猜测填一个值。
+	if got := (Prices{}).Cost(llm.Usage{InputTokens: 500, OutputTokens: 500}); got != 0 {
+		t.Fatalf("zero prices Cost()=%v want 0", got)
+	}
+}
+
+func TestIntentContext(t *testing.T) {
+	ctx := WithIntent(context.Background(), 42)
+	if got := IntentFrom(ctx); got != 42 {
+		t.Fatalf("IntentFrom()=%d want 42", got)
+	}
+	// 0/负数表示"不归属意图"，不应覆盖上层上下文。
+	if got := IntentFrom(WithIntent(ctx, 0)); got != 42 {
+		t.Fatalf("zero intent overwrote parent: %d", got)
+	}
+	if got := IntentFrom(context.Background()); got != 0 {
+		t.Fatalf("background IntentFrom()=%d want 0", got)
+	}
+}

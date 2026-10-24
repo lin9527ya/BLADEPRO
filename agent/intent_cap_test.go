@@ -77,6 +77,9 @@ func TestAddIntentRespectsAssetTokenBudget(t *testing.T) {
 	doc.AssetTokenBudget = 1000
 	tools.SetSrcMode(doc, d.Src())
 
+	if err := d.EnsureLLMUsageTable(); err != nil {
+		t.Fatalf("ensure usage table: %v", err)
+	}
 	if err := d.InsertLLMUsage(&db.LLMUsage{
 		TaskID: strconv.FormatInt(task.ID, 10), AssetID: assetID,
 		Worker: "worker", InputTokens: 900, OutputTokens: 200, Status: "ok",

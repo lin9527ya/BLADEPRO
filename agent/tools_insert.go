@@ -125,7 +125,8 @@ func (t *ToolSet) insertAssets() actool.CoreTool {
 		"批量登记新发现的资产，一次可混合多种类型（type 见枚举）。\n"+
 			"各类型必填字段：root_domain→domain；ip→ip（须为 IPv4/IPv6，非主机名）；subdomain→domain；app→app_name；service(HTTP)→url；service(非HTTP)→service_name+port（ip/domain 至少填一个）；endpoint→url+method。其余字段含义见各自说明。\n"+
 			"auth/technologies/params 为追加合并(append)，不覆盖原值。\n"+
-			"返回：{results:[{index,id,type}], errors:[{index,error}]}",
+			"返回：{results:[{index,id,type,scope_added,scope_skipped}], errors:[{index,error}]}。"+
+			"SRC 模式下 scope_skipped 非空表示资产只登记、没进任务范围（不在 program in/企业/现有 scope 白名单）：不要对它发包。",
 		obj(map[string]any{
 			// task_id 不暴露给模型：worker 归属哪个 task 由程序经 SetTaskID 权威赋值(见 handler)。
 			"assets": map[string]any{
@@ -200,7 +201,7 @@ func (t *ToolSet) insertAssets() actool.CoreTool {
 				}, "type"),
 			},
 		}, "assets"),
-		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
+		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			if t.as == nil {
 				return actool.Errorf("insert_assets 未启用: AssetStore 未初始化"), nil
 			}
@@ -215,9 +216,11 @@ func (t *ToolSet) insertAssets() actool.CoreTool {
 			taskID := t.taskID
 
 			type result struct {
-				Index int    `json:"index"`
-				ID    int64  `json:"id"`
-				Type  string `json:"type"`
+				Index        int    `json:"index"`
+				ID           int64  `json:"id"`
+				Type         string `json:"type"`
+				ScopeAdded   bool   `json:"scope_added,omitempty"`
+				ScopeSkipped string `json:"scope_skipped,omitempty"`
 			}
 			type errEntry struct {
 				Index int    `json:"index"`
@@ -337,7 +340,8 @@ func (t *ToolSet) insertAssets() actool.CoreTool {
 					errs = append(errs, errEntry{Index: i, Error: err.Error()})
 					continue
 				}
-				results = append(results, result{Index: i, ID: id, Type: typ})
+				entry := result{Index: i, ID: id, Type: typ}
+				results = append(results, entry)
 				t.writes.Assets++
 				t.anchorOwner(id)
 				if taskID > 0 {
@@ -361,7 +365,21 @@ func (t *ToolSet) insertAssets() actool.CoreTool {
 					if svcIP == "" {
 						svcIP = item.IP
 					}
-					_ = t.as.AddAutoScope(taskID, typ, item.Domain, item.URL, svcIP)
+					allowed, skipReason := true, ""
+					if t.srcStore != nil && taskID > 0 {
+						if ok, why, err := t.srcStore.AutoScopeAllowed(ctx, taskID, id); err != nil {
+							allowed, skipReason = false, "自动入范围校验失败："+err.Error()
+						} else if !ok {
+							allowed, skipReason = false, why
+						}
+					}
+					if allowed {
+						if err := t.as.AddAutoScope(taskID, typ, item.Domain, item.URL, svcIP); err == nil {
+							results[len(results)-1].ScopeAdded = taskID > 0
+						}
+					} else {
+						results[len(results)-1].ScopeSkipped = skipReason
+					}
 				}
 			}
 

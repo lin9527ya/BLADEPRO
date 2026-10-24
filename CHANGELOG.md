@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### 新增：SRC 自动入范围白名单（P2）
+
+- `insert_assets` 与 worker 意图资产在 SRC 任务里不再无条件写 `task_scope`：
+  只有命中 **program out 排除之外**，且满足下列之一才自动入范围：
+  program 显式 in 范围 / program 关联企业 / 任务现有 scope（公司/根域等）。
+- 不命中时资产仍正常登记，但返回 `scope_skipped` 与原因，不写 scope；
+  worker 意图资产同样跳过，避免 agent 用“发现一个域名”自行扩大授权边界。
+- program 有显式 in 时以 in 为准（企业粗范围不再放大）；out 永远优先拒绝。
+- 普通渗透任务保持原有自动入范围行为；prompt 与工具描述明确
+  “scope_skipped = 只登记、不要发包”。
+- 回归：普通任务放行、SRC 现有 scope/公司放行、program in 放行、out/范围外拒绝、
+  program 企业白名单放行。
 ### 新增：SRC 全局漏斗看板（P2）
 
 - 新接口 `GET /api/src/funnel?days=30&program_id=`：一条链

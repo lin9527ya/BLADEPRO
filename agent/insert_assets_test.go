@@ -3,10 +3,13 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/srcmode"
 )
 
 // testDB opens a DB connection, skipping if PG is unavailable.
@@ -446,5 +449,60 @@ func TestInsertAssetsRejectsHostnameIPPerItem(t *testing.T) {
 	}
 	if stored != 0 {
 		t.Fatalf("rejected hostname still stored in assets.ip (%d rows)", stored)
+	}
+}
+
+// TestInsertAssetsAutoScopeWhitelist pins the SRC guard: an asset outside the
+// program/task whitelist is registered with scope_skipped (no task_scope row),
+// while an asset under the existing scope is added normally.
+func TestInsertAssetsAutoScopeWhitelist(t *testing.T) {
+	d := testDB(t)
+	defer d.Close()
+	task, err := d.CreateTaskWithOptions("autoscope-insert", "白名单", db.TaskCreateOptions{Mode: "src"})
+	if err != nil {
+		t.Fatalf("task: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = d.Exec(`DELETE FROM tasks WHERE id=$1`, task.ID)
+	})
+	t.Cleanup(func() {
+		_, _ = d.Exec(`DELETE FROM assets WHERE domain LIKE 'ia-allow-%' OR domain LIKE 'ia-out-%' OR domain LIKE 'allow-%'`)
+	})
+	root := fmt.Sprintf("allow-%d.example", time.Now().UnixNano())
+	if _, err := d.Exec(`INSERT INTO task_scope(task_id, kind, domain, source, reason)
+VALUES ($1,'root_domain',$2,'manual','autoscope insert')`, task.ID, root); err != nil {
+		t.Fatalf("scope: %v", err)
+	}
+
+	ts := NewToolSet(d.Exploration(task.ExplorationID), "worker")
+	ts.SetTaskID(task.ID)
+	ts.SetAssetStore(d.Assets(), d.Companies())
+	ts.SetSrcMode(srcmode.DefaultDoc(), d.Src())
+
+	inside := callInsertAssets(t, ts, map[string]any{
+		"assets": []any{map[string]any{"type": "subdomain", "domain": "new." + root}},
+	})
+	resInside, _ := inside["results"].([]any)
+	if len(resInside) != 1 || resInside[0].(map[string]any)["scope_added"] != true {
+		t.Fatalf("inside result=%v", inside)
+	}
+	outsideDomain := fmt.Sprintf("ia-out-%d.example", time.Now().UnixNano())
+	outside := callInsertAssets(t, ts, map[string]any{
+		"assets": []any{map[string]any{"type": "subdomain", "domain": outsideDomain}},
+	})
+	resOutside, _ := outside["results"].([]any)
+	if len(resOutside) != 1 {
+		t.Fatalf("outside result=%v", outside)
+	}
+	skipped, _ := resOutside[0].(map[string]any)["scope_skipped"].(string)
+	if !strings.Contains(skipped, "白名单") {
+		t.Fatalf("outside should be scope_skipped: %v", outside)
+	}
+	var n int
+	if err := d.QueryRow(`SELECT count(*) FROM task_scope WHERE task_id=$1 AND domain=$2`, task.ID, outsideDomain).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("outside asset entered task_scope")
 	}
 }

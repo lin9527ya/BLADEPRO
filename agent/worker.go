@@ -522,7 +522,15 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 				// 资产覆盖度功能关闭时不再累积测试范围(分母)。
 				if coverageEnabled {
 					for _, a := range assets {
-						_ = as.AddAutoScope(taskID, a.Type, a.Domain, a.URL, a.IP)
+						allowed := true
+						if srcStore := as.Src(); srcStore != nil {
+							if ok, _, err := srcStore.AutoScopeAllowed(ctx, taskID, a.ID); err == nil && !ok {
+								allowed = false
+							}
+						}
+						if allowed {
+							_ = as.AddAutoScope(taskID, a.Type, a.Domain, a.URL, a.IP)
+						}
 					}
 				}
 			}

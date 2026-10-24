@@ -44,6 +44,9 @@ import type {
   DailyTokenBucket,
   DeleteTaskOptions,
   DeleteTaskResult,
+  ReviewActionResults,
+  ReviewQueue,
+  ReviewQueueItem,
   Edge,
   EvidenceBodyPreview,
   ExplorationNodePage,
@@ -406,6 +409,14 @@ export const api = {
     >,
   ) => patch<TaskTemplate>(`/task-templates/${id}`, input),
   deleteTaskTemplate: (id: number) => del<{ deleted: number }>(`/task-templates/${id}`),
+  reviewQueue: (params?: { kind?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.kind) qs.set("kind", params.kind);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    return get<ReviewQueue>(`/review/queue${qs.toString() ? `?${qs}` : ""}`);
+  },
+  reviewActions: (action: "accept" | "reject" | "retest", items: ReviewQueueItem[], note = "") =>
+    post<ReviewActionResults>("/review/actions", { action, items, note }),
   updateTaskLLMProfiles: (id: string, llmProfileIds: number[], activeLLMProfileId?: number) =>
     put<{
       id: string;

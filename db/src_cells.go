@@ -493,3 +493,19 @@ LIMIT $4`, taskID, assetIDs, since, limit)
 	}
 	return out, rows.Err()
 }
+
+// DeleteSrcCells removes terminal cells for one (task, asset, area). item=="" removes
+// every item of the area. Used by the human review queue to "退回重测": deleting a
+// row turns it back into a blank, which the收尾门 will report on the next check.
+func (s *SrcStore) DeleteSrcCells(ctx context.Context, taskID, assetID int64, area, item string) (int64, error) {
+	if s == nil || s.db == nil || taskID <= 0 || assetID <= 0 || area == "" {
+		return 0, fmt.Errorf("invalid src cell delete")
+	}
+	res, err := s.db.ExecContext(ctx, `
+DELETE FROM src_cells
+WHERE task_id=$1 AND asset_id=$2 AND area=$3 AND ($4='' OR item=$4)`, taskID, assetID, area, item)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}

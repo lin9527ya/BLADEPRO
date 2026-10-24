@@ -2798,3 +2798,44 @@ export interface CampaignSummary {
   techniques?: Record<string, number>;
   detection_results?: Record<string, number>;
 }
+
+// ---- 人工复核队列（P2）----
+export type ReviewKind =
+  | "report_missing"
+  | "retest_inconclusive"
+  | "dedupe_pending"
+  | "budget_stop"
+  | "suspicious_na";
+
+export interface ReviewQueueItem {
+  kind: ReviewKind;
+  ref_key: string;
+  score: number;
+  task_id?: number;
+  task_label?: string;
+  finding_id?: number;
+  submission_id?: number;
+  retest_id?: number;
+  asset_id?: number;
+  asset_label?: string;
+  area?: string;
+  item?: string;
+  state?: string;
+  reason?: string;
+  title?: string;
+  severity?: string;
+  updated_at: string;
+}
+
+export interface ReviewQueue {
+  items: ReviewQueueItem[];
+  counts: Partial<Record<ReviewKind, number>>;
+  total: number;
+}
+
+export interface ReviewActionResults {
+  action: "accept" | "reject" | "retest";
+  ok: number;
+  failed: number;
+  results: { ref_key: string; ok: boolean; error?: string }[];
+}

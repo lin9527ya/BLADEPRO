@@ -113,6 +113,7 @@ GET /api/opsec/knowledge	server.(*Server).opsecKnowledge-fm
 GET /api/playbooks	server.(*Server).listPlaybooks-fm
 GET /api/playbooks/{id}	server.(*Server).getPlaybook-fm
 GET /api/report	server.(*Server).getReport-fm
+GET /api/review/queue	server.(*Server).listReviewQueue-fm
 GET /api/scope/enforcement	server.(*Server).scopeEnforcementStatus-fm
 GET /api/settings	server.(*Server).getSettings-fm
 GET /api/settings/exploration-policy	server.(*Server).getExplorationPolicyDefault-fm
@@ -252,6 +253,7 @@ POST /api/mcp/{id}/tools/toggle	server.(*Server).pgToggleMCPTool-fm
 POST /api/notify/channels	server.(*Server).notifyCreateChannel-fm
 POST /api/notify/channels/{id}/test	server.(*Server).notifyTestChannel-fm
 POST /api/notify/deliveries/{id}/retry	server.(*Server).notifyRetryDelivery-fm
+POST /api/review/actions	server.(*Server).postReviewActions-fm
 POST /api/scope/kill-switch	server.(*Server).setKillSwitch-fm
 POST /api/scope/resume-all	server.(*Server).resumeAllTasks-fm
 POST /api/settings/intel/test	server.(*Server).testIntelSource-fm

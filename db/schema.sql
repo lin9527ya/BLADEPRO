@@ -1766,6 +1766,19 @@ DROP TRIGGER IF EXISTS trg_src_cells_upd ON src_cells;
 CREATE TRIGGER trg_src_cells_upd BEFORE UPDATE ON src_cells
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+-- 人工复核队列的裁决留痕：队列项按 (kind, ref_key) 去重；已裁决的项不再重复出现。
+-- reject/retest 会改底层状态，但留痕仍保留，便于事后审计。
+CREATE TABLE IF NOT EXISTS review_decisions (
+    id         BIGSERIAL PRIMARY KEY,
+    kind       TEXT NOT NULL,
+    ref_key    TEXT NOT NULL,
+    action     TEXT NOT NULL CHECK (action IN ('accept','reject','retest')),
+    note       TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (kind, ref_key)
+);
+CREATE INDEX IF NOT EXISTS idx_review_decisions_created ON review_decisions(created_at DESC);
+
 -- 资产级枚举缓存（P2 跨任务复用）：paths/js/methods 探针的结果按
 -- (asset, probe_key, target) 复用；non404 依赖任务流量，不入缓存。
 CREATE TABLE IF NOT EXISTS asset_probe_cache (

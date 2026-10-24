@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+### 新增：人工复核队列（P2）
+
+- 新接口 `GET /api/review/queue`：聚合五类需要人看的项——报告缺段（medium+ 无可提交件）、
+  复验存疑（最近 completed 结论 inconclusive）、疑似重复（dedupe_of 未定案）、
+  预算停格、四件套全 N/A 资产。
+- 排序按「严重度 + 类型权重 + 停留天数」：重复 > 报告缺段 > 复验存疑 > 预算停 > 全 N/A。
+- `POST /api/review/actions` 支持批量接受 / 打回 / 退回重测（一次 1–100 项）：
+  - 接受：确认发现（confirm）或把已登记 dedupe 的台账推到 duplicate；格类留痕即可；
+  - 打回：发现标误报、解除 dedupe_of、或把格删回空白；
+  - 退回重测：启动独立复测，或删格变回空白交给 planner。
+- 裁决写入 `review_decisions`，已处理项不再重复出现；底层行变化会产生新 ref_key。
+- 任务页新增「复核队列」入口：展示类型/严重度/任务/发现与原因，支持全选、备注与批量动作。
+- 回归：五类聚合与去重键、裁决留痕 upsert、接受/打回/退回重测端到端。
+
 ### 新增：计划任务与模板接 SRC（P2）
 
 - 任务模板新增 SRC 预设：`mode` / `src_program_id` / `inherit_coverage`。模板管理

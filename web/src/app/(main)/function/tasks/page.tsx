@@ -8,6 +8,7 @@ import { ArchiveIcon, PauseIcon, PlayIcon, SearchIcon, XIcon } from "lucide-reac
 import { toast } from "sonner";
 
 import { CustomRulesEditor } from "@/components/custom-rules-editor";
+import { ReviewQueueDialog } from "@/components/review-queue-dialog";
 import { ScheduleTasksDialog } from "@/components/schedule-tasks-dialog";
 import { TablePagination } from "@/components/table-pagination";
 /* removed: @/components/ui/badge */
@@ -712,6 +713,7 @@ export default function TasksPage() {
                   onChanged={refreshCategoriesAndTasks}
                   onTaskMoved={applyTaskCategoryMove}
                 />
+                <ReviewQueueDialog onChanged={refreshCategoriesAndTasks} />
                 <ScheduleTasksDialog categories={categories} onCreated={refreshCategoriesAndTasks} />
                 <CreateTaskSheet
                   tasks={tasks}

@@ -443,3 +443,53 @@ ON CONFLICT (task_id, asset_id, check_key) DO NOTHING`, toTaskID, fromTaskID)
 	}
 	return out, nil
 }
+
+// PriorSrcCell 是同一资产在其他 SRC 任务里的最近终态（跨任务复用提示）。
+type PriorSrcCell struct {
+	AssetID   int64     `json:"asset_id"`
+	TaskID    int64     `json:"task_id"`
+	Area      string    `json:"area"`
+	Item      string    `json:"item"`
+	State     string    `json:"state"`
+	Reason    string    `json:"reason,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// PriorSrcCoverage returns the most recent terminal cell per (asset, area, item)
+// from OTHER SRC tasks, restricted to the assets in the current task and a time
+// window. It is a read-only hint: callers can surface it to the planner (or let
+// creation-time coverage inheritance copy it), but it never changes this task's
+// cells by itself.
+func (s *SrcStore) PriorSrcCoverage(ctx context.Context, taskID int64, assetIDs []int64, since time.Time, limit int) ([]PriorSrcCell, error) {
+	if s == nil || s.db == nil || taskID <= 0 || len(assetIDs) == 0 {
+		return []PriorSrcCell{}, nil
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 60
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT DISTINCT ON (c.asset_id, c.area, c.item)
+       c.asset_id, c.task_id, c.area, c.item, c.state, c.reason, c.updated_at
+FROM src_cells c
+JOIN tasks t ON t.id = c.task_id
+WHERE c.task_id <> $1
+  AND c.asset_id = ANY($2::bigint[])
+  AND t.mode = 'src' AND t.deleted_at IS NULL
+  AND c.updated_at >= $3
+  AND c.state IN ('tested_clear','tested_found','na')
+ORDER BY c.asset_id, c.area, c.item, c.updated_at DESC
+LIMIT $4`, taskID, assetIDs, since, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []PriorSrcCell{}
+	for rows.Next() {
+		var c PriorSrcCell
+		if err := rows.Scan(&c.AssetID, &c.TaskID, &c.Area, &c.Item, &c.State, &c.Reason, &c.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}

@@ -61,6 +61,8 @@ type Result struct {
 	JSURLs         []string       `json:"js_urls,omitempty"`
 	Notes          []string       `json:"notes,omitempty"`
 	Truncated      bool           `json:"truncated,omitempty"`
+	// Cached 表示结果复用了资产级枚举缓存（见 server/src_probe.go），不是本次现跑。
+	Cached bool `json:"cached,omitempty"`
 }
 
 type runner struct {

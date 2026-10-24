@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+### 新增：跨任务复用——枚举缓存与历史覆盖提示（P2）
+
+- 资产级枚举缓存：`src_probe` 的 `paths/js/methods` 结果按
+  `(asset, probe_key, target)` 缓存 12h，二次任务直接复用；`force=true` 可重跑。
+  `non404` 依赖本任务流量，不入缓存。资产 URL/端口变化自动失效。
+- `src_state` / `graph_overview.src` 新增 `prior_coverage`：同一资产在其他 SRC
+  任务里的最近终态（30 天内、只读提示）。planner 可据此复用 tested_clear/na，
+  或先确认 tested_found 是否已交付；建任务时开启覆盖继承可自动带入。
+- SRC 页显示「跨任务结论 N」角标；探针返回 `cached=true` 时明确提示是历史结果。
+- 已有负知识回流保持原样：平台驳回会把同技术栈同类型的打法卡记 failed；
+  duplicate 不记失败，避免污染成功率。
+- 回归：缓存按 target 隔离/过期失效、prior_coverage 只含其他任务、探针缓存键
+  对参数顺序不敏感且 non404 不缓存。
+
 ### 新增：任务队列优先级（P2）
 
 - `tasks.priority`（-1000–1000，默认 0，越大越先）：并发槽释放时排队任务按

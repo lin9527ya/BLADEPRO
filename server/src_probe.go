@@ -5,14 +5,18 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,7 +25,12 @@ import (
 	"github.com/lin9527ya/bladepro/srcprobe"
 )
 
-const srcProbeDefaultRate = 5
+const (
+	srcProbeDefaultRate = 5
+	// 枚举缓存 TTL：paths/js/methods 的结果 12h 内跨任务复用；站点改动频繁时可用
+	// force=true 重跑。non404 依赖本任务流量，永不缓存。
+	srcProbeCacheTTL = 12 * time.Hour
+)
 
 // runSrcProbe 是注入给 agent 的 SrcProber 实现。
 func (s *Server) runSrcProbe(ctx context.Context, req agent.SrcProbeRequest) (*srcprobe.Result, error) {
@@ -59,6 +68,22 @@ func (s *Server) runSrcProbe(ctx context.Context, req agent.SrcProbeRequest) (*s
 		return nil, fmt.Errorf("资产 %q 的主机不在任务范围内", asset.Label)
 	}
 
+	// 资产级枚举缓存（P2 跨任务复用）：key 含探针参数，target 在缓存主键里。
+	cacheKey := srcProbeCacheKey(req)
+	if cacheKey != "" && !req.Force {
+		if entry, err := s.m.PG().GetProbeCache(ctx, req.AssetID, cacheKey, target); err == nil && entry != nil {
+			var cached srcprobe.Result
+			if json.Unmarshal(entry.Payload, &cached) == nil {
+				cached.Cached = true
+				cached.ElapsedMS = 0
+				cached.Notes = append(cached.Notes, fmt.Sprintf(
+					"复用资产级枚举缓存（生成于 %s，有效至 %s）；需要新鲜结果请传 force=true。",
+					entry.CreatedAt.Format("2006-01-02 15:04"), entry.ExpiresAt.Format("2006-01-02 15:04")))
+				return &cached, nil
+			}
+		}
+	}
+
 	var words []string
 	if req.Kind == srcprobe.KindPaths {
 		words, err = readSrcProbeWordlist()
@@ -92,7 +117,47 @@ func (s *Server) runSrcProbe(ctx context.Context, req agent.SrcProbeRequest) (*s
 		return nil, err
 	}
 	res.Notes = append(res.Notes, note)
+	if cacheKey != "" {
+		if payload, err := json.Marshal(res); err == nil {
+			// 缓存写失败不影响本次结果；下次会重新跑。
+			_ = s.m.PG().PutProbeCache(ctx, req.AssetID, cacheKey, target, payload, srcProbeCacheTTL)
+		}
+	}
 	return res, nil
+}
+
+// srcProbeCacheKey returns the cacheable key for paths/js/methods, or "" for
+// non404. The key includes the parameters that change the result (paths max,
+// methods endpoint set); target is part of the cache primary key.
+func srcProbeCacheKey(req agent.SrcProbeRequest) string {
+	switch req.Kind {
+	case srcprobe.KindPaths:
+		max := req.MaxPaths
+		if max <= 0 {
+			max = 200
+		}
+		if max > 1000 {
+			max = 1000
+		}
+		return fmt.Sprintf("paths:max=%d", max)
+	case srcprobe.KindJS:
+		return "js"
+	case srcprobe.KindMethods:
+		eps := make([]string, 0, len(req.Endpoints))
+		seen := map[string]bool{}
+		for _, e := range req.Endpoints {
+			e = strings.TrimSpace(e)
+			if e == "" || seen[e] {
+				continue
+			}
+			seen[e] = true
+			eps = append(eps, e)
+		}
+		sort.Strings(eps)
+		sum := sha256.Sum256([]byte(strings.Join(eps, "\n")))
+		return "methods:" + hex.EncodeToString(sum[:8])
+	}
+	return ""
 }
 
 // srcProbeTargetURL 把资产展示标签变成 http(s) URL；不是主机标签时返回空。

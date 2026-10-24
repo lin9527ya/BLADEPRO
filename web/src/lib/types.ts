@@ -1192,6 +1192,16 @@ export interface SrcTaskState {
   submissions?: SrcSubmission[];
   /** 资产级 token 预算的用量（仅在开启预算时返回，最多 50 个资产）。 */
   asset_token_usage?: { asset_id: number; tokens: number }[];
+  /** 跨任务复用：同一资产在其他 SRC 任务里的最近终态（只读提示）。 */
+  prior_coverage?: {
+    asset_id: number;
+    task_id: number;
+    area: string;
+    item: string;
+    state: string;
+    reason?: string;
+    updated_at: string;
+  }[];
   doc?: {
     allow_budget_stop?: boolean;
     max_attempts_per_cell?: number;

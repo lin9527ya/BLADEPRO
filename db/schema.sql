@@ -1753,9 +1753,24 @@ CREATE TABLE IF NOT EXISTS src_cells (
 );
 CREATE INDEX IF NOT EXISTS idx_src_cells_task  ON src_cells(task_id, asset_id);
 CREATE INDEX IF NOT EXISTS idx_src_cells_state ON src_cells(task_id, state);
+-- 跨任务复用：按资产读历史终态（不含当前任务）。
+CREATE INDEX IF NOT EXISTS idx_src_cells_asset ON src_cells(asset_id, updated_at DESC);
 DROP TRIGGER IF EXISTS trg_src_cells_upd ON src_cells;
 CREATE TRIGGER trg_src_cells_upd BEFORE UPDATE ON src_cells
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- 资产级枚举缓存（P2 跨任务复用）：paths/js/methods 探针的结果按
+-- (asset, probe_key, target) 复用；non404 依赖任务流量，不入缓存。
+CREATE TABLE IF NOT EXISTS asset_probe_cache (
+    asset_id    BIGINT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    probe_key   TEXT NOT NULL,
+    target      TEXT NOT NULL DEFAULT '',
+    payload     JSONB NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at  TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (asset_id, probe_key, target)
+);
+CREATE INDEX IF NOT EXISTS idx_asset_probe_cache_exp ON asset_probe_cache(expires_at);
 
 -- =====================================================================
 -- SRC 交付面（P2）：发现元数据 + 提交台账

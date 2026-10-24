@@ -454,6 +454,17 @@ export function SrcTab({ taskId }: { taskId: string }) {
               {finishable ? "可收尾" : "缺口未清零"}
             </Badge>
           ) : null}
+          {enabled && (data?.prior_coverage?.length ?? 0) > 0 ? (
+            <Badge
+              variant="outline"
+              title={(data?.prior_coverage ?? [])
+                .slice(0, 6)
+                .map((c) => `任务 #${c.task_id}: ${c.area}/${c.item} → ${c.state}`)
+                .join("\n")}
+            >
+              跨任务结论 {data?.prior_coverage?.length ?? 0}
+            </Badge>
+          ) : null}
           {enabled && assetBudget > 0 ? (
             <Badge variant="outline" title="单资产 token 预算；到量后该资产停止派意图并自动收口未完成格">
               资产预算 {fmtTokens(assetBudget)} / 资产

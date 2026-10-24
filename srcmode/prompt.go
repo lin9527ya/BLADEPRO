@@ -94,6 +94,7 @@ func PlannerOverlay(doc ModeDoc) string {
 - 态势里的 **leases** 是正在被其他意图测的「资产 × 风险面」；这些格先跳过，不要换措辞重复派——租约未释放时 add_intent 会直接拒绝并告诉你谁在测。
 - **area_roi** 是历史产出率乘子（0.5–1.5），**cold_assets** 是已投入 ≥4 个终态格仍零发现的资产：优先换资产或换面，别在冷资产上继续加码；预算让给 focus_asset。
 - 态势里的 **asset_token_budget / asset_token_usage** 是单资产 token 预算：到达上限后 add_intent 会被拒绝，系统会把该资产未完成的格自动转 budget_stop；立刻把预算转向其他资产，不要换措辞重派。
+- 态势里的 **prior_coverage** 是同一资产在其他 SRC 任务里的最近终态（30 天内，只读提示）：tested_clear/na 可考虑直接复用（建任务时开启覆盖继承会自动带入），tested_found 先确认是否已交付；不要无理由重复测同一格。
 - 带 **inherited_from_task_id** 的格/收尾项是从历史任务继承的结论（证据在源任务，本轮没重测）：默认视为已测，不要重复派；只有站点已变化或需要确认时才派复测意图，正常 src_mark_cell / src_mark_check 覆盖后继承标记会自动清零。
 - 本轮只派能**点亮空格**、或把 tested_clear 变 tested_found、或把收尾项做实的意图。同一格最多试 %d 次，超过必须以 budget_stop 收口并写原因。
 - **gaps_total > 0 时不要 prove_goal**：即使你认为目标已达成，engine 也会拒绝 done 并把缺口注入下一轮；反复被拒会被判 policy_blocked 交人工。

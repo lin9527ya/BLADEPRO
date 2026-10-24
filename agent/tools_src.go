@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	actool "github.com/lin9527ya/Norma/tool"
 	"github.com/lin9527ya/bladepro/db"
@@ -41,6 +42,11 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	assetIDs := make([]int64, 0, len(assets))
+	for _, a := range assets {
+		assetIDs = append(assetIDs, a.ID)
+	}
+	priorCoverage, _ := t.srcStore.PriorSrcCoverage(ctx, t.taskID, assetIDs, time.Now().Add(-30*24*time.Hour), 60)
 	var assetUsage []db.AssetTokenUsage
 	if t.srcDoc.AssetTokenBudget > 0 {
 		assetUsage, _ = t.srcStore.AssetTokenUsageByTask(ctx, t.taskID)
@@ -162,6 +168,7 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 		"cells":             cells,
 		"assets":            matrix,
 		"asset_token_usage": assetUsage,
+		"prior_coverage":    priorCoverage,
 		"finishable":        rep.Finishable,
 		"doc": map[string]any{
 			"allow_budget_stop":     t.srcDoc.AllowBudgetStop,
@@ -253,6 +260,16 @@ func (t *ToolSet) srcOverviewBlock(ctx context.Context) (map[string]any, error) 
 		"note": "SRC 模式：本轮只派能点亮空格、或把 tested_clear 变 tested_found、或做实收尾项的意图；" +
 			"gaps_total>0 时不要 prove_goal。focus_asset 是当前最该清零的资产。",
 	}
+	// 跨任务复用提示：同一资产在其他 SRC 任务里的最近终态（只读，不改本任务格）。
+	scopeAssets, _ := t.srcStore.InScopeSrcAssets(ctx, t.taskID)
+	scopeAssetIDs := make([]int64, 0, len(scopeAssets))
+	for _, a := range scopeAssets {
+		scopeAssetIDs = append(scopeAssetIDs, a.ID)
+	}
+	if prior, err := t.srcStore.PriorSrcCoverage(ctx, t.taskID, scopeAssetIDs, time.Now().Add(-30*24*time.Hour), 10); err == nil && len(prior) > 0 {
+		out["prior_coverage"] = prior
+		out["prior_coverage_note"] = "其他任务在相同资产 × 风险面上的最近结论；tested_clear/na 可直接复用（建任务时开启覆盖继承会自动带入），tested_found 先确认是否已交付。"
+	}
 	// 资产级 token 预算：只给预算开启的任务附上用量（最多 20 个资产，按用量降序），
 	// 让 planner 在派意图前就能看到谁快/已经爆预算。
 	if t.srcDoc.AssetTokenBudget > 0 {
@@ -275,7 +292,8 @@ func (t *ToolSet) srcState() actool.CoreTool {
 		"src_state",
 		"【SRC 模式】读本任务的覆盖状态：范围内资产 × 必做风险面 的矩阵、未清零的缺口(gaps)、"+
 			"已点亮的终态格(cells)、以及收尾门结论(finishable)。派意图前先看 gaps_by_area 与 top_gaps。"+
-			"终态语义：tested_found(有洞，挂 finding)/tested_clear(测了没洞)/na(不适用)/budget_stop(预算用尽)。",
+			"终态语义：tested_found(有洞，挂 finding)/tested_clear(测了没洞)/na(不适用)/budget_stop(预算用尽)。"+
+			"prior_coverage 是同一资产在其他任务里的最近终态（30 天内，只读）：可复用其结论，避免无理由重复测。",
 		obj(map[string]any{
 			"asset_id": intp("只看某个资产（可选，配合 detail 用）"),
 			"area":     str("只看某个风险面（可选）"),

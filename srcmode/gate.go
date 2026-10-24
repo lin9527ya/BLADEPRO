@@ -3,6 +3,7 @@ package srcmode
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
@@ -77,6 +78,38 @@ type Report struct {
 	Finishable bool `json:"finishable"`
 	// BlockedReason 是给 planner/人看的一句话（Finishable=false 时非空）。
 	BlockedReason string `json:"blocked_reason,omitempty"`
+	// AssetYield 是每个资产的终态/发现统计（用于 ROI 止损展示）。
+	AssetYield []AssetYield `json:"asset_yield,omitempty"`
+	// ColdAssets 是"已测若干格仍零发现"的资产：只降权/提示，不阻塞收尾。
+	ColdAssets []int64 `json:"cold_assets,omitempty"`
+}
+
+// AssetYield 是一个资产的产出画像；Cold 表示已投入若干终态格但仍零发现。
+type AssetYield struct {
+	AssetID  int64  `json:"asset_id"`
+	Asset    string `json:"asset"`
+	Terminal int    `json:"terminal"`
+	Found    int    `json:"found"`
+	Cold     bool   `json:"cold,omitempty"`
+}
+
+// coldAssetTerminal 是判定"冷资产"的终态格数量门槛。
+const coldAssetTerminal = 4
+
+// assetYield 统计一个资产的终态/发现；已投入 ≥4 个终态格仍零发现 → 冷资产。
+func assetYield(asset db.SrcAsset, cells []db.SrcCell) AssetYield {
+	st := AssetYield{AssetID: asset.ID, Asset: asset.Label}
+	for _, c := range cells {
+		switch c.State {
+		case db.SrcStateFound:
+			st.Terminal++
+			st.Found++
+		case db.SrcStateClear, db.SrcStateNA, db.SrcStateBudgetStop:
+			st.Terminal++
+		}
+	}
+	st.Cold = st.Terminal >= coldAssetTerminal && st.Found == 0
+	return st
 }
 
 const maxReportGaps = 50
@@ -105,6 +138,16 @@ func CheckFinish(ctx context.Context, store *db.SrcStore, taskID int64, doc Mode
 	rep.Assets = len(assets)
 	gaps := make([]Gap, 0, 16)
 	waived := make([]Gap, 0, 4)
+	// ROI 止损画像：终态格多、发现为零的资产降权（但仍是缺口，不会静默放行）。
+	yieldByAsset := make(map[int64]AssetYield, len(assets))
+	for _, asset := range assets {
+		st := assetYield(asset, cellsByAsset[asset.ID])
+		yieldByAsset[asset.ID] = st
+		rep.AssetYield = append(rep.AssetYield, st)
+		if st.Cold {
+			rep.ColdAssets = append(rep.ColdAssets, asset.ID)
+		}
+	}
 	if len(assets) == 0 {
 		// fail-closed：没有可测资产时必须留一条缺口，不能因为"循环没跑"就 Finishable=true。
 		gaps = append(gaps, Gap{
@@ -126,6 +169,10 @@ func CheckFinish(ctx context.Context, store *db.SrcStore, taskID int64, doc Mode
 			})
 			continue
 		}
+		assetMult := 1.0
+		if st := yieldByAsset[asset.ID]; st.Cold {
+			assetMult = 0.3
+		}
 		byArea := map[string]map[string]db.SrcCell{}
 		for _, cell := range cellsByAsset[asset.ID] {
 			if byArea[cell.Area] == nil {
@@ -144,7 +191,7 @@ func CheckFinish(ctx context.Context, store *db.SrcStore, taskID int64, doc Mode
 					gaps = append(gaps, Gap{
 						AssetID: asset.ID, Asset: asset.Label, AssetType: asset.Type,
 						Area: area, AreaTitle: AreaTitle(area), Item: item, Kind: GapBlank,
-						Reason: "未测（没有终态）", Priority: cellPriority(asset.Type, area, 0),
+						Reason: "未测（没有终态）", Priority: cellPriority(asset.Type, area, 0, doc, assetMult),
 					})
 					continue
 				}
@@ -152,7 +199,7 @@ func CheckFinish(ctx context.Context, store *db.SrcStore, taskID int64, doc Mode
 				if cell.State == db.SrcStateFound || cell.State == db.SrcStateClear {
 					rep.CellsMeasured++
 				}
-				if g, bad := cellGap(asset, area, cell, doc); bad {
+				if g, bad := cellGap(asset, area, cell, doc, assetMult); bad {
 					gaps = append(gaps, g)
 					continue
 				}
@@ -161,7 +208,7 @@ func CheckFinish(ctx context.Context, store *db.SrcStore, taskID int64, doc Mode
 						AssetID: asset.ID, Asset: asset.Label, AssetType: asset.Type,
 						Area: area, AreaTitle: AreaTitle(area), Item: cell.Item,
 						Kind: GapBudgetStopBlocked, State: cell.State, Reason: cell.Reason,
-						Attempts: cell.Attempts, Priority: cellPriority(asset.Type, area, cell.Attempts),
+						Attempts: cell.Attempts, Priority: cellPriority(asset.Type, area, cell.Attempts, doc, assetMult),
 					})
 				}
 			}
@@ -179,20 +226,20 @@ func CheckFinish(ctx context.Context, store *db.SrcStore, taskID int64, doc Mode
 				rep.ChecksTotal++
 				chk, ok := checksByAsset[asset.ID][def.Key]
 				if !ok {
-					addCheckGap(&gaps, &rep, asset, def, GapMissingCheck, "", "未做："+def.Hint, 0)
+					addCheckGap(&gaps, &rep, asset, def, GapMissingCheck, "", "未做："+def.Hint, 0, assetMult)
 					continue
 				}
 				rep.ChecksDone++
 				switch chk.State {
 				case db.SrcCheckDone:
 					if ok, why := checkSatisfied(def, doc, chk.Metrics); !ok {
-						addCheckGap(&gaps, &rep, asset, def, GapMissingCheck, chk.State, "数字不达标："+why, chk.EvidenceNodeID)
+						addCheckGap(&gaps, &rep, asset, def, GapMissingCheck, chk.State, "数字不达标："+why, chk.EvidenceNodeID, assetMult)
 					}
 				case db.SrcCheckNA:
 					// 写入侧已校验理由码；N/A 是终态，不再报缺口。
 				case db.SrcCheckBudgetStop:
 					if !doc.AllowBudgetStop {
-						addCheckGap(&gaps, &rep, asset, def, GapBudgetStopBlocked, chk.State, chk.Reason, chk.EvidenceNodeID)
+						addCheckGap(&gaps, &rep, asset, def, GapBudgetStopBlocked, chk.State, chk.Reason, chk.EvidenceNodeID, assetMult)
 					}
 				}
 			}
@@ -275,12 +322,12 @@ func requiredCells(area string, doc ModeDoc, cells map[string]db.SrcCell) ([]str
 }
 
 // cellGap 把一个终态行判成"过"还是"缺什么"。
-func cellGap(asset db.SrcAsset, area string, cell db.SrcCell, doc ModeDoc) (Gap, bool) {
+func cellGap(asset db.SrcAsset, area string, cell db.SrcCell, doc ModeDoc, assetMult float64) (Gap, bool) {
 	base := Gap{
 		AssetID: asset.ID, Asset: asset.Label, AssetType: asset.Type,
 		Area: area, AreaTitle: AreaTitle(area), Item: cell.Item,
 		State: cell.State, Attempts: cell.Attempts,
-		Priority: cellPriority(asset.Type, area, cell.Attempts),
+		Priority: cellPriority(asset.Type, area, cell.Attempts, doc, assetMult),
 	}
 	switch cell.State {
 	case db.SrcStateNA, db.SrcStateBudgetStop:
@@ -314,20 +361,44 @@ func cellGap(asset db.SrcAsset, area string, cell db.SrcCell, doc ModeDoc) (Gap,
 
 // cellPriority 是补格优先级：资产价值 × 面权重 ÷ (已尝试次数 + 1)。
 // 用整数除法就够了——它只用来排序，不需要精确。
-func cellPriority(assetType, area string, attempts int) int {
+func cellPriority(assetType, area string, attempts int, doc ModeDoc, assetMult float64) int {
 	if attempts < 0 {
 		attempts = 0
 	}
-	return AssetValue(assetType) * AreaWeight(area) / (attempts + 1)
+	if assetMult <= 0 {
+		assetMult = 1
+	}
+	roi := doc.AreaROI[strings.TrimSpace(area)]
+	if roi <= 0 {
+		roi = 1
+	}
+	if roi < 0.1 {
+		roi = 0.1
+	}
+	if roi > 5 {
+		roi = 5
+	}
+	base := float64(AssetValue(assetType)*AreaWeight(area)) * roi * assetMult
+	if base <= 0 {
+		return 0
+	}
+	p := int(math.Round(base / float64(attempts+1)))
+	if p < 1 {
+		p = 1
+	}
+	return p
 }
 
 // addCheckGap 记一条收尾闸缺口（统一填 Area/权重/计数）。
-func addCheckGap(gaps *[]Gap, rep *Report, asset db.SrcAsset, def CheckDef, kind, state, reason string, evidence int64) {
+func addCheckGap(gaps *[]Gap, rep *Report, asset db.SrcAsset, def CheckDef, kind, state, reason string, evidence int64, assetMult float64) {
 	if rep.ChecksByKey == nil {
 		rep.ChecksByKey = map[string]int{}
 	}
 	rep.ChecksByKey[def.Key]++
 	priority := checkPriority(asset.Type, def, 0)
+	if assetMult > 0 {
+		priority = int(math.Round(float64(priority) * assetMult))
+	}
 	if kind == GapBudgetStopBlocked {
 		priority += 5
 	}

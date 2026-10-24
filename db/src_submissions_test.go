@@ -394,4 +394,8 @@ func TestSrcVerdictReasonAndFeedback(t *testing.T) {
 	if fb.Submitted != 1 || fb.Rejected != 1 || fb.Accepted != 0 || fb.Reasons[SrcVerdictNotReproducible] != 1 {
 		t.Fatalf("项目反馈聚合不对：%+v", fb)
 	}
+	counts, err := store.ListSrcClassStatusCounts(ctx, prog.ID)
+	if err != nil || len(counts) != 1 || counts[0].VulnClass != "authz" || counts[0].Status == "" || counts[0].Count != 1 {
+		t.Fatalf("ROI 计数不对：%+v err=%v", counts, err)
+	}
 }

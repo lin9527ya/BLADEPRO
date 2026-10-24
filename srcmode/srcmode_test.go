@@ -115,14 +115,24 @@ func TestHardItemsFor(t *testing.T) {
 }
 
 func TestCellPriorityFavorsUntriedHighValue(t *testing.T) {
-	fresh := cellPriority("app", "rce", 0)
-	tried := cellPriority("app", "rce", 3)
+	doc := DefaultDoc()
+	fresh := cellPriority("app", "rce", 0, doc, 1)
+	tried := cellPriority("app", "rce", 3, doc, 1)
 	if fresh <= tried {
 		t.Fatalf("没试过的高价值格应优先：fresh=%d tried=%d", fresh, tried)
 	}
-	low := cellPriority("subdomain", "paths", 0)
+	low := cellPriority("subdomain", "paths", 0, doc, 1)
 	if fresh <= low {
 		t.Fatalf("app×rce 应高于 subdomain×paths：%d vs %d", fresh, low)
+	}
+	// ROI 乘子：历史产出高的面加分，冷资产降权。
+	hot := DefaultDoc()
+	hot.AreaROI = map[string]float64{"rce": 2}
+	if got := cellPriority("app", "rce", 0, hot, 1); got <= fresh {
+		t.Fatalf("ROI>1 应抬高优先级：%d vs %d", got, fresh)
+	}
+	if got := cellPriority("app", "rce", 0, doc, 0.3); got >= fresh {
+		t.Fatalf("冷资产应降权：%d vs %d", got, fresh)
 	}
 }
 
@@ -212,7 +222,7 @@ func TestCellGapShapes(t *testing.T) {
 	}
 	doc := DefaultDoc()
 	for i, tc := range cases {
-		gap, isGap := cellGap(asset, "authz", tc.cell, doc)
+		gap, isGap := cellGap(asset, "authz", tc.cell, doc, 1)
 		if isGap != tc.wantGap {
 			t.Fatalf("case %d: want gap=%v got %v (%+v)", i, tc.wantGap, isGap, gap)
 		}
@@ -228,7 +238,7 @@ func TestCellGapShapes(t *testing.T) {
 	allow.AllowReasonOnlyClear = true
 	if g, bad := cellGap(asset, "authz", db.SrcCell{
 		Area: "authz", Item: "*", State: db.SrcStateClear, Reason: "发过请求，无异常",
-	}, allow); bad {
+	}, allow, 1); bad {
 		t.Fatalf("allow_reason_only_clear 应放行说明型 clear：%+v", g)
 	}
 }
@@ -266,5 +276,39 @@ func TestAreaTaxonomyConsistency(t *testing.T) {
 	}
 	if len(Areas) != len(AreaNames()) {
 		t.Fatal("AreaNames 与 Areas 长度不一致")
+	}
+}
+
+// TestAssetYieldCold 钉住 ROI 止损画像：投入 ≥4 个终态格仍零发现 → 冷资产。
+func TestAssetYieldCold(t *testing.T) {
+	asset := db.SrcAsset{ID: 9, Type: "app", Label: "api.example"}
+	cells := []db.SrcCell{
+		{State: db.SrcStateClear}, {State: db.SrcStateClear},
+		{State: db.SrcStateNA}, {State: db.SrcStateBudgetStop},
+	}
+	st := assetYield(asset, cells)
+	if !st.Cold || st.Terminal != 4 || st.Found != 0 || st.AssetID != 9 {
+		t.Fatalf("应判为冷资产：%+v", st)
+	}
+	cells[0].State = db.SrcStateFound
+	if st := assetYield(asset, cells); st.Cold || st.Found != 1 {
+		t.Fatalf("有发现就不该判冷：%+v", st)
+	}
+	if st := assetYield(asset, cells[:2]); st.Cold {
+		t.Fatalf("终态不足 4 个不该判冷：%+v", st)
+	}
+}
+
+// TestResolveValidatesAreaROI 钉住 ROI 快照的合法性：未知面/离谱乘子直接拒绝。
+func TestResolveValidatesAreaROI(t *testing.T) {
+	if _, _, err := Resolve(ModeSrc, []byte(`{"area_roi":{"nope":1.2}}`)); err == nil {
+		t.Fatal("未知风险面的 ROI 应拒绝")
+	}
+	if _, _, err := Resolve(ModeSrc, []byte(`{"area_roi":{"injection":99}}`)); err == nil {
+		t.Fatal("超范围 ROI 应拒绝")
+	}
+	_, doc, err := Resolve(ModeSrc, []byte(`{"area_roi":{"injection":1.2}}`))
+	if err != nil || doc.AreaROI["injection"] != 1.2 {
+		t.Fatalf("合法 ROI 未解析：%v %+v", err, doc.AreaROI)
 	}
 }

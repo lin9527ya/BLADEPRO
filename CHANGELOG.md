@@ -58,6 +58,18 @@
 - 回归：clear 证据/allow 开关、platform_exempt 豁免依据、static_page 按面白名单、
   Program→mode_doc 编译；集成测试夹具显式打开 allow 以聚焦各自断言。
 
+### 新增：ROI 排序与止损（P2）
+
+- `mode_doc.area_roi`：创建任务时按台账历史算风险面产出率乘子（0.5–1.5）。
+  有 program 时优先用该项目；已结算台账不足 5 条回落到全局，避免小样本噪声。
+  评分口径：accepted/paid=1、ready=0.5、rejected/duplicate=-0.25，除以已结算数。
+- `CheckFinish` 新增 `asset_yield` / `cold_assets`：资产已投入 ≥4 个终态格仍零发现
+  判为冷资产，其补格与收尾项缺口优先级 ×0.3（只降权、不阻塞，缺口仍然要清）。
+- `graph_overview.src` 与 `src_state` 暴露 `area_roi` / `cold_assets` / `asset_yield`；
+  planner 提示词要求优先换资产/换面，把预算让给 focus_asset。
+- 现状：每资产预算仍由 `max_intents_per_asset` 硬拦；按资产的 token/时间预算尚未做
+  （`llm_usage` 还没有 intent 维度，见模型分层/成本归因）。
+
 ### 新增：SRC 单元格租约（P2）
 
 - 新表 `src_cell_leases`：同一 `(task, asset, risk_area)` 同时只允许一条意图在测。

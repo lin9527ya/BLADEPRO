@@ -76,6 +76,9 @@ type ModeDoc struct {
 	RequireRetest bool `json:"require_retest"`
 	// RateLimit 是确定性探针的出站 QPS 上限（0 = 用内建保守值 5）。
 	RateLimit int `json:"rate_limit,omitempty"`
+	// AreaROI 是按风险面的历史产出率乘子（0.5–1.5，创建任务时按台账快照）。
+	// 用于补格排序：高产出面优先，长期无产出的面降权。缺省 = 1。
+	AreaROI map[string]float64 `json:"area_roi,omitempty"`
 	// PlatformExemptAreas 是 program 显式声明的平台豁免面：只有列在这里的面才允许
 	// na_code=platform_exempt，避免把"平台不测"当成万能 N/A。
 	PlatformExemptAreas []string `json:"platform_exempt_areas,omitempty"`
@@ -148,6 +151,14 @@ func Resolve(mode string, raw json.RawMessage) (json.RawMessage, ModeDoc, error)
 	for _, area := range doc.PlatformExemptAreas {
 		if !IsArea(strings.TrimSpace(area)) {
 			return nil, ModeDoc{}, fmt.Errorf("未知的 platform_exempt_areas 风险面：%s", area)
+		}
+	}
+	for area, mult := range doc.AreaROI {
+		if !IsArea(strings.TrimSpace(area)) {
+			return nil, ModeDoc{}, fmt.Errorf("未知的 area_roi 风险面：%s", area)
+		}
+		if mult < 0.1 || mult > 5 {
+			return nil, ModeDoc{}, fmt.Errorf("area_roi[%s] 超出 0.1–5：%v", area, mult)
 		}
 	}
 	switch strings.TrimSpace(doc.CheckTier) {

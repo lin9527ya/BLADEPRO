@@ -500,6 +500,21 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// ROI 先验（P2）：按台账历史给风险面一个补格优先级乘子；创建时快照。
+	if srcDoc.IsSrc() {
+		var programID int64
+		if req.SrcProgramID != nil {
+			programID = *req.SrcProgramID
+		}
+		if roi := s.srcAreaROI(r.Context(), programID); len(roi) > 0 {
+			srcDoc.AreaROI = roi
+			modeDoc, err = json.Marshal(srcDoc)
+			if err != nil {
+				writeErr(w, 500, err.Error())
+				return
+			}
+		}
+	}
 	t, err := s.m.CreateTaskWithOptions(req.Description, req.Goal, db.TaskCreateOptions{
 		Name: strings.TrimSpace(req.Name), CategoryID: req.CategoryID,
 		SourceTaskIDs: sourceIDs, CompanyIDs: req.CompanyIDs, LLMProfileIDs: req.LLMProfileIDs,

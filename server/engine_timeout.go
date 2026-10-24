@@ -192,7 +192,7 @@ func (e *Engine) deadlineCoordinator(ctx context.Context, t *Task) {
 		}
 		// token 预算护栏：70/85/95% 各投递一次收敛提示；达到 100% 复用超时收尾时序
 		// （停派/领新意图 → drain → 终局 planner 轮 → 定终态）。
-		if budget := e.tokenBudget(); budget > 0 {
+		if budget := e.tokenBudgetFor(t); budget > 0 {
 			if used, err := e.m.pg.TokenUsedByTask(t.ID); err == nil {
 				stage := BudgetStage(used, budget)
 				e.budgetNotice(t, stage, used, budget)

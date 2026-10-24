@@ -414,7 +414,9 @@ export function useOverviewState(taskId: string) {
 
   // 预算对照：用量 = 输入+输出（与后端 BudgetStage 的计量口径一致）。
   const budgetUsed = tokenTotals.input + tokenTotals.output;
-  const budgetPct = tokenBudget > 0 ? (budgetUsed / tokenBudget) * 100 : 0;
+  // 任务级覆盖优先于全局设置（批量扇出按片设预算）。
+  const effectiveTokenBudget = (task?.token_budget ?? 0) > 0 ? (task?.token_budget ?? 0) : tokenBudget;
+  const budgetPct = effectiveTokenBudget > 0 ? (budgetUsed / effectiveTokenBudget) * 100 : 0;
 
   return {
     task,
@@ -443,7 +445,7 @@ export function useOverviewState(taskId: string) {
     setScopeErr,
     modelTokens,
     setModelTokens,
-    tokenBudget,
+    tokenBudget: effectiveTokenBudget,
     setTokenBudget,
     goals,
     setGoals,

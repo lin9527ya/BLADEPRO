@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+### 新增：批量任务扇出与分片（P2）
+
+- 新接口 `POST /api/tasks/batch`：按关联企业 / 来源任务 / 显式资产 id 解析资产，
+  按 **host** 或 **root_domain** 分组，再按 `assets_per_task` 打包成互不重叠的分片；
+  支持 `dry_run` 预览、`max_shards` / `max_assets` 上限与 `campaign_name`。
+- 每个分片建一个任务，使用**精确 scope**（subdomain/root_domain/ip）与
+  `task_asset_links`，不再把整个企业范围灌进每个任务；所有分片归入同一 campaign。
+- 新增任务级 token 预算覆盖（`tasks.token_budget`，0=全局）：批量扇出可按片设预算，
+  引擎的 70/85/95/100% 护栏优先使用任务覆盖值。
+- 单任务与批量扇出共用同一条创建管线（项目规则 / SRC 快照 / 策略 / 覆盖继承），
+  避免两条路径逐渐漂移。
+- 建任务弹窗新增「批量扇出」：分片方式、每片资产上限、最大分片数、每片 token 预算、
+  campaign 名称与「预览分片」。
+- 取舍：host 分组不拆开（scope 是 host 级，拆开会让分片重叠）；单个 host 超过每片
+  上限时独占一片。并发仍由全局任务并发上限与每任务 worker 数控制。
+- 回归：资产并集解析与上限截断、创建时 scope/asset link/预算原子写入、
+  批量接口 dry-run + host 分片 + campaign + 精确 scope。
+
 ### 新增：全局出站速率治理（P2）
 
 - 录制代理新增**全局 + 单 host 两级令牌桶**：Bash/curl、run_execution、WebFetch、

@@ -74,6 +74,16 @@ func (s *Server) taskTokenBudget() int64 {
 	return n
 }
 
+// tokenBudgetFor returns the task's own override when set, else the global
+// setting. Batch fan-out sets a per-shard budget so one noisy shard cannot eat
+// the whole campaign's allowance.
+func (e *Engine) tokenBudgetFor(t *Task) int64 {
+	if t != nil && t.TokenBudget > 0 {
+		return t.TokenBudget
+	}
+	return e.tokenBudget()
+}
+
 // tokenBudget is the engine-side view of the same setting.
 func (e *Engine) tokenBudget() int64 {
 	v, ok, err := e.m.pg.GetSetting(settingTokenBudget)

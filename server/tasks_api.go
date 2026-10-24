@@ -4,7 +4,6 @@ package server
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -16,7 +15,6 @@ import (
 	"time"
 
 	"github.com/lin9527ya/bladepro/db"
-	"github.com/lin9527ya/bladepro/srcmode"
 )
 
 func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
@@ -381,229 +379,20 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad json: "+err.Error())
 		return
 	}
-	if strings.TrimSpace(req.Description) == "" {
-		req.Description = "未命名任务"
-	}
-	if len(req.LLMProfileIDs) == 0 && req.LLMProfileID != nil {
-		req.LLMProfileIDs = []int64{*req.LLMProfileID}
-	}
-	if err := s.validateTaskProfileIDs(req.LLMProfileIDs); err != nil {
-		writeErr(w, 400, err.Error())
+	prep, perr := s.prepareTaskCreate(r.Context(), req)
+	if perr != nil {
+		writeErr(w, perr.code, perr.msg)
 		return
 	}
-	if req.TimeoutSeconds < 0 {
-		req.TimeoutSeconds = 0
-	}
-	if len(req.SourceTaskIDs) > db.MaxTaskSourceCount {
-		writeErr(w, 400, fmt.Sprintf("关联任务最多选择 %d 个", db.MaxTaskSourceCount))
+	t, perr := s.persistPreparedTask(r.Context(), prep, nil)
+	if perr != nil {
+		writeErr(w, perr.code, perr.msg)
 		return
 	}
-	sourceIDs := make([]int64, 0, len(req.SourceTaskIDs))
-	seenSources := map[int64]bool{}
-	for _, raw := range req.SourceTaskIDs {
-		id, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
-		if err != nil || id <= 0 || seenSources[id] {
-			writeErr(w, 400, "关联任务 id 无效或重复")
-			return
-		}
-		if _, ok := s.m.Task(strconv.FormatInt(id, 10)); !ok {
-			writeErr(w, 400, fmt.Sprintf("关联任务 #%d 不存在", id))
-			return
-		}
-		seenSources[id] = true
-		sourceIDs = append(sourceIDs, id)
-	}
-	companyIDs, err := db.NormalizeTaskCompanyIDs(req.CompanyIDs)
-	if err != nil {
-		writeErr(w, 400, fmt.Sprintf("关联企业无效：最多选择 %d 个有效企业", db.MaxTaskCompanyCount))
-		return
-	}
-	req.CompanyIDs = companyIDs
-	interceptRules, err := buildTaskInterceptRules(req.InterceptRules)
-	if err != nil {
-		writeErr(w, 400, "任务级拦截规则无效："+err.Error())
-		return
-	}
-	// SRC 平台项目（P3）：选了项目就把它的规则编译进这个任务——模式、必做面、额度、
-	// 禁用手段/写操作、命令级限额，全部在创建时落成快照，之后改项目不影响在跑的任务。
-	var program *srcmode.Program
-	if req.SrcProgramID != nil && *req.SrcProgramID > 0 {
-		row, err := s.m.PG().Src().GetSrcProgram(r.Context(), *req.SrcProgramID)
-		if err != nil {
-			writeErr(w, 500, err.Error())
-			return
-		}
-		if row == nil {
-			writeErr(w, 400, "SRC 平台项目不存在")
-			return
-		}
-		program, err = srcProgramFromRow(row)
-		if err != nil {
-			writeErr(w, 400, "该项目的规则配置损坏："+err.Error())
-			return
-		}
-		if err := program.Validate(); err != nil {
-			writeErr(w, 400, "该项目的规则不合法："+err.Error())
-			return
-		}
-		// 选了平台项目就是 SRC 任务：不显式给 mode 时按 src 处理。
-		if strings.TrimSpace(req.Mode) == "" {
-			req.Mode = srcmode.ModeSrc
-		}
-		// 项目绑了企业就自动带上该企业的资产范围（"选项目自动灌范围"）。
-		// 去重交给 CreateTaskWithOptions 的 NormalizeTaskCompanyIDs。
-		if program.CompanyID != nil && *program.CompanyID > 0 {
-			exists := false
-			for _, id := range req.CompanyIDs {
-				if id == *program.CompanyID {
-					exists = true
-					break
-				}
-			}
-			if !exists {
-				req.CompanyIDs = append(req.CompanyIDs, *program.CompanyID)
-			}
-		}
-	}
-	// SRC 任务的探索策略多一层内建红线（禁登出/注销/吊销）：它不依赖 program，
-	// 是挖洞动作本身的边界；编译成命令门规则后，说了不算、拦得住才算。
-	floor := programPolicyFloor(req.ExplorationPolicy, program)
-	if strings.TrimSpace(req.Mode) == srcmode.ModeSrc {
-		floor = srcBuiltinPolicyFloor(floor)
-	}
-	policyDoc, err := s.newTaskPolicy(floor)
-	if err != nil {
-		writeErr(w, 400, err.Error())
-		return
-	}
-	// SRC 模式：创建时把「模式 + 覆盖配置」解析成快照落库，运行中只读。
-	modeDoc, srcDoc, err := srcmode.Resolve(req.Mode, req.ModeDoc)
-	if err != nil {
-		writeErr(w, 400, err.Error())
-		return
-	}
-	if program != nil {
-		srcDoc = program.ApplyToModeDoc(srcDoc)
-		note := program.Describe()
-		if fb := s.programFeedbackNote(r.Context(), program.ID); fb != "" {
-			if note != "" {
-				note += " "
-			}
-			note += fb
-		}
-		if note != "" {
-			srcDoc.ProgramNote = note
-		}
-		modeDoc, err = json.Marshal(srcDoc)
-		if err != nil {
-			writeErr(w, 500, err.Error())
-			return
-		}
-	}
-	// 资产级 token 预算（P2）：mode_doc 显式给了就用自己的；没给（0）则继承全局
-	// setting `src_asset_token_budget`，创建时快照进 mode_doc，运行中改全局不影响。
-	if srcDoc.IsSrc() && srcDoc.AssetTokenBudget <= 0 {
-		if v := s.srcAssetTokenBudget(); v > 0 {
-			srcDoc.AssetTokenBudget = v
-			modeDoc, err = json.Marshal(srcDoc)
-			if err != nil {
-				writeErr(w, 500, err.Error())
-				return
-			}
-		}
-	}
-	// 跨任务覆盖继承（P2）：校验来源后再建任务，避免建出一条永远无法执行的孤儿任务。
-	inheritRequested := (req.InheritCoverage != nil && *req.InheritCoverage) ||
-		(req.InheritCoverageFrom != nil && *req.InheritCoverageFrom > 0)
-	if inheritRequested && !srcDoc.IsSrc() {
-		writeErr(w, 400, "覆盖继承仅适用于 SRC 挖掘任务")
-		return
-	}
-	var inheritFromID int64
-	if req.InheritCoverageFrom != nil && *req.InheritCoverageFrom > 0 {
-		inheritFromID = *req.InheritCoverageFrom
-		srcTask, err := s.m.PG().GetTask(inheritFromID)
-		if err != nil {
-			writeErr(w, 500, err.Error())
-			return
-		}
-		if srcTask == nil {
-			writeErr(w, 400, fmt.Sprintf("覆盖继承来源任务 #%d 不存在", inheritFromID))
-			return
-		}
-		if strings.TrimSpace(srcTask.Mode) != srcmode.ModeSrc {
-			writeErr(w, 400, fmt.Sprintf("覆盖继承来源任务 #%d 不是 SRC 任务", inheritFromID))
-			return
-		}
-	}
-	// ROI 先验（P2）：按台账历史给风险面一个补格优先级乘子；创建时快照。
-	if srcDoc.IsSrc() {
-		var programID int64
-		if req.SrcProgramID != nil {
-			programID = *req.SrcProgramID
-		}
-		if roi := s.srcAreaROI(r.Context(), programID); len(roi) > 0 {
-			srcDoc.AreaROI = roi
-			modeDoc, err = json.Marshal(srcDoc)
-			if err != nil {
-				writeErr(w, 500, err.Error())
-				return
-			}
-		}
-	}
-	t, err := s.m.CreateTaskWithOptions(req.Description, req.Goal, db.TaskCreateOptions{
-		Name: strings.TrimSpace(req.Name), CategoryID: req.CategoryID,
-		SourceTaskIDs: sourceIDs, CompanyIDs: req.CompanyIDs, LLMProfileIDs: req.LLMProfileIDs,
-		TimeoutSeconds: req.TimeoutSeconds, PlanHeartbeatSeconds: req.PlanHeartbeatSeconds,
-		CoverageEnabled:   req.CoverageEnabled,
-		InterceptRules:    interceptRules,
-		ExplorationPolicy: policyDoc,
-		Mode:              srcDoc.Mode,
-		ModeDoc:           modeDoc,
-		SrcProgramID:      req.SrcProgramID,
-	})
-	if err != nil {
-		if errors.Is(err, db.ErrTaskCategoryInvalid) || errors.Is(err, db.ErrTaskCategoryNotFound) {
-			writeErr(w, 400, "任务分类不存在或无效")
-			return
-		}
-		if errors.Is(err, db.ErrTaskCompanyIDsInvalid) || errors.Is(err, db.ErrTaskCompanyNotFound) {
-			writeErr(w, 400, "关联企业不存在或无效")
-			return
-		}
-		writeErr(w, 500, err.Error())
-		return
-	}
-	log.Printf("[task] 新建任务 #%s «%s» 目标: %s", t.ID, req.Description, req.Goal)
-	// 覆盖继承：显式来源优先；否则按「来源任务 → 同平台项目 → 同企业」自动选最近一个
-	// 有资产重叠的 SRC 任务。失败只记日志，不阻塞任务创建（继承是加速项，不是前置条件）。
-	if inheritRequested && srcDoc.IsSrc() {
-		taskID := parseIntDefault(t.ID)
-		var programID int64
-		if req.SrcProgramID != nil {
-			programID = *req.SrcProgramID
-		}
-		if inheritFromID <= 0 {
-			if autoID, err := s.m.PG().Src().LatestInheritSource(r.Context(), taskID, programID, req.CompanyIDs, sourceIDs, time.Now().Add(-30*24*time.Hour)); err != nil {
-				log.Printf("[task] #%s 选择覆盖继承来源失败: %v", t.ID, err)
-			} else {
-				inheritFromID = autoID
-			}
-		}
-		if inheritFromID > 0 && inheritFromID != taskID {
-			res, err := s.m.PG().Src().InheritSrcCoverage(r.Context(), inheritFromID, taskID)
-			if err != nil {
-				log.Printf("[task] #%s 从任务 #%d 继承覆盖失败: %v", t.ID, inheritFromID, err)
-			} else if res.Cells > 0 || res.Checks > 0 {
-				summary := fmt.Sprintf("继承覆盖：从任务 #%d 复制 %d 格 tested_clear、%d 项收尾数字", inheritFromID, res.Cells, res.Checks)
-				log.Printf("[task] #%s %s", t.ID, summary)
-				s.engine.emitActivity(t, db.Activity{Worker: "system", Kind: "src_gate", Summary: summary})
-			}
-		}
-	}
+	log.Printf("[task] 新建任务 #%s «%s» 目标: %s", t.ID, prep.req.Description, prep.req.Goal)
 	// 共享的建后流程(seed + 种子意图 + 后台目标分解 + engine.Run),与 spawn_task 复用同一段。
 	// launchTask 内部异步,不阻塞 UI —— 目标分解在后台可见地进行。
-	s.launchTask(t, req.Description+" "+req.Goal, req.SeedFirstIntent != nil && *req.SeedFirstIntent)
+	s.launchTask(t, prep.req.Description+" "+prep.req.Goal, prep.req.SeedFirstIntent != nil && *prep.req.SeedFirstIntent)
 	writeJSON(w, 201, taskDTO(t, s.resolvedTaskStatus(t)))
 }
 

@@ -684,6 +684,8 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS coverage_enabled BOOLEAN NOT NULL DEF
 -- task creation order. queue_mode distinguishes first bootstrap from resuming an
 -- exploration that already owns goals/history.
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS queued_at TIMESTAMPTZ;
+-- 任务级 token 预算覆盖（0 = 用全局 setting `task_token_budget`）。批量扇出时每片可单独设预算。
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS token_budget BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS queue_mode TEXT NOT NULL DEFAULT '';
 -- 可选的任务名称;补旧库。空串=未命名,前端展示时回退到描述。
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT '';

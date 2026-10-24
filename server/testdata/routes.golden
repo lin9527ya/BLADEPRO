@@ -274,6 +274,7 @@ POST /api/task-schedules/{id}/run	server.(*Server).runTaskScheduleNow-fm
 POST /api/task-templates	server.(*Server).pgCreateTaskTemplate-fm
 POST /api/tasks	server.(*Server).createTask-fm
 POST /api/tasks/archive/batch	server.(*Server).queueTaskArchivesBatch-fm
+POST /api/tasks/batch	server.(*Server).createTaskBatch-fm
 POST /api/tasks/category/batch	server.(*Server).updateTasksCategoryBatch-fm
 POST /api/tasks/control/batch	server.(*Server).controlTasksBatch-fm
 POST /api/tasks/{id}/archive	server.(*Server).queueTaskArchive-fm

@@ -24,6 +24,7 @@ import type {
   Audit,
   BatchCategoryItem,
   BatchControlItem,
+  BatchTaskResult,
   Campaign,
   CampaignSummary,
   ChatAttachment,
@@ -273,6 +274,69 @@ function interceptPageQuery(page: number, size: number, filter: InterceptApprova
   return query.toString();
 }
 
+export interface CreateTaskInput {
+  name?: string;
+  categoryId?: number;
+  description: string;
+  goal: string;
+  llmProfileIds?: number[];
+  sourceTaskIds?: string[];
+  companyIds?: number[];
+  timeoutSeconds?: number;
+  seedFirstIntent?: boolean;
+  planHeartbeatSeconds?: number;
+  coverageEnabled?: boolean;
+  /** P2：任务级 token 预算覆盖；0/省略 = 用全局设置。 */
+  tokenBudget?: number;
+  // SRC 挖掘模式：创建时定死（""=普通渗透）。modeDoc 是模式配置快照，省略=后端默认。
+  mode?: TaskMode;
+  modeDoc?: unknown;
+  /** P3：绑定的 SRC 平台项目；省略 = 不绑定。 */
+  srcProgramID?: number;
+  /** P2：跨任务覆盖继承（同项目/同企业的近期 tested_clear 与收尾数字）。 */
+  inheritCoverage?: boolean;
+  /** 指定继承来源任务；优先于自动选源。 */
+  inheritCoverageFrom?: number;
+  interceptRules?: AssetInterceptRuleInput[];
+  // P20：任务级探索策略覆盖层；省略 = 完全继承当时的全局默认（服务端解析成快照落库）。
+  explorationPolicy?: ExplorationPolicyOverride;
+}
+
+export interface CreateTaskBatchInput extends CreateTaskInput {
+  assetIds?: number[];
+  assetTypes?: string[];
+  shardBy?: "host" | "root_domain";
+  assetsPerTask?: number;
+  maxShards?: number;
+  maxAssets?: number;
+  campaignName?: string;
+  dryRun?: boolean;
+}
+
+function createTaskPayload(input: CreateTaskInput) {
+  return {
+    name: input.name ?? "",
+    category_id: input.categoryId ?? null,
+    description: input.description,
+    goal: input.goal,
+    llm_profile_ids: input.llmProfileIds ?? [],
+    source_task_ids: input.sourceTaskIds ?? [],
+    company_ids: input.companyIds ?? [],
+    timeout_seconds: input.timeoutSeconds ?? 0,
+    token_budget: input.tokenBudget ?? 0,
+    seed_first_intent: input.seedFirstIntent ?? false,
+    plan_heartbeat_seconds: input.planHeartbeatSeconds ?? 0, // 0 = 后端归一到默认 600(10min)
+    coverage_enabled: input.coverageEnabled ?? true, // 默认开;false=关闭资产覆盖度功能
+    mode: input.mode || undefined, // 只发 "src"；普通渗透不带该键，老行为不变
+    mode_doc: input.modeDoc, // 省略时后端按 SRC 默认快照解析
+    src_program_id: input.srcProgramID || undefined, // 只发绑定的项目；不绑定不带该键
+    inherit_coverage: input.inheritCoverage ?? false,
+    inherit_coverage_from: input.inheritCoverageFrom || undefined,
+    intercept_rules: input.interceptRules ?? [], // 任务级资产拦截规则
+    exploration_policy: input.explorationPolicy ?? null, // P20 探索策略覆盖层(null=继承全局默认)
+  };
+}
+
 export const api = {
   // 后端应用版本号（release 时由 ldflags 注入，默认 "dev"）。
   // health 只回 ok（P42 去指纹：免认证端点不自报家门）；版本走需登录的 /system/info。
@@ -293,50 +357,18 @@ export const api = {
   tasks: () =>
     get<{ tasks: Task[]; active: string }>("/tasks").then((r) => ({ tasks: arr(r.tasks), active: r.active ?? "" })),
   task: (id: string) => get<Task>(`/tasks/${encodeURIComponent(id)}`),
-  createTask: (input: {
-    name?: string;
-    categoryId?: number;
-    description: string;
-    goal: string;
-    llmProfileIds?: number[];
-    sourceTaskIds?: string[];
-    companyIds?: number[];
-    timeoutSeconds?: number;
-    seedFirstIntent?: boolean;
-    planHeartbeatSeconds?: number;
-    coverageEnabled?: boolean;
-    // SRC 挖掘模式：创建时定死（""=普通渗透）。modeDoc 是模式配置快照，省略=后端默认。
-    mode?: TaskMode;
-    modeDoc?: unknown;
-    /** P3：绑定的 SRC 平台项目；省略 = 不绑定。 */
-    srcProgramID?: number;
-    /** P2：跨任务覆盖继承（同项目/同企业的近期 tested_clear 与收尾数字）。 */
-    inheritCoverage?: boolean;
-    /** 指定继承来源任务；优先于自动选源。 */
-    inheritCoverageFrom?: number;
-    interceptRules?: AssetInterceptRuleInput[];
-    // P20：任务级探索策略覆盖层；省略 = 完全继承当时的全局默认（服务端解析成快照落库）。
-    explorationPolicy?: ExplorationPolicyOverride;
-  }) =>
-    post<Task>("/tasks", {
-      name: input.name ?? "",
-      category_id: input.categoryId ?? null,
-      description: input.description,
-      goal: input.goal,
-      llm_profile_ids: input.llmProfileIds ?? [],
-      source_task_ids: input.sourceTaskIds ?? [],
-      company_ids: input.companyIds ?? [],
-      timeout_seconds: input.timeoutSeconds ?? 0,
-      seed_first_intent: input.seedFirstIntent ?? false,
-      plan_heartbeat_seconds: input.planHeartbeatSeconds ?? 0, // 0 = 后端归一到默认 600(10min)
-      coverage_enabled: input.coverageEnabled ?? true, // 默认开;false=关闭资产覆盖度功能
-      mode: input.mode || undefined, // 只发 "src"；普通渗透不带该键，老行为不变
-      mode_doc: input.modeDoc, // 省略时后端按 SRC 默认快照解析
-      src_program_id: input.srcProgramID || undefined, // 只发绑定的项目；不绑定不带该键
-      inherit_coverage: input.inheritCoverage ?? false,
-      inherit_coverage_from: input.inheritCoverageFrom || undefined,
-      intercept_rules: input.interceptRules ?? [], // 任务级资产拦截规则
-      exploration_policy: input.explorationPolicy ?? null, // P20 探索策略覆盖层(null=继承全局默认)
+  createTask: (input: CreateTaskInput) => post<Task>("/tasks", createTaskPayload(input)),
+  createTaskBatch: (input: CreateTaskBatchInput) =>
+    post<BatchTaskResult>("/tasks/batch", {
+      ...createTaskPayload(input),
+      asset_ids: input.assetIds ?? [],
+      asset_types: input.assetTypes ?? [],
+      shard_by: input.shardBy ?? "host",
+      assets_per_task: input.assetsPerTask ?? 20,
+      max_shards: input.maxShards ?? 100,
+      max_assets: input.maxAssets ?? 5000,
+      campaign_name: input.campaignName,
+      dry_run: input.dryRun ?? false,
     }),
   taskCategories: () => get<{ categories: TaskCategory[] }>("/task-categories").then((r) => arr(r.categories)),
   updateTask: (id: string, input: { name?: string; pinned?: boolean }) => patch<Task>(`/tasks/${id}`, input),

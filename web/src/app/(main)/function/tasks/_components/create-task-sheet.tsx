@@ -155,6 +155,13 @@ export function CreateTaskSheet({
   const [inheritCoverage, setInheritCoverage] = React.useState(false);
   // P2 资产级 token 预算（0 = 跟随系统全局默认）。
   const [assetTokenBudget, setAssetTokenBudget] = React.useState("0");
+  // P2 批量扇出：按 host / 根域 / 数量分片，每片建一个任务并归入同一 campaign。
+  const [batchFanout, setBatchFanout] = React.useState(false);
+  const [shardBy, setShardBy] = React.useState<"host" | "root_domain">("host");
+  const [assetsPerTask, setAssetsPerTask] = React.useState("20");
+  const [maxShards, setMaxShards] = React.useState("50");
+  const [batchTokenBudget, setBatchTokenBudget] = React.useState("0");
+  const [campaignName, setCampaignName] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [goal, setGoal] = React.useState("");
   const [selectedTemplateID, setSelectedTemplateID] = React.useState<number | null>(null);
@@ -250,49 +257,107 @@ export function CreateTaskSheet({
     };
   }, [open]);
 
-  async function createTask() {
+  // 单任务与批量扇出共用同一份输入，避免两条创建路径的字段逐渐漂移。
+  function buildCreateInput() {
+    const timeoutSec = Math.max(0, Math.floor(Number(timeoutMin) || 0)) * 60;
+    const heartbeatSec = Math.max(10, Math.floor(Number(heartbeatMin) || 10)) * 60; // 下限 10min，与后端归一一致
+    return {
+      name: name.trim(),
+      categoryId: categoryID,
+      description: description.trim(),
+      goal: goal.trim(),
+      llmProfileIds: llmProfileIDs.map(Number),
+      sourceTaskIds: sourceTaskIDs,
+      companyIds: companyIDs,
+      timeoutSeconds: timeoutSec,
+      seedFirstIntent,
+      planHeartbeatSeconds: heartbeatSec,
+      coverageEnabled,
+      mode,
+      srcProgramID,
+      inheritCoverage: mode === "src" ? inheritCoverage : false,
+      modeDoc: mode === "src" ? { asset_token_budget: Math.max(0, Number(assetTokenBudget) || 0) } : undefined,
+      interceptRules: interceptRules
+        .map((r) => ({ ...r, pattern: r.pattern.trim() }))
+        .filter((r) => r.pattern !== ""),
+      // 勾了自定义才发覆盖层（两轴显式：勾选状态就是本任务的最终策略）；
+      // 不勾则整段省略 → 服务端按当时的全局默认落快照。
+      explorationPolicy: policyCustom
+        ? {
+            techniques: policyTech,
+            forbidden_writes: policyWrites,
+            custom: policyRules.filter((r) => r.pattern.trim() !== ""),
+          }
+        : undefined,
+    };
+  }
+
+  function validateCreate(): boolean {
     if (!description.trim() || !goal.trim()) {
       toast.error("请填写描述与目标");
-      return;
+      return false;
     }
     if (sourceTaskIDs.length > MAX_SOURCE_TASKS) {
       toast.error(`最多关联 ${MAX_SOURCE_TASKS} 个来源任务`);
-      return;
+      return false;
     }
+    if (batchFanout && companyIDs.length === 0 && sourceTaskIDs.length === 0) {
+      toast.error("批量扇出需要先选择关联企业或来源任务，才能确定资产范围");
+      return false;
+    }
+    return true;
+  }
+
+  async function previewBatch() {
+    if (!validateCreate()) return;
     setCreating(true);
     try {
-      const timeoutSec = Math.max(0, Math.floor(Number(timeoutMin) || 0)) * 60;
-      const heartbeatSec = Math.max(10, Math.floor(Number(heartbeatMin) || 10)) * 60; // 下限 10min，与后端归一一致
-      await api.createTask({
-        name: name.trim(),
-        categoryId: categoryID,
-        description: description.trim(),
-        goal: goal.trim(),
-        llmProfileIds: llmProfileIDs.map(Number),
-        sourceTaskIds: sourceTaskIDs,
-        companyIds: companyIDs,
-        timeoutSeconds: timeoutSec,
-        seedFirstIntent,
-        planHeartbeatSeconds: heartbeatSec,
-        coverageEnabled,
-        mode,
-        srcProgramID,
-        inheritCoverage: mode === "src" ? inheritCoverage : false,
-        modeDoc: mode === "src" ? { asset_token_budget: Math.max(0, Number(assetTokenBudget) || 0) } : undefined,
-        interceptRules: interceptRules
-          .map((r) => ({ ...r, pattern: r.pattern.trim() }))
-          .filter((r) => r.pattern !== ""),
-        // 勾了自定义才发覆盖层（两轴显式：勾选状态就是本任务的最终策略）；
-        // 不勾则整段省略 → 服务端按当时的全局默认落快照。
-        explorationPolicy: policyCustom
-          ? {
-              techniques: policyTech,
-              forbidden_writes: policyWrites,
-              custom: policyRules.filter((r) => r.pattern.trim() !== ""),
-            }
-          : undefined,
+      const r = await api.createTaskBatch({
+        ...buildCreateInput(),
+        shardBy,
+        assetsPerTask: Math.max(1, Number(assetsPerTask) || 20),
+        maxShards: Math.max(1, Number(maxShards) || 50),
+        dryRun: true,
       });
-      toast.success("任务已创建");
+      toast.success(`将创建 ${r.totals.shards} 个分片（${r.totals.assets} 个资产）`, {
+        description: r.shards
+          .slice(0, 5)
+          .map((s) => `${s.name}（${s.assets}）`)
+          .join(" · "),
+      });
+    } catch (e) {
+      toast.error("预览失败：" + (e as Error).message);
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function createTask() {
+    if (!validateCreate()) return;
+    setCreating(true);
+    try {
+      if (batchFanout) {
+        const r = await api.createTaskBatch({
+          ...buildCreateInput(),
+          shardBy,
+          assetsPerTask: Math.max(1, Number(assetsPerTask) || 20),
+          maxShards: Math.max(1, Number(maxShards) || 50),
+          tokenBudget: Math.max(0, Number(batchTokenBudget) || 0),
+          campaignName: campaignName.trim() || undefined,
+        });
+        if (r.totals.failed) {
+          toast.warning(`已创建 ${r.totals.created ?? 0} 个分片，${r.totals.failed} 个失败`, {
+            description: r.error,
+          });
+        } else {
+          toast.success(`已创建 ${r.totals.created ?? 0} 个分片任务`, {
+            description: r.campaign ? `campaign：${r.campaign.name}` : undefined,
+          });
+        }
+      } else {
+        await api.createTask(buildCreateInput());
+        toast.success("任务已创建");
+      }
       setName("");
       setCategoryID(undefined);
       setDescription("");
@@ -301,6 +366,12 @@ export function CreateTaskSheet({
       setSrcProgramID(undefined);
       setInheritCoverage(false);
       setAssetTokenBudget("0");
+      setBatchFanout(false);
+      setShardBy("host");
+      setAssetsPerTask("20");
+      setMaxShards("50");
+      setBatchTokenBudget("0");
+      setCampaignName("");
       setSelectedTemplateID(null);
       setSourceTaskIDs([]);
       setCompanyIDs([]);
@@ -474,6 +545,86 @@ export function CreateTaskSheet({
                 </FieldDescription>
               </Field>
             )}
+            <Field>
+              <label htmlFor="batch-fanout" className="flex items-center gap-2 text-sm">
+                <Checkbox id="batch-fanout" checked={batchFanout} onCheckedChange={(v) => setBatchFanout(!!v)} />
+                批量扇出（按资产分片建多个任务）
+              </label>
+              <FieldDescription>
+                需要先选择关联企业或来源任务来确定资产范围。每个分片只包含本片 host 的 scope，
+                归入同一个 campaign；并发仍受全局任务并发上限约束。
+              </FieldDescription>
+              {batchFanout ? (
+                <div className="grid gap-3 rounded-lg border p-3">
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="grid gap-1">
+                      <Label className="text-xs">分片方式</Label>
+                      <Select value={shardBy} onValueChange={(v) => setShardBy(v as typeof shardBy)}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="host">按 host（推荐）</SelectItem>
+                          <SelectItem value="root_domain">按根域名</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="grid gap-1">
+                      <Label htmlFor="assets-per-task" className="text-xs">
+                        每片资产上限
+                      </Label>
+                      <Input
+                        id="assets-per-task"
+                        inputMode="numeric"
+                        value={assetsPerTask}
+                        onChange={(e) => setAssetsPerTask(e.target.value)}
+                      />
+                    </div>
+                    <div className="grid gap-1">
+                      <Label htmlFor="max-shards" className="text-xs">
+                        最大分片数
+                      </Label>
+                      <Input
+                        id="max-shards"
+                        inputMode="numeric"
+                        value={maxShards}
+                        onChange={(e) => setMaxShards(e.target.value)}
+                      />
+                    </div>
+                    <div className="grid gap-1">
+                      <Label htmlFor="batch-token-budget" className="text-xs">
+                        每片 token 预算（0=全局）
+                      </Label>
+                      <Input
+                        id="batch-token-budget"
+                        inputMode="numeric"
+                        value={batchTokenBudget}
+                        onChange={(e) => setBatchTokenBudget(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid gap-1">
+                    <Label htmlFor="campaign-name" className="text-xs">
+                      Campaign 名称（可选）
+                    </Label>
+                    <Input
+                      id="campaign-name"
+                      value={campaignName}
+                      placeholder="留空自动生成"
+                      onChange={(e) => setCampaignName(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button type="button" variant="outline" size="sm" onClick={() => void previewBatch()} disabled={creating}>
+                      预览分片
+                    </Button>
+                    <span className="text-muted-foreground text-xs">
+                      按 host 分组不会被拆开；单个 host 超过每片上限时独占一片。
+                    </span>
+                  </div>
+                </div>
+              ) : null}
+            </Field>
             <div className="grid gap-2">
               <Label htmlFor="description">描述</Label>
               <Textarea

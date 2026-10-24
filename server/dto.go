@@ -63,6 +63,8 @@ type TaskDTO struct {
 	ArchiveBlockedBy   string             `json:"archive_blocked_by_task_id,omitempty"`
 	CompanyIDs         []int64            `json:"company_ids"`
 	CoverageEnabled    bool               `json:"coverage_enabled"` // 资产覆盖度功能开关(创建时定)
+	// TokenBudget 是本任务的 token 预算覆盖（0 = 用全局 setting）。
+	TokenBudget int64 `json:"token_budget,omitempty"`
 	// P20 探索策略限制摘要(列表页角标用);明细(额度/覆盖层/近期被拒)走 GET /api/tasks/{id}/policy。
 	PolicyTechniques []string `json:"policy_techniques,omitempty"`
 	PolicyWrites     []string `json:"policy_writes,omitempty"`

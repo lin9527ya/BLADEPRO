@@ -41,6 +41,8 @@ export interface Task {
   archive_blocked_by_task_id?: string; // live direct dependent that must be archived first
   company_ids?: number[]; // associated company scopes; current company assets join the task at creation
   coverage_enabled?: boolean; // 资产覆盖度功能开关(创建时定,默认开)；false=不计算/不展示覆盖度
+  /** 本任务 token 预算覆盖（0/缺省 = 用全局设置）；批量扇出按片设置。 */
+  token_budget?: number;
   // SRC 挖掘模式：''/缺省=普通渗透，'src'=按「站点 × 风险面」补格收尾。
   mode?: TaskMode;
   /** 最近一次收尾门判定的冗余计数（不是列表页实时重算）。 */
@@ -2721,6 +2723,26 @@ export interface InterceptExecution {
 }
 
 // 战役：任务之上的一层（一个客户、若干目标、一份交付物）。
+/** 批量扇出：一个分片的创建结果。 */
+export interface BatchTaskShard {
+  index: number;
+  task_id?: string;
+  name: string;
+  assets: number;
+  hosts?: string[];
+  status: "planned" | "created" | "failed";
+  error?: string;
+}
+
+/** POST /api/tasks/batch 的响应。dry_run 时没有 campaign/task_id。 */
+export interface BatchTaskResult {
+  dry_run?: boolean;
+  campaign?: Campaign;
+  shards: BatchTaskShard[];
+  totals: { assets: number; shards: number; created?: number; failed?: number };
+  error?: string;
+}
+
 export interface Campaign {
   id: number;
   name: string;

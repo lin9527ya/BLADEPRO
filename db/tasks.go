@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -40,9 +41,11 @@ type Task struct {
 	CreatedAt          time.Time  `json:"created_at"`
 	CompletedAt        *time.Time `json:"completed_at,omitempty"` // 进入终态(done/failed/timeout)的时刻;非终态为 nil
 	// 任务级超时(见 docs/任务级超时与收尾设计.md)。
-	TimeoutSeconds int        `json:"timeout_seconds"`        // 0=不限时
-	FirstRunAt     *time.Time `json:"first_run_at,omitempty"` // 首次真正开始运行的时刻(非 created_at);nil=尚未运行
-	DeadlineAt     *time.Time `json:"deadline_at,omitempty"`  // = first_run_at + timeout_seconds;nil=不限或未运行
+	TimeoutSeconds int `json:"timeout_seconds"` // 0=不限时
+	// TokenBudget 是本任务的 token 预算覆盖（0 = 用全局 setting task_token_budget）。
+	TokenBudget int64      `json:"token_budget,omitempty"`
+	FirstRunAt  *time.Time `json:"first_run_at,omitempty"` // 首次真正开始运行的时刻(非 created_at);nil=尚未运行
+	DeadlineAt  *time.Time `json:"deadline_at,omitempty"`  // = first_run_at + timeout_seconds;nil=不限或未运行
 	// planner 心跳触发间隔(秒)：距上轮 plan 结束/任务开始满该值且期间无触发 → 触发一轮。
 	// 下限=默认=300(5min)，低于一律抬到 300(在 CreateTask 归一)。见 docs/planner-trigger-impl-plan.md
 	PlanHeartbeatSeconds int `json:"plan_heartbeat_seconds"`
@@ -178,6 +181,7 @@ type TaskCreateOptions struct {
 	CompanyIDs           []int64
 	LLMProfileIDs        []int64
 	TimeoutSeconds       int
+	TokenBudget          int64 // 0 = 继承全局 task_token_budget
 	PlanHeartbeatSeconds int
 	// CoverageEnabled 是「资产覆盖度功能」开关;nil=默认开(true)，让不关心该开关的创建
 	// 路径(编排 spawn、老 API)沿用原行为。仅 web 创建任务时可显式传 false 关闭。
@@ -193,7 +197,26 @@ type TaskCreateOptions struct {
 	ModeDoc json.RawMessage
 	// SrcProgramID 是本任务所属的 SRC 平台项目（P3）；nil = 未绑定。
 	SrcProgramID *int64
+	// ScopeRows 是创建时一并写入的精确范围（批量扇出按分片生成）。与 CompanyIDs
+	// 互斥使用：分片任务不能再灌入整个企业范围。
+	ScopeRows []TaskScopeInput
+	// AssetIDs 是创建时直接关联的资产（分片资产）。写入 task_asset_links 与
+	// assets.task_ids，便于「测试资产」视图与后续归档。
+	AssetIDs []int64
 }
+
+// TaskScopeInput is one exact scope row inserted atomically with task creation.
+type TaskScopeInput struct {
+	Kind      string
+	CompanyID *int64
+	Domain    string
+	Net       string
+	Value     string
+	Reason    string
+}
+
+// ErrTaskScopeInvalid marks malformed batch/shard scope rows.
+var ErrTaskScopeInvalid = errors.New("invalid task scope row")
 
 // CreateTaskWithOptions creates an exploration, task, direct source relations,
 // and the ordered task LLM chain in one transaction.
@@ -259,7 +282,7 @@ VALUES ($1, 'fact', $2, 0, 'origin', 'system')`, expID, string(originPayload)); 
 		LLMProfileIDs:  append([]int64(nil), opts.LLMProfileIDs...),
 		SourceTaskIDs:  append([]int64(nil), opts.SourceTaskIDs...),
 		CompanyIDs:     append([]int64(nil), opts.CompanyIDs...),
-		TimeoutSeconds: opts.TimeoutSeconds, PlanHeartbeatSeconds: opts.PlanHeartbeatSeconds,
+		TimeoutSeconds: opts.TimeoutSeconds, TokenBudget: opts.TokenBudget, PlanHeartbeatSeconds: opts.PlanHeartbeatSeconds,
 		CoverageEnabled: coverageEnabled,
 	}
 	// P20：创建时就把「全局默认 + 创建页覆盖」解析成 effective 快照落库，此后执行点
@@ -275,9 +298,9 @@ VALUES ($1, 'fact', $2, 0, 'origin', 'system')`, expID, string(originPayload)); 
 	t.Mode = opts.Mode
 	t.ModeDoc = append(json.RawMessage(nil), opts.ModeDoc...)
 	if err := tx.QueryRow(`
-INSERT INTO tasks(name, category_id, description, goal, exploration_id, llm_profile_id, active_llm_profile_id, timeout_seconds, plan_heartbeat_seconds, coverage_enabled, exploration_policy, mode, mode_doc, src_program_id)
-VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10,$11,COALESCE($12,'{}'::jsonb),$13)
-RETURNING id, status, paused, created_at`, opts.Name, opts.CategoryID, description, goal, expID, active, opts.TimeoutSeconds, opts.PlanHeartbeatSeconds, coverageEnabled, policyRaw, opts.Mode, modeDocRaw, opts.SrcProgramID).Scan(&t.ID, &t.Status, &t.Paused, &t.CreatedAt); err != nil {
+INSERT INTO tasks(name, category_id, description, goal, exploration_id, llm_profile_id, active_llm_profile_id, timeout_seconds, token_budget, plan_heartbeat_seconds, coverage_enabled, exploration_policy, mode, mode_doc, src_program_id)
+VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10,$11,$12,COALESCE($13,'{}'::jsonb),$14)
+RETURNING id, status, paused, created_at`, opts.Name, opts.CategoryID, description, goal, expID, active, opts.TimeoutSeconds, opts.TokenBudget, opts.PlanHeartbeatSeconds, coverageEnabled, policyRaw, opts.Mode, modeDocRaw, opts.SrcProgramID).Scan(&t.ID, &t.Status, &t.Paused, &t.CreatedAt); err != nil {
 		return nil, err
 	}
 	t.ExplorationPolicy = append(json.RawMessage(nil), opts.ExplorationPolicy...)
@@ -285,6 +308,12 @@ RETURNING id, status, paused, created_at`, opts.Name, opts.CategoryID, descripti
 		return nil, err
 	}
 	if err := insertTaskCompanies(tx, t.ID, opts.CompanyIDs); err != nil {
+		return nil, err
+	}
+	if err := insertTaskScopeInputs(tx, t.ID, opts.ScopeRows); err != nil {
+		return nil, err
+	}
+	if err := insertTaskAssetLinks(tx, t.ID, opts.AssetIDs); err != nil {
 		return nil, err
 	}
 	if err := insertTaskLLMProfiles(tx, t.ID, opts.LLMProfileIDs); err != nil {
@@ -359,6 +388,71 @@ SET source=EXCLUDED.source,
 	return nil
 }
 
+// insertTaskScopeInputs writes exact scope rows (batch/shard planning) in the same
+// transaction as the task, so a malformed shard cannot leave a half-scoped task.
+func insertTaskScopeInputs(tx *sql.Tx, taskID int64, rows []TaskScopeInput) error {
+	for _, r := range rows {
+		kind := strings.TrimSpace(r.Kind)
+		switch kind {
+		case "company", "root_domain", "subdomain", "ip", "cidr", "icp":
+		default:
+			return fmt.Errorf("%w: unknown kind %q", ErrTaskScopeInvalid, kind)
+		}
+		nodefined := kind == "company" && (r.CompanyID == nil || *r.CompanyID <= 0)
+		nodomain := (kind == "root_domain" || kind == "subdomain") && strings.TrimSpace(r.Domain) == ""
+		nonet := (kind == "ip" || kind == "cidr") && strings.TrimSpace(r.Net) == ""
+		novalue := (kind == "icp") && strings.TrimSpace(r.Value) == ""
+		if nodefined || nodomain || nonet || novalue {
+			return fmt.Errorf("%w: %s scope missing its value", ErrTaskScopeInvalid, kind)
+		}
+		var company, domain, netVal, value any
+		if r.CompanyID != nil && *r.CompanyID > 0 {
+			company = *r.CompanyID
+		}
+		if d := strings.TrimSpace(r.Domain); d != "" {
+			domain = d
+		}
+		if n := strings.TrimSpace(r.Net); n != "" {
+			netVal = n
+		}
+		if v := strings.TrimSpace(r.Value); v != "" {
+			value = v
+		}
+		if _, err := tx.Exec(`
+INSERT INTO task_scope(task_id, kind, company_id, domain, net, value, source, reason)
+VALUES ($1,$2,$3,$4,$5::cidr,$6,'manual',NULLIF($7,''))
+ON CONFLICT DO NOTHING`, taskID, kind, company, domain, netVal, value, strings.TrimSpace(r.Reason)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// insertTaskAssetLinks associates the exact assets of a shard with its task.
+func insertTaskAssetLinks(tx *sql.Tx, taskID int64, assetIDs []int64) error {
+	if len(assetIDs) == 0 {
+		return nil
+	}
+	if _, err := tx.Exec(`
+UPDATE assets SET task_ids=CASE
+    WHEN $1=ANY(task_ids) THEN task_ids
+    ELSE array_append(task_ids, $1)
+END
+WHERE id=ANY($2::bigint[])`, taskID, assetIDs); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
+INSERT INTO task_asset_links(task_id, asset_id, source, source_summary)
+SELECT $1, id, 'batch', '批量扇区分片资产'
+FROM assets WHERE id=ANY($2::bigint[])
+ON CONFLICT (task_id, asset_id) DO UPDATE
+SET source=EXCLUDED.source, source_summary=EXCLUDED.source_summary, source_node_id=NULL`,
+		taskID, assetIDs); err != nil {
+		return err
+	}
+	return nil
+}
+
 func insertTaskRelations(tx *sql.Tx, taskID int64, sourceIDs []int64) error {
 	seen := map[int64]bool{}
 	for _, sourceID := range sourceIDs {
@@ -394,11 +488,11 @@ func insertTaskLLMProfiles(tx *sql.Tx, taskID int64, profileIDs []int64) error {
 
 const taskCols = `id, COALESCE(name,''), category_id,
 COALESCE((SELECT category.name FROM task_categories category WHERE category.id=tasks.category_id),''),
-description, goal, exploration_id, status, paused, queued, queued_at, COALESCE(queue_mode,''), llm_profile_id, active_llm_profile_id, COALESCE(parent_ref,''), pinned_at, created_at, completed_at, COALESCE(timeout_seconds,0), COALESCE(plan_heartbeat_seconds,300), COALESCE(coverage_enabled,true), first_run_at, deadline_at, COALESCE(exploration_policy,'{}'::jsonb), COALESCE(mode,''), COALESCE(mode_doc,'{}'::jsonb), src_program_id, COALESCE(src_cells_total,0), COALESCE(src_cells_done,0), COALESCE(src_checks_total,0), COALESCE(src_checks_done,0), COALESCE(src_gaps_total,0)`
+description, goal, exploration_id, status, paused, queued, queued_at, COALESCE(queue_mode,''), llm_profile_id, active_llm_profile_id, COALESCE(parent_ref,''), pinned_at, created_at, completed_at, COALESCE(timeout_seconds,0), COALESCE(token_budget,0), COALESCE(plan_heartbeat_seconds,300), COALESCE(coverage_enabled,true), first_run_at, deadline_at, COALESCE(exploration_policy,'{}'::jsonb), COALESCE(mode,''), COALESCE(mode_doc,'{}'::jsonb), src_program_id, COALESCE(src_cells_total,0), COALESCE(src_cells_done,0), COALESCE(src_checks_total,0), COALESCE(src_checks_done,0), COALESCE(src_gaps_total,0)`
 
 func scanTask(sc interface{ Scan(...any) error }) (*Task, error) {
 	var t Task
-	if err := sc.Scan(&t.ID, &t.Name, &t.CategoryID, &t.CategoryName, &t.Description, &t.Goal, &t.ExplorationID, &t.Status, &t.Paused, &t.Queued, &t.QueuedAt, &t.QueueMode, &t.LLMProfileID, &t.ActiveLLMProfileID, &t.ParentRef, &t.PinnedAt, &t.CreatedAt, &t.CompletedAt, &t.TimeoutSeconds, &t.PlanHeartbeatSeconds, &t.CoverageEnabled, &t.FirstRunAt, &t.DeadlineAt, &t.ExplorationPolicy, &t.Mode, &t.ModeDoc, &t.SrcProgramID, &t.SrcCellsTotal, &t.SrcCellsDone, &t.SrcChecksTotal, &t.SrcChecksDone, &t.SrcGapsTotal); err != nil {
+	if err := sc.Scan(&t.ID, &t.Name, &t.CategoryID, &t.CategoryName, &t.Description, &t.Goal, &t.ExplorationID, &t.Status, &t.Paused, &t.Queued, &t.QueuedAt, &t.QueueMode, &t.LLMProfileID, &t.ActiveLLMProfileID, &t.ParentRef, &t.PinnedAt, &t.CreatedAt, &t.CompletedAt, &t.TimeoutSeconds, &t.TokenBudget, &t.PlanHeartbeatSeconds, &t.CoverageEnabled, &t.FirstRunAt, &t.DeadlineAt, &t.ExplorationPolicy, &t.Mode, &t.ModeDoc, &t.SrcProgramID, &t.SrcCellsTotal, &t.SrcCellsDone, &t.SrcChecksTotal, &t.SrcChecksDone, &t.SrcGapsTotal); err != nil {
 		return nil, err
 	}
 	t.Pinned = t.PinnedAt != nil

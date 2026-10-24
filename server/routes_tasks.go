@@ -8,6 +8,7 @@ package server
 func (s *Server) registerTaskRoutes(mux routeRegistrar) {
 	mux.HandleFunc("GET /api/tasks", s.listTasks)
 	mux.HandleFunc("POST /api/tasks", s.createTask)
+	mux.HandleFunc("POST /api/tasks/batch", s.createTaskBatch) // 按 host/根域/数量分片批量建任务
 	// 战役：任务之上的一层（归属 + 聚合）。归属走声明式的 PUT —— 一次给出应当包含的全部任务。
 	mux.HandleFunc("GET /api/campaigns", s.listCampaigns)
 	mux.HandleFunc("POST /api/campaigns", s.createCampaign)

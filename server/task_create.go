@@ -40,6 +40,8 @@ type preparedTaskCreate struct {
 	modeDoc          json.RawMessage
 	srcDoc           srcmode.ModeDoc
 	program          *srcmode.Program
+	programInScope   []db.TaskScopeInput
+	programOutScope  []db.TaskScopeInput
 	inheritRequested bool
 	inheritFromID    int64
 }
@@ -109,6 +111,7 @@ func (s *Server) prepareTaskCreate(ctx context.Context, req createTaskReq) (*pre
 	// SRC 平台项目（P3）：选了项目就把它的规则编译进这个任务——模式、必做面、额度、
 	// 禁用手段/写操作、命令级限额，全部在创建时落成快照，之后改项目不影响在跑的任务。
 	var program *srcmode.Program
+	var programInScope, programOutScope []db.TaskScopeInput
 	if req.SrcProgramID != nil && *req.SrcProgramID > 0 {
 		row, err := s.m.PG().Src().GetSrcProgram(ctx, *req.SrcProgramID)
 		if err != nil {
@@ -128,8 +131,22 @@ func (s *Server) prepareTaskCreate(ctx context.Context, req createTaskReq) (*pre
 		if strings.TrimSpace(req.Mode) == "" {
 			req.Mode = srcmode.ModeSrc
 		}
+		// 项目显式 in/out 范围：in 进 task_scope，out 进 task_scope_exclusions。
+		scopeRows, err := s.m.PG().Src().ListProgramScope(ctx, program.ID)
+		if err != nil {
+			return nil, taskErr(500, err.Error())
+		}
+		for _, r := range scopeRows {
+			ts := db.ProgramScopeToTaskScope(r, "平台项目范围")
+			if r.Direction == "in" {
+				programInScope = append(programInScope, ts)
+			} else {
+				programOutScope = append(programOutScope, ts)
+			}
+		}
 		// 项目绑了企业就自动带上该企业的资产范围（"选项目自动灌范围"）。
-		if program.CompanyID != nil && *program.CompanyID > 0 {
+		// 但项目已经显式写了 in 范围时，不再用企业粗范围把它放大。
+		if len(programInScope) == 0 && program.CompanyID != nil && *program.CompanyID > 0 {
 			exists := false
 			for _, id := range req.CompanyIDs {
 				if id == *program.CompanyID {
@@ -170,6 +187,13 @@ func (s *Server) prepareTaskCreate(ctx context.Context, req createTaskReq) (*pre
 				note += " "
 			}
 			note += fb
+		}
+		if in, out, err := s.m.PG().Src().CountProgramScope(ctx, program.ID); err == nil && (in > 0 || out > 0) {
+			scopeLine := fmt.Sprintf("项目显式范围：in %d 条 / out %d 条（建任务时编译进 task_scope）。", in, out)
+			if note != "" {
+				note += " "
+			}
+			note += scopeLine
 		}
 		if note != "" {
 			srcDoc.ProgramNote = note
@@ -228,6 +252,7 @@ func (s *Server) prepareTaskCreate(ctx context.Context, req createTaskReq) (*pre
 		req: req, sourceIDs: sourceIDs, companyIDs: companyIDs,
 		interceptRules: interceptRules, policyDoc: policyDoc,
 		modeDoc: modeDoc, srcDoc: srcDoc, program: program,
+		programInScope: programInScope, programOutScope: programOutScope,
 		inheritRequested: inheritRequested, inheritFromID: inheritFromID,
 	}, nil
 }
@@ -243,9 +268,14 @@ func (s *Server) persistPreparedTask(ctx context.Context, prep *preparedTaskCrea
 	companyIDs := prep.companyIDs
 	var scopeRows []db.TaskScopeInput
 	var assetIDs []int64
+	scopeRows = append(scopeRows, prep.programInScope...)
 	if shard != nil {
 		name, desc, goal = shard.Name, shard.Description, shard.Goal
-		scopeRows, assetIDs = shard.ScopeRows, shard.AssetIDs
+		// 分片自带精确 scope 时，不要再叠加 program 的粗 in 范围（会放大分片）。
+		if len(shard.ScopeRows) > 0 {
+			scopeRows = append([]db.TaskScopeInput(nil), shard.ScopeRows...)
+		}
+		assetIDs = shard.AssetIDs
 		if shard.TokenBudget > 0 {
 			tokenBudget = shard.TokenBudget
 		}
@@ -253,6 +283,7 @@ func (s *Server) persistPreparedTask(ctx context.Context, prep *preparedTaskCrea
 			companyIDs = nil
 		}
 	}
+	scopeExclusions := append([]db.TaskScopeInput(nil), prep.programOutScope...)
 	t, err := s.m.CreateTaskWithOptions(desc, goal, db.TaskCreateOptions{
 		Name: strings.TrimSpace(name), CategoryID: prep.req.CategoryID,
 		SourceTaskIDs: prep.sourceIDs, CompanyIDs: companyIDs, LLMProfileIDs: prep.req.LLMProfileIDs,
@@ -266,6 +297,7 @@ func (s *Server) persistPreparedTask(ctx context.Context, prep *preparedTaskCrea
 		ModeDoc:              prep.modeDoc,
 		SrcProgramID:         prep.req.SrcProgramID,
 		ScopeRows:            scopeRows,
+		ScopeExclusions:      scopeExclusions,
 		AssetIDs:             assetIDs,
 	})
 	if err != nil {

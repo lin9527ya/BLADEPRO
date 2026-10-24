@@ -127,6 +127,7 @@ GET /api/skills/{name}/files/{file...}	server.(*Server).fsReadFile-fm
 GET /api/skills/{name}/usage	server.(*Server).fsSkillUsage-fm
 GET /api/src/programs	server.(*Server).listSrcPrograms-fm
 GET /api/src/programs/{id}	server.(*Server).getSrcProgram-fm
+GET /api/src/programs/{id}/scope	server.(*Server).getSrcProgramScope-fm
 GET /api/src/stats	server.(*Server).getSrcStats-fm
 GET /api/src/submissions	server.(*Server).listSrcSubmissions-fm
 GET /api/stats	server.(*Server).stats-fm
@@ -327,6 +328,7 @@ PUT /api/settings	server.(*Server).putSettings-fm
 PUT /api/settings/exploration-policy	server.(*Server).putExplorationPolicyDefault-fm
 PUT /api/skills/{name}/files/{file...}	server.(*Server).fsWriteFile-fm
 PUT /api/skills/{name}/meta	server.(*Server).fsUpdateSkillMeta-fm
+PUT /api/src/programs/{id}/scope	server.(*Server).putSrcProgramScope-fm
 PUT /api/tasks/{id}/intercept-rules/{rid}	server.(*Server).taskInterceptUpdateRule-fm
 PUT /api/tasks/{id}/llm	server.(*Server).updateTaskLLMProfiles-fm
 PUT /api/tools/custom/{key}	server.(*Server).pgUpdateCustomTool-fm

@@ -1275,6 +1275,24 @@ export interface SrcProgramRules {
   platform_template?: string;
 }
 
+/** 平台项目的显式 in/out 范围行（建任务时编译进 task_scope）。 */
+export interface ProgramScopeRow {
+  id: number;
+  program_id: number;
+  direction: "in" | "out";
+  kind: "root_domain" | "subdomain" | "ip" | "cidr";
+  domain?: string;
+  net?: string;
+  note?: string;
+}
+
+export interface ProgramScopeInput {
+  direction: "in" | "out";
+  kind: "root_domain" | "subdomain" | "ip" | "cidr";
+  value: string;
+  note?: string;
+}
+
 export interface SrcProgramFeedback {
   program_id: number;
   program: string;

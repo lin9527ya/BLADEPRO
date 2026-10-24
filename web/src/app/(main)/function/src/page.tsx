@@ -30,7 +30,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
-import type { SrcProgram, SrcProgramInput, SrcProgramRule, SrcProgramRules, SrcStats, SrcSubmission } from "@/lib/types";
+import type {
+  ProgramScopeInput,
+  SrcProgram,
+  SrcProgramInput,
+  SrcProgramRule,
+  SrcProgramRules,
+  SrcStats,
+  SrcSubmission,
+} from "@/lib/types";
 
 // 台账状态 → 中文 + 下一步合法流转。与服务端状态机一致（口径以服务端为准），
 // 与任务详情 SRC 页签里的那份保持同源，避免两处对不上。
@@ -192,6 +200,7 @@ interface ProgramDraft {
   platformTemplate: string;
   companyID: string;
   scopeNote: string;
+  scopeRows: ProgramScopeInput[];
   rateLimit: string;
   timeWindow: string;
   forbiddenTechniques: string[];
@@ -224,6 +233,7 @@ function emptyDraft(): ProgramDraft {
     platformTemplate: "",
     companyID: "",
     scopeNote: "",
+    scopeRows: [],
     rateLimit: "",
     timeWindow: "",
     forbiddenTechniques: [],
@@ -262,6 +272,7 @@ function draftFromProgram(p: SrcProgram): ProgramDraft {
     platformTemplate: rules.platform_template ?? "",
     companyID: p.company_id ? String(p.company_id) : "",
     scopeNote: p.scope_note ?? "",
+    scopeRows: [],
     rateLimit: countText(p.rate_limit),
     timeWindow: p.time_window ?? "",
     forbiddenTechniques: [...(rules.forbidden_techniques ?? [])],
@@ -634,12 +645,26 @@ function ProgramsTab() {
     setOpen(true);
   };
 
-  const openEdit = (p: SrcProgram) => {
+  const openEdit = async (p: SrcProgram) => {
     setEditing(p);
     setDraft(draftFromProgram(p));
     setPreservedRules(p.rules ?? {});
     setFormError("");
     setOpen(true);
+    try {
+      const r = await api.srcProgramScope(p.id);
+      setDraft((current) => ({
+        ...current,
+        scopeRows: r.rows.map((row) => ({
+          direction: row.direction,
+          kind: row.kind,
+          value: row.domain || row.net || "",
+          note: row.note || "",
+        })),
+      }));
+    } catch (e) {
+      toast.error("读取项目范围失败：" + (e as Error).message);
+    }
   };
 
   const toggleIn = (list: string[], id: string): string[] =>
@@ -698,13 +723,16 @@ function ProgramsTab() {
     setSaving(true);
     setFormError("");
     try {
-      if (editing) {
-        await api.updateSrcProgram(editing.id, input);
-        toast.success("项目已更新");
-      } else {
-        await api.createSrcProgram(input);
-        toast.success("项目已创建");
+      const saved = editing ? await api.updateSrcProgram(editing.id, input) : await api.createSrcProgram(input);
+      try {
+        await api.saveSrcProgramScope(saved.id, draft.scopeRows);
+      } catch (e) {
+        setEditing(saved);
+        await load();
+        setFormError("项目已保存，但显式范围保存失败：" + (e as Error).message);
+        return;
       }
+      toast.success(editing ? "项目已更新" : "项目已创建");
       setOpen(false);
       setEditing(null);
       await load();
@@ -920,6 +948,104 @@ function ProgramsTab() {
                 <p className="text-muted-foreground text-xs">
                   写清哪些域名/APP/接口在范围内、哪些明确排除；会进 agent 提示词
                 </p>
+              </div>
+              <div className="grid gap-2 rounded-lg border p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="grid gap-0.5">
+                    <Label className="text-sm">显式 in / out 范围</Label>
+                    <p className="text-muted-foreground text-xs">
+                      in 编译进 task_scope，out 编译进 scope 排除表（优先于公司/根域包含）；最多 500 条。
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      patch({
+                        scopeRows: [...draft.scopeRows, { direction: "in", kind: "root_domain", value: "", note: "" }],
+                      })
+                    }
+                  >
+                    新增一行
+                  </Button>
+                </div>
+                {draft.scopeRows.length === 0 ? (
+                  <p className="text-muted-foreground py-2 text-xs">未配置：只使用关联企业/范围说明。</p>
+                ) : (
+                  <div className="grid gap-2">
+                    {draft.scopeRows.map((row, idx) => (
+                      <div key={idx} className="grid gap-2 sm:grid-cols-[5rem_8rem_minmax(0,1fr)_minmax(0,1fr)_auto]">
+                        <Select
+                          value={row.direction}
+                          onValueChange={(v) =>
+                            patch({
+                              scopeRows: draft.scopeRows.map((x, i) =>
+                                i === idx ? { ...x, direction: v as ProgramScopeInput["direction"] } : x,
+                              ),
+                            })
+                          }
+                        >
+                          <SelectTrigger aria-label="方向">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="in">in</SelectItem>
+                            <SelectItem value="out">out</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Select
+                          value={row.kind}
+                          onValueChange={(v) =>
+                            patch({
+                              scopeRows: draft.scopeRows.map((x, i) =>
+                                i === idx ? { ...x, kind: v as ProgramScopeInput["kind"] } : x,
+                              ),
+                            })
+                          }
+                        >
+                          <SelectTrigger aria-label="类型">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="root_domain">根域名</SelectItem>
+                            <SelectItem value="subdomain">子域名</SelectItem>
+                            <SelectItem value="ip">IP</SelectItem>
+                            <SelectItem value="cidr">CIDR</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Input
+                          value={row.value}
+                          placeholder={
+                            row.kind === "ip" || row.kind === "cidr" ? "10.0.0.0/24 或 1.2.3.4" : "example.com"
+                          }
+                          onChange={(e) =>
+                            patch({
+                              scopeRows: draft.scopeRows.map((x, i) => (i === idx ? { ...x, value: e.target.value } : x)),
+                            })
+                          }
+                        />
+                        <Input
+                          value={row.note ?? ""}
+                          placeholder="备注（可选）"
+                          onChange={(e) =>
+                            patch({
+                              scopeRows: draft.scopeRows.map((x, i) => (i === idx ? { ...x, note: e.target.value } : x)),
+                            })
+                          }
+                        />
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => patch({ scopeRows: draft.scopeRows.filter((_, i) => i !== idx) })}
+                        >
+                          删除
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="grid gap-2">

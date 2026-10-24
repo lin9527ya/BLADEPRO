@@ -905,6 +905,22 @@ CREATE INDEX IF NOT EXISTS idx_ts_domain  ON task_scope(domain) WHERE kind IN ('
 CREATE INDEX IF NOT EXISTS idx_ts_net     ON task_scope USING GIST(net inet_ops) WHERE kind IN ('ip','cidr');
 CREATE INDEX IF NOT EXISTS idx_ts_company ON task_scope(company_id) WHERE kind = 'company';
 
+-- 任务范围排除表：program 的 out 范围和人工排除项编译到这里。scopeJoinPredicate
+-- 在匹配 task_scope 后还要过一遍这张表，否则"公司范围包含、但要排除某域名"无法表达。
+CREATE TABLE IF NOT EXISTS task_scope_exclusions (
+    id          BIGSERIAL PRIMARY KEY,
+    task_id     BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    kind        TEXT NOT NULL CHECK (kind IN ('root_domain','subdomain','ip','cidr')),
+    domain      TEXT,
+    net         CIDR,
+    reason      TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_task_scope_exclusions ON task_scope_exclusions(
+    task_id, kind, COALESCE(domain,''), COALESCE(net::text,''));
+CREATE INDEX IF NOT EXISTS idx_tse_domain ON task_scope_exclusions(domain) WHERE domain IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_tse_net    ON task_scope_exclusions USING GIST(net inet_ops) WHERE net IS NOT NULL;
+
 -- =====================================================================
 -- E. Agents / 提示词模板 / 变量目录
 -- =====================================================================
@@ -1904,6 +1920,22 @@ CREATE INDEX IF NOT EXISTS idx_src_programs_platform ON src_programs(platform, n
 DROP TRIGGER IF EXISTS trg_src_programs_upd ON src_programs;
 CREATE TRIGGER trg_src_programs_upd BEFORE UPDATE ON src_programs
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- 平台项目的显式 in/out 范围：创建任务时把 in 编译进 task_scope、out 编译进
+-- task_scope_exclusions；company_id 仍是便捷的粗范围，二者可并用。
+CREATE TABLE IF NOT EXISTS src_program_scope (
+    id          BIGSERIAL PRIMARY KEY,
+    program_id  BIGINT NOT NULL REFERENCES src_programs(id) ON DELETE CASCADE,
+    direction   TEXT NOT NULL CHECK (direction IN ('in','out')),
+    kind        TEXT NOT NULL CHECK (kind IN ('root_domain','subdomain','ip','cidr')),
+    domain      TEXT,
+    net         CIDR,
+    note        TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_src_program_scope ON src_program_scope(
+    program_id, direction, kind, COALESCE(domain,''), COALESCE(net::text,''));
+CREATE INDEX IF NOT EXISTS idx_src_program_scope_program ON src_program_scope(program_id, direction);
 
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS src_program_id BIGINT REFERENCES src_programs(id) ON DELETE SET NULL;
 ALTER TABLE src_submissions ADD COLUMN IF NOT EXISTS program_id BIGINT REFERENCES src_programs(id) ON DELETE SET NULL;

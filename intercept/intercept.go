@@ -141,6 +141,7 @@ type Interceptor struct {
 	// RoE scope gate (see scope.go): per-task scope rows with a small TTL cache.
 	scopeMu    sync.Mutex
 	scopeCache map[int64]scopeCacheEntry
+	exclCache  map[int64]scopeCacheEntry
 }
 
 // SetReviewer installs the LLM fallback judge callback. Passing nil disables it.

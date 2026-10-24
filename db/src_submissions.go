@@ -652,6 +652,14 @@ func (s *SrcStore) SrcHostInScope(ctx context.Context, taskID int64, host string
 	if s == nil || s.db == nil || taskID <= 0 || host == "" {
 		return false, false, nil
 	}
+	// 排除项优先：host 明确被 program out 范围排除时直接判越界，不再看包含项。
+	excluded, err := s.db.TaskHostExcluded(ctx, taskID, host)
+	if err != nil {
+		return false, false, err
+	}
+	if excluded {
+		return false, true, nil
+	}
 	var root, sub, net int
 	err = s.db.QueryRowContext(ctx, `
 SELECT

@@ -310,6 +310,15 @@ const scopeJoinPredicate = `(
          lower(regexp_replace(COALESCE(a.icp,''), '[[:space:]]+', '', 'g')) = ts.value
          OR lower(regexp_replace(COALESCE(a.app_icp,''), '[[:space:]]+', '', 'g')) = ts.value
        ))
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM task_scope_exclusions ex
+      WHERE ex.task_id = ts.task_id AND (
+            (ex.kind='root_domain' AND (
+                a.domain = ex.domain OR a.domain LIKE '%.' || ex.domain OR a.root_domain = ex.domain))
+         OR (ex.kind='subdomain' AND a.domain = ex.domain)
+         OR (ex.kind IN ('ip','cidr') AND ex.net >>= try_inet(a.ip))
+      )
   )`
 
 // scopeTargetSelect 是"范围内资产"的那半段（id/type/label），供两套 CTE 复用。

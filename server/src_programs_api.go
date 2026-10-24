@@ -22,6 +22,8 @@ func (s *Server) registerSrcPrograms(mux routeRegistrar) {
 	mux.HandleFunc("GET /api/src/programs/{id}", s.getSrcProgram)
 	mux.HandleFunc("PATCH /api/src/programs/{id}", s.updateSrcProgram)
 	mux.HandleFunc("DELETE /api/src/programs/{id}", s.deleteSrcProgram)
+	mux.HandleFunc("GET /api/src/programs/{id}/scope", s.getSrcProgramScope)
+	mux.HandleFunc("PUT /api/src/programs/{id}/scope", s.putSrcProgramScope)
 	mux.HandleFunc("GET /api/src/stats", s.getSrcStats)
 }
 
@@ -315,4 +317,59 @@ func (s *Server) getSrcStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, stats)
+}
+
+// getSrcProgramScope returns the program's explicit in/out scope rows.
+func (s *Server) getSrcProgramScope(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(strings.TrimSpace(r.PathValue("id")), 10, 64)
+	if id <= 0 {
+		writeErr(w, 400, "bad program id")
+		return
+	}
+	row, err := s.m.PG().Src().GetSrcProgram(r.Context(), id)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if row == nil {
+		writeErr(w, 404, "SRC 平台项目不存在")
+		return
+	}
+	rows, err := s.m.PG().Src().ListProgramScope(r.Context(), id)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"rows": rows, "total": len(rows)})
+}
+
+// putSrcProgramScope atomically replaces the program's in/out rows.
+func (s *Server) putSrcProgramScope(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(strings.TrimSpace(r.PathValue("id")), 10, 64)
+	if id <= 0 {
+		writeErr(w, 400, "bad program id")
+		return
+	}
+	row, err := s.m.PG().Src().GetSrcProgram(r.Context(), id)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if row == nil {
+		writeErr(w, 404, "SRC 平台项目不存在")
+		return
+	}
+	var req struct {
+		Rows []db.ProgramScopeInput `json:"rows"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, 400, "bad json: "+err.Error())
+		return
+	}
+	rows, err := s.m.PG().Src().ReplaceProgramScope(r.Context(), id, req.Rows)
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"rows": rows, "total": len(rows)})
 }

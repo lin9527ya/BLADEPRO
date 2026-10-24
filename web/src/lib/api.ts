@@ -108,6 +108,8 @@ import type {
   SkillItem,
   SrcCell,
   SrcPrepareResult,
+  ProgramScopeInput,
+  ProgramScopeRow,
   SrcProgram,
   SrcProgramInput,
   SrcStats,
@@ -565,6 +567,10 @@ export const api = {
   // 项目 = 一个平台的规则集（禁用手段/写操作、限速、时间窗、等级映射、必做面）。
   srcPrograms: () => get<{ programs: SrcProgram[]; total: number }>("/src/programs"),
   createSrcProgram: (input: SrcProgramInput) => post<SrcProgram>("/src/programs", input),
+  srcProgramScope: (id: number) =>
+    get<{ rows: ProgramScopeRow[]; total: number }>(`/src/programs/${id}/scope`),
+  saveSrcProgramScope: (id: number, rows: ProgramScopeInput[]) =>
+    put<{ rows: ProgramScopeRow[]; total: number }>(`/src/programs/${id}/scope`, { rows }),
   updateSrcProgram: (id: number, input: SrcProgramInput) => patch<SrcProgram>(`/src/programs/${id}`, input),
   deleteSrcProgram: (id: number) => del<{ deleted: boolean; id: number }>(`/src/programs/${id}`),
   // 全局 SRC 看板聚合数字（台账按状态/等级、任务数、中危+发现、报告齐备）。

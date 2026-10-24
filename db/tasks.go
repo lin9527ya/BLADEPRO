@@ -206,6 +206,8 @@ type TaskCreateOptions struct {
 	// AssetIDs 是创建时直接关联的资产（分片资产）。写入 task_asset_links 与
 	// assets.task_ids，便于「测试资产」视图与后续归档。
 	AssetIDs []int64
+	// ScopeExclusions 是显式排除项（program out 范围）。匹配范围时优先排除。
+	ScopeExclusions []TaskScopeInput
 }
 
 // TaskScopeInput is one exact scope row inserted atomically with task creation.
@@ -314,6 +316,9 @@ RETURNING id, status, paused, created_at`, opts.Name, opts.CategoryID, descripti
 		return nil, err
 	}
 	if err := insertTaskScopeInputs(tx, t.ID, opts.ScopeRows); err != nil {
+		return nil, err
+	}
+	if err := insertTaskScopeExclusions(tx, t.ID, opts.ScopeExclusions); err != nil {
 		return nil, err
 	}
 	if err := insertTaskAssetLinks(tx, t.ID, opts.AssetIDs); err != nil {

@@ -312,6 +312,26 @@ func targetInScope(rows []db.TaskScope, target string) bool {
 }
 
 // scopeRows loads one task's scope rows through a tiny TTL cache.
+func (i *Interceptor) scopeExclusions(taskID int64) ([]db.TaskScope, error) {
+	i.scopeMu.Lock()
+	entry, ok := i.exclCache[taskID]
+	i.scopeMu.Unlock()
+	if ok && time.Since(entry.at) < scopeCacheTTL {
+		return entry.rows, nil
+	}
+	rows, err := i.db.ListTaskScopeExclusions(taskID)
+	if err != nil {
+		return nil, err
+	}
+	i.scopeMu.Lock()
+	if i.exclCache == nil {
+		i.exclCache = map[int64]scopeCacheEntry{}
+	}
+	i.exclCache[taskID] = scopeCacheEntry{rows: rows, at: time.Now()}
+	i.scopeMu.Unlock()
+	return rows, nil
+}
+
 func (i *Interceptor) scopeRows(taskID int64) ([]db.TaskScope, error) {
 	i.scopeMu.Lock()
 	entry, ok := i.scopeCache[taskID]
@@ -404,12 +424,20 @@ func (i *Interceptor) CheckScope(ctx context.Context, taskID int64, toolName str
 		}, true
 	}
 	usable := usableScope(rows)
+	exclusions, err := i.scopeExclusions(taskID)
+	if err != nil {
+		return Decision{
+			Action:   "ask",
+			RuleName: "[RoE] 授权范围",
+			Message:  "授权范围排除项读取失败，无法确认目标是否在范围内，需要人工确认：" + err.Error(),
+		}, true
+	}
 	if len(usable) == 0 {
 		return Decision{}, false
 	}
 	var outside []string
 	for _, h := range hits {
-		if !targetInScope(usable, h.Value) {
+		if !targetInScope(usable, h.Value) || targetInScope(exclusions, h.Value) {
 			label := h.Value
 			if h.Source != "raw" {
 				label += "（" + sourceLabel(h.Source) + "）"

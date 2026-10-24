@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+### 新增：program_scope（P2）
+
+- 新增 `src_program_scope`：平台项目可显式维护 in/out 范围（root_domain /
+  subdomain / ip / cidr），不再只靠 company_id + 自由文本。
+- 建任务时编译：in 进 `task_scope`，out 进新表 `task_scope_exclusions`；
+  公司/根域包含仍可用，但排除项优先（同一 host 命中 out 即判越界）。
+- 范围匹配只改一处：`scopeJoinPredicate` 统一加排除子查询，覆盖度矩阵、SRC
+  收尾门、资产列表与 `SrcHostInScope` 共用同一口径；RoE 拦截器也读取排除表。
+- 项目显式 in 范围存在时，不再自动灌入该项目的企业粗范围（避免一边收窄一边放大）。
+- 项目页新增 in/out 行编辑器（类型/值/备注）；最多 500 条，重复行自动去重，
+  域名/IP/CIDR 在写入时归一化。
+- `ProgramNote` 会写明「in N / out M」让 agent 知道边界来自哪里。
+- 回归：范围存取/归一化、任务编译 in+out、SRC 分母真的排除 out 资产。
+
 ### 新增：平台提交模板（P2）
 
 - 内置提交块模板：通用 / 补天 / 漏洞盒子 / 教育 SRC / HackerOne。模板只改

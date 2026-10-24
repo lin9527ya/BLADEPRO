@@ -9,9 +9,13 @@ package notify
 // 危险误导。另外 fan-out 与渲染因此不必 JOIN findings/tasks/assets 三张表。
 type Snapshot struct {
 	// 事件类型：finding_created / finding_status_changed
-	Kind      string  `json:"kind"`
-	FindingID int64   `json:"finding_id"`
-	TaskID    int64   `json:"task_id"`
+	Kind      string `json:"kind"`
+	FindingID int64  `json:"finding_id"`
+	TaskID    int64  `json:"task_id"`
+	// 任务级事件（见 notify.IsTaskEvent）用 Title/Body 承载可读文案；
+	// finding 事件留空。Title 是一行标题，Body 是详情正文（可多行）。
+	Title     string  `json:"title,omitempty"`
+	Body      string  `json:"body,omitempty"`
 	VulnClass string  `json:"vulnclass"`
 	Name      string  `json:"name"`
 	Severity  string  `json:"severity"`
@@ -29,6 +33,10 @@ type Item struct {
 	VulnClass string
 	Severity  string
 	Summary   string
+	// EventKind/EventTitle/EventBody 非空时表示任务级告警；Title() 优先用 EventTitle。
+	EventKind  string
+	EventTitle string
+	EventBody  string
 	// Assets 是解析后的资产展示名（如域名/IP）。由 server 层填充——
 	// 本包不碰数据库，拿不到名字。
 	Assets []string
@@ -45,6 +53,9 @@ func (i Item) IsStatusChange() bool { return i.FromStatus != "" || i.ToStatus !=
 // Title 返回条目的展示标题：优先人工命名的 name，回退漏洞类型 vulnclass，
 // 两者都空时用一个占位符——绝不输出空标题。
 func (i Item) Title() string {
+	if i.EventTitle != "" {
+		return i.EventTitle
+	}
 	if i.Name != "" {
 		return i.Name
 	}

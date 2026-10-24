@@ -67,6 +67,9 @@ type webhookTemplateData struct {
 
 type webhookItem struct {
 	FindingID     int64
+	EventKind     string
+	EventTitle    string
+	EventBody     string
 	Name          string
 	VulnClass     string
 	Severity      string
@@ -205,6 +208,9 @@ func newWebhookTemplateData(m Message) webhookTemplateData {
 	for _, it := range m.Items {
 		wi := webhookItem{
 			FindingID:     it.FindingID,
+			EventKind:     it.EventKind,
+			EventTitle:    it.EventTitle,
+			EventBody:     it.EventBody,
 			Name:          it.Name,
 			VulnClass:     it.VulnClass,
 			Severity:      it.Severity,

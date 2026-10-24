@@ -277,6 +277,8 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		// 漏洞 IM 推送投递引擎。与 Scheduler 并列但独立：推送的实时性要求(3s)
 		// 与触发器的业务节奏不同，且两者失败互不牵连——推送卡住不该影响 agent 触发。
 		goSafe("server/notifier", nil, func() { newNotifier(s).Run(s.ctx) })
+		// SLA 提醒：每 6h 扫一次复核队列里的超时台账项，按项冷却 72h 后推任务告警。
+		goSafe("server/src-alerts", nil, func() { s.runSrcSLAAlerts(s.ctx) })
 		// Fill the tool cache for any enabled MCP that has none yet (notably the
 		// seeded browser MCP on first run). Async so it never blocks startup.
 		goSafe("server/discover-mcps", nil, func() { s.discoverEmptyMCPsOnStartup() })

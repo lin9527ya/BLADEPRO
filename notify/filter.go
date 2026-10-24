@@ -22,6 +22,9 @@ type Filter struct {
 	VulnClassExclude []string `json:"vulnclass_exclude"`
 	// OnStatusChange 决定该渠道是否接收漏洞状态变更事件（仅 realtime 模式有意义）。
 	OnStatusChange bool `json:"on_status_change"`
+	// OnTaskEvents 决定该渠道是否接收任务级告警（收尾门/策略/预算/重复/提交/SLA）。
+	// 默认关：升级后不会突然把运维告警灌进原来只收漏洞的群。
+	OnTaskEvents bool `json:"on_task_events"`
 }
 
 // ParseFilter 解析渠道过滤配置。
@@ -75,6 +78,19 @@ func Match(f Filter, s Snapshot) bool {
 	// 期望「推送」指的是「发现新漏洞」，而不是流水账式地跟进每个状态流转。
 	if s.Kind == EventFindingStatusChanged && !f.OnStatusChange {
 		return false
+	}
+	// 任务级告警同样默认关：它们是运维视角，不该混进只关心漏洞的渠道。
+	// 命中开关后只再按任务 ID 过滤；min_severity / vulnclass / asset 过滤是
+	// 为漏洞设计的（任务告警没有 vulnclass、通常也没有 asset_ids），继续套用
+	// 会让「开了任务告警却一条都收不到」——这是最难排查的静默失效。
+	if IsTaskEvent(s.Kind) {
+		if !f.OnTaskEvents {
+			return false
+		}
+		if len(f.TaskIDs) > 0 && !slices.Contains(f.TaskIDs, s.TaskID) {
+			return false
+		}
+		return true
 	}
 	if !AtLeast(s.Severity, f.MinSeverity) {
 		return false

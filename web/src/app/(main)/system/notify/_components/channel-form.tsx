@@ -146,6 +146,7 @@ export function FilterSummary({ filter }: { filter: NotificationFilter }) {
   if (filter.task_ids?.length) parts.push(`${filter.task_ids.length} 个任务`);
   if (filter.asset_ids?.length) parts.push(`${filter.asset_ids.length} 个资产`);
   if (filter.on_status_change) parts.push("含状态变更");
+  if (filter.on_task_events) parts.push("含任务告警");
   if (parts.length === 0) {
     return <p className="text-muted-foreground text-sm">全部漏洞</p>;
   }

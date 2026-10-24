@@ -25,7 +25,45 @@ const (
 const (
 	EventFindingCreated       = "finding_created"
 	EventFindingStatusChanged = "finding_status_changed"
+
+	// 任务级事件：不是「某个漏洞」的流水账，而是「这条任务需要人看一眼」的告警。
+	// 它们共用 notification_events 表，finding_id=0 表示不绑定具体发现。
+	EventSrcGateRejected  = "src_gate_rejected"
+	EventSrcPolicyBlocked = "src_policy_blocked"
+	EventSrcBudget        = "src_budget"
+	EventSrcDuplicate     = "src_duplicate"
+	EventSrcSubmission    = "src_submission"
+	EventSrcSLA           = "src_sla"
 )
+
+// IsTaskEvent reports whether kind is a task-scoped alert (not a finding event).
+func IsTaskEvent(kind string) bool {
+	switch kind {
+	case EventSrcGateRejected, EventSrcPolicyBlocked, EventSrcBudget,
+		EventSrcDuplicate, EventSrcSubmission, EventSrcSLA:
+		return true
+	}
+	return false
+}
+
+// TaskEventLabel returns the short Chinese label used in message titles.
+func TaskEventLabel(kind string) string {
+	switch kind {
+	case EventSrcGateRejected:
+		return "收尾门拒绝"
+	case EventSrcPolicyBlocked:
+		return "策略封死"
+	case EventSrcBudget:
+		return "预算告警"
+	case EventSrcDuplicate:
+		return "疑似重复"
+	case EventSrcSubmission:
+		return "提交结果"
+	case EventSrcSLA:
+		return "SLA 提醒"
+	}
+	return "任务告警"
+}
 
 // InitKind 是 config 里为空的 kind 的兜底值。
 const InitKind = KindDingTalk

@@ -77,6 +77,20 @@ func htmlBatchIntro(m Message) string {
 // htmlItem 渲染单个漏洞。full=true 时含摘要与回链（单条推送），
 // false 时压缩成一行（汇总列表）。
 func htmlItem(it Item, full bool) string {
+	if it.EventKind != "" {
+		color := htmlSeverityColor(it.Severity)
+		var b strings.Builder
+		fmt.Fprintf(&b, `<div style="border-left:4px solid %s;padding:8px 0 8px 12px;margin-bottom:12px;">`, color)
+		fmt.Fprintf(&b, `<div style="font-weight:600;">%s</div>`, htmlEscape(it.EventTitle))
+		if it.EventBody != "" {
+			fmt.Fprintf(&b, `<div style="color:#595959;font-size:13px;white-space:pre-wrap;">%s</div>`, htmlEscape(it.EventBody))
+		}
+		if it.DetailURL != "" {
+			fmt.Fprintf(&b, `<div style="margin-top:6px;"><a href="%s" style="color:#1677ff;">查看详情</a></div>`, htmlEscapeAttr(it.DetailURL))
+		}
+		b.WriteString(`</div>`)
+		return b.String()
+	}
 	color := htmlSeverityColor(it.Severity)
 	var b strings.Builder
 	if full {

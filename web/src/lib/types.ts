@@ -1333,6 +1333,8 @@ export interface SrcProgram {
   rate_limit: number;
   time_window: string;
   severity_map: Record<string, string>;
+  /** 任务产物/日志保留天数；0=跟随全局设置。 */
+  retention_days?: number;
   /** 台账历史成绩（服务端聚合；没有已提交记录时 submitted=0）。 */
   feedback?: SrcProgramFeedback;
   created_at?: string;
@@ -1349,6 +1351,7 @@ export interface SrcProgramInput {
   rate_limit: number;
   time_window: string;
   severity_map: Record<string, string>;
+  retention_days?: number;
 }
 
 /** 全局 SRC 看板的聚合数字（服务端一次查完，UI 不算）。 */
@@ -1999,6 +2002,7 @@ export interface NotificationFilter {
   vulnclass_include?: string[]; // 空=全收；非空则要求漏洞类型命中任一关键词（大小写不敏感子串）
   vulnclass_exclude?: string[]; // 命中任一关键词即排除（排除优先于包含）
   on_status_change?: boolean; // 是否也接收漏洞处置状态变更事件
+  on_task_events?: boolean; // 是否接收任务级告警（收尾门/策略/预算/重复/提交/SLA）
 }
 
 // NotificationChannel 是一个渠道实例。config 的字段随 kind 而异，

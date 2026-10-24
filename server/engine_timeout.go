@@ -10,6 +10,7 @@ import (
 
 	"github.com/lin9527ya/bladepro/agent"
 	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/notify"
 	"github.com/lin9527ya/bladepro/policy"
 	"github.com/lin9527ya/bladepro/srcmode"
 )
@@ -200,6 +201,8 @@ func (e *Engine) deadlineCoordinator(ctx context.Context, t *Task) {
 					log.Printf("[budget] task %s token 预算耗尽 (%d/%d)，进入收尾时序", t.ID, used, budget)
 					e.emitActivity(t, db.Activity{Worker: "system", Kind: "system",
 						Summary: fmt.Sprintf("Token 预算耗尽（%d/%d），进入收尾时序", used, budget)})
+					e.notifyTaskAlert(t, notify.EventSrcBudget, "Token 预算耗尽，任务进入收尾",
+						fmt.Sprintf("任务 %s 的 token 用量达到 %d/%d，已停止派发新意图并进入收尾时序。", t.ID, used, budget), "high")
 					e.settleTask(ctx, t, "Token 预算耗尽", "timeout")
 					return
 				}

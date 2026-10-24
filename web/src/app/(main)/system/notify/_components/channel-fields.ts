@@ -135,6 +135,7 @@ export type ChannelForm = {
   taskIDsText: string;
   assetIDsText: string;
   onStatusChange: boolean;
+  onTaskEvents: boolean;
 };
 
 export const emptyForm = (kind: string): ChannelForm => ({
@@ -150,6 +151,7 @@ export const emptyForm = (kind: string): ChannelForm => ({
   taskIDsText: "",
   assetIDsText: "",
   onStatusChange: false,
+  onTaskEvents: false,
 });
 
 // parseKV 解析「每行 KEY=VALUE」的文本域。

@@ -77,6 +77,8 @@ type storageUnit struct {
 	ModTime time.Time `json:"mod_time"`
 	// Protected 非空表示**不许删**，值是理由（在跑的任务 / 目标不存在…）。
 	Protected string `json:"protected,omitempty"`
+	// RetentionDays 是该单元自己的保留天数（program 覆盖）；0 = 用分类设置。
+	RetentionDays int `json:"retention_days,omitempty"`
 }
 
 type storageCategoryReport struct {
@@ -231,11 +233,11 @@ func storageCategorySpecByKey(key string) (storageCategorySpec, bool) {
 // 保留天数为 0 = **不清理**——与文件分类同一条铁律，这里再挡一道，
 // 免得将来有人从别的路径调进来绕过了设置判定。
 func (s *Server) purgeRetentionCategory(ctx context.Context, spec storageCategorySpec, days int) (int64, error) {
-	if days <= 0 {
-		return 0, nil
-	}
-	cutoff := time.Now().AddDate(0, 0, -days)
 	if spec.TrafficIndex {
+		if days <= 0 {
+			return 0, nil
+		}
+		cutoff := time.Now().AddDate(0, 0, -days)
 		// 走 traffic 包的 API：索引行、正文行、blob 引用与磁盘 blob/遗留目录要一起
 		// 处理，且目录去留取决于"该 host 还有没有新流量"。绕开这个包直接删文件会把
 		// 索引打烂。
@@ -249,19 +251,96 @@ func (s *Server) purgeRetentionCategory(ctx context.Context, spec storageCategor
 	if err != nil {
 		return 0, err
 	}
+	if spec.DBTable == "" {
+		return 0, fmt.Errorf("未知的数据库清理分类 %q", spec.Key)
+	}
+	now := time.Now()
+	allTasks, err := s.m.pg.ListTasks()
+	if err != nil {
+		return 0, err
+	}
+	taskByID := make(map[string]*db.Task, len(allTasks))
+	for _, t := range allTasks {
+		if t != nil {
+			taskByID[strconv.FormatInt(t.ID, 10)] = t
+		}
+	}
+
+	// ① program 覆盖：每个配置了 retention_days 的项目按自己的截止时间清一遍。
+	// 对某个项目执行时，把所有「不属于该项目」的任务都列为保护，所以这一遍只会
+	// 动这个项目的行，不会误伤其他项目/无项目任务。
+	groups, err := s.m.pg.ProgramRetentionGroups(ctx)
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	for _, g := range groups {
+		if g.Days <= 0 {
+			continue
+		}
+		inGroup := make(map[string]bool, len(g.TaskIDs))
+		for _, id := range g.TaskIDs {
+			inGroup[id] = true
+		}
+		protectTasks := append([]string{}, tasks...)
+		protectExp := append([]int64{}, explorations...)
+		for id, t := range taskByID {
+			if inGroup[id] {
+				continue
+			}
+			protectTasks = append(protectTasks, id)
+			if t.ExplorationID > 0 {
+				protectExp = append(protectExp, t.ExplorationID)
+			}
+		}
+		cutoff := now.AddDate(0, 0, -g.Days)
+		n, err := s.purgeTableBefore(ctx, spec, cutoff, protectTasks, protectExp)
+		if err != nil {
+			return total, fmt.Errorf("program #%d：%w", g.ProgramID, err)
+		}
+		total += n
+	}
+
+	// ② 全局档：保留期比全局更长的项目要从全局清理中排除，否则它们的行会被
+	// 更短的全局截止时间先删掉。全局 0（不清理）时跳过这一遍。
+	if days <= 0 {
+		return total, nil
+	}
+	for _, g := range groups {
+		if g.Days <= days {
+			continue
+		}
+		for _, id := range g.TaskIDs {
+			tasks = append(tasks, id)
+			if t := taskByID[id]; t != nil && t.ExplorationID > 0 {
+				explorations = append(explorations, t.ExplorationID)
+			}
+		}
+	}
+	n, err := s.purgeTableBefore(ctx, spec, now.AddDate(0, 0, -days), tasks, explorations)
+	if err != nil {
+		return total, err
+	}
+	return total + n, nil
+}
+
+// purgeTableBefore applies one cutoff to the category's table. Kept separate so
+// the program pass and the global pass cannot drift in table handling.
+func (s *Server) purgeTableBefore(ctx context.Context, spec storageCategorySpec, cutoff time.Time, protectTasks []string, protectExp []int64) (int64, error) {
 	if spec.DBBodies {
-		return s.m.pg.StripLLMRecordBodiesBefore(ctx, cutoff, tasks, 0)
+		return s.m.pg.StripLLMRecordBodiesBefore(ctx, cutoff, protectTasks, 0)
 	}
 	switch spec.DBTable {
 	case db.RetentionLLMUsage:
-		return s.m.pg.PurgeLLMUsageBefore(ctx, cutoff, tasks, 0)
+		return s.m.pg.PurgeLLMUsageBefore(ctx, cutoff, protectTasks, 0)
 	case db.RetentionActivity:
 		// activity 按 exploration_id 归属任务，保护的是探索 id。
-		return s.m.pg.PurgeActivityBefore(ctx, cutoff, explorations, 0)
+		return s.m.pg.PurgeActivityBefore(ctx, cutoff, protectExp, 0)
 	case db.RetentionServerLogs:
+		// 服务端日志不归属任务，program 保留期对它没有意义。
 		return s.m.pg.PurgeServerLogsBefore(ctx, cutoff, 0)
 	case db.RetentionLLMRecords:
-		return s.m.pg.PurgeLLMRecordsBefore(ctx, cutoff, tasks, 0)
+		return s.m.pg.PurgeLLMRecordsBefore(ctx, cutoff, protectTasks, 0)
 	}
 	return 0, fmt.Errorf("未知的数据库清理分类 %q", spec.Key)
 }
@@ -308,6 +387,9 @@ func storageUnitExpired(u storageUnit, retentionDays int, now time.Time) bool {
 	if u.Protected != "" {
 		return false
 	}
+	if u.RetentionDays > 0 {
+		retentionDays = u.RetentionDays
+	}
 	if retentionDays <= 0 {
 		return false // 0 = 不清理
 	}
@@ -315,7 +397,7 @@ func storageUnitExpired(u storageUnit, retentionDays int, now time.Time) bool {
 }
 
 // scanStorageCategory 扫一个分类：列出单元、算大小与年龄、标出受保护的。
-func (s *Server) scanStorageCategory(spec storageCategorySpec, days int, protected map[string]bool) (storageCategoryReport, error) {
+func (s *Server) scanStorageCategory(spec storageCategorySpec, days int, protected map[string]bool, programDays map[string]int) (storageCategoryReport, error) {
 	rep := storageCategoryReport{Key: spec.Key, Label: spec.Label, StatsOnly: spec.StatsOnly, RetentionDays: days}
 	root := s.storageCategoryRoot(spec.Key)
 	if root == "" {
@@ -348,6 +430,10 @@ func (s *Server) scanStorageCategory(spec storageCategorySpec, days int, protect
 		u := storageUnit{Name: e.Name(), Path: p, Bytes: bytes, ModTime: mod}
 		if spec.Key == "tasks" && protected[e.Name()] {
 			u.Protected = "任务未到终态（在跑/排队/暂停）"
+		}
+		// 任务产物与转写目录都以 task id 命名：program 显式保留期优先于全局。
+		if (spec.Key == "tasks" || spec.Key == "transcripts") && programDays != nil {
+			u.RetentionDays = programDays[e.Name()]
 		}
 		units = append(units, u)
 	}
@@ -395,6 +481,10 @@ func (s *Server) storageReport(ctx context.Context) (*storageReport, error) {
 	}
 	rep := &storageReport{Dir: s.m.dir, ScannedAt: time.Now()}
 	rep.DiskTotal, rep.DiskFree = diskUsage(s.m.dir)
+	programDays, err := s.m.pg.TaskProgramRetention(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("读取 program 保留策略失败：%w", err)
+	}
 	for _, spec := range storageCategories {
 		days := s.storageRetentionDays(spec.SettingKey)
 		var cat storageCategoryReport
@@ -402,7 +492,7 @@ func (s *Server) storageReport(ctx context.Context) (*storageReport, error) {
 		if spec.DBTable != "" || spec.TrafficIndex {
 			cat, cerr = s.scanRetentionCategory(ctx, spec, days)
 		} else {
-			cat, cerr = s.scanStorageCategory(spec, days, protected)
+			cat, cerr = s.scanStorageCategory(spec, days, protected, programDays)
 		}
 		if cerr != nil {
 			return nil, fmt.Errorf("扫描 %s 失败：%w", spec.Label, cerr)

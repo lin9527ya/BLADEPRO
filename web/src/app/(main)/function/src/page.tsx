@@ -203,6 +203,7 @@ interface ProgramDraft {
   scopeRows: ProgramScopeInput[];
   rateLimit: string;
   timeWindow: string;
+  retentionDays: string;
   forbiddenTechniques: string[];
   forbiddenWrites: string[];
   severityMap: Record<string, string>;
@@ -236,6 +237,7 @@ function emptyDraft(): ProgramDraft {
     scopeRows: [],
     rateLimit: "",
     timeWindow: "",
+    retentionDays: "",
     forbiddenTechniques: [],
     forbiddenWrites: [],
     severityMap: emptySeverityMap(),
@@ -275,6 +277,7 @@ function draftFromProgram(p: SrcProgram): ProgramDraft {
     scopeRows: [],
     rateLimit: countText(p.rate_limit),
     timeWindow: p.time_window ?? "",
+    retentionDays: countText(p.retention_days),
     forbiddenTechniques: [...(rules.forbidden_techniques ?? [])],
     forbiddenWrites: [...(rules.forbidden_writes ?? [])],
     severityMap,
@@ -718,6 +721,7 @@ function ProgramsTab() {
       },
       rate_limit: toCount(draft.rateLimit),
       time_window: timeWindow,
+      retention_days: toCount(draft.retentionDays),
       severity_map: severityMap,
     };
     setSaving(true);
@@ -790,6 +794,7 @@ function ProgramsTab() {
                 <TableHead>平台</TableHead>
                 <TableHead>限速</TableHead>
                 <TableHead>时间窗</TableHead>
+                <TableHead>保留</TableHead>
                 <TableHead>禁用手段</TableHead>
                 <TableHead className="min-w-[200px]">等级映射</TableHead>
                 <TableHead className="w-32 text-right">操作</TableHead>
@@ -798,7 +803,7 @@ function ProgramsTab() {
             <TableBody>
               {loading && programs.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="py-12 text-center text-muted-foreground">
+                  <TableCell colSpan={8} className="py-12 text-center text-muted-foreground">
                     加载中…
                   </TableCell>
                 </TableRow>
@@ -827,6 +832,9 @@ function ProgramsTab() {
                     <TableCell className="text-xs">{p.platform || "—"}</TableCell>
                     <TableCell className="text-xs">{p.rate_limit ? `${p.rate_limit} qps` : "不限"}</TableCell>
                     <TableCell className="text-xs">{p.time_window || "不限"}</TableCell>
+                    <TableCell className="text-xs">
+                      {p.retention_days ? `${p.retention_days} 天` : "跟随全局"}
+                    </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap items-center gap-1">
                         <Badge variant="outline" title={techniques.join(", ") || "未禁用任何手段"}>
@@ -1060,6 +1068,20 @@ function ProgramsTab() {
                   />
                   <p className="text-muted-foreground text-xs">
                     &gt;0 时会编译成&quot;禁洪水/高并发&quot;的命令级硬规则
+                  </p>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="program-retention">任务产物/日志保留</Label>
+                  <Input
+                    id="program-retention"
+                    type="number"
+                    min={0}
+                    value={draft.retentionDays}
+                    placeholder="0 = 跟随全局"
+                    onChange={(e) => patch({ retentionDays: e.target.value })}
+                  />
+                  <p className="text-muted-foreground text-xs">
+                    该 program 的任务目录、转写与数据库日志保留天数；0 = 跟随存储清理设置
                   </p>
                 </div>
                 <div className="grid gap-2">

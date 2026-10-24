@@ -103,6 +103,7 @@ export default function NotifyPage() {
       taskIDsText: (f.task_ids ?? []).join(","),
       assetIDsText: (f.asset_ids ?? []).join(","),
       onStatusChange: f.on_status_change ?? false,
+      onTaskEvents: f.on_task_events ?? false,
     });
     setOpen(true);
   }
@@ -160,6 +161,7 @@ export default function NotifyPage() {
       task_ids: parseIDs(form.taskIDsText),
       asset_ids: parseIDs(form.assetIDsText),
       on_status_change: form.onStatusChange,
+      on_task_events: form.onTaskEvents,
     };
   }
 
@@ -577,6 +579,14 @@ export default function NotifyPage() {
                       aria-label="接收状态变更"
                     />
                     漏洞处置状态变更时也推送（仅实时模式）
+                  </div>
+                  <div className="flex items-center gap-2 text-sm">
+                    <Switch
+                      checked={form.onTaskEvents}
+                      onCheckedChange={(v) => setF({ onTaskEvents: v })}
+                      aria-label="接收任务告警"
+                    />
+                    接收任务告警（收尾门拒绝 / 策略封死 / 预算 / 疑似重复 / 提交结果 / SLA）
                   </div>
                 </div>
               </div>

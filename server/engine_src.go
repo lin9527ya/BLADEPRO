@@ -20,6 +20,7 @@ import (
 
 	"github.com/lin9527ya/bladepro/agent"
 	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/notify"
 	"github.com/lin9527ya/bladepro/srcmode"
 )
 
@@ -92,14 +93,23 @@ func (e *Engine) refuseSrcFinish(t *Task, rep srcmode.Report) {
 	e.srcMu.Unlock()
 
 	e.emitActivity(t, db.Activity{Worker: "system", Kind: "src_gate", Summary: summary})
+	// 缺口集合变化时推一次 IM 告警；同一份缺口连续拒绝只留时间线，避免刷屏。
+	if !sameGaps {
+		body := summary
+		if rep.BlockedReason != "" {
+			body += "\n" + rep.BlockedReason
+		}
+		e.notifyTaskAlert(t, notify.EventSrcGateRejected, "SRC 收尾门拒绝 done", body, "medium")
+	}
 
 	if rejects >= srcGateMaxRejects {
 		log.Printf("[src-gate] task %s 连续拒绝 %d 次，转 policy_blocked", t.ID, rejects)
 		if err := e.m.SetTaskStatus(t.ID, "policy_blocked"); err != nil {
 			log.Printf("[src-gate] task %s 转 policy_blocked 失败: %v", t.ID, err)
 		}
-		e.emitActivity(t, db.Activity{Worker: "system", Kind: "src_gate",
-			Summary: fmt.Sprintf("SRC 收尾门连续拒绝 %d 次，任务转 policy_blocked 交人工：补齐缺口格、把不适用的面标 na、或用「强制收尾」放行", rejects)})
+		blocked := fmt.Sprintf("SRC 收尾门连续拒绝 %d 次，任务转 policy_blocked 交人工：补齐缺口格、把不适用的面标 na、或用「强制收尾」放行", rejects)
+		e.emitActivity(t, db.Activity{Worker: "system", Kind: "src_gate", Summary: blocked})
+		e.notifyTaskAlert(t, notify.EventSrcPolicyBlocked, "任务转 policy_blocked", blocked, "high")
 		e.cancelExec(t.ID, agent.AbortSrcGateBlocked)
 		return
 	}

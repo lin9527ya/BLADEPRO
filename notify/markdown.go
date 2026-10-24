@@ -72,13 +72,34 @@ func markdownText(s string, maxRunes int) string {
 // 出现了 `\(1\)` 这种可见的反斜杠。
 func markdownTitle(m Message) string {
 	if m.Batch {
-		return fmt.Sprintf("漏洞汇总 · 共 %d 条", len(m.Items))
+		title := "漏洞汇总"
+		if allTaskEvents(m.Items) {
+			title = "任务告警"
+		}
+		return fmt.Sprintf("%s · 共 %d 条", title, len(m.Items))
 	}
 	if len(m.Items) == 0 {
 		return "漏洞通知"
 	}
 	it := m.Items[0]
+	if it.EventKind != "" {
+		return fmt.Sprintf("[%s] %s", TaskEventLabel(it.EventKind), OneLine(it.EventTitle, 0))
+	}
 	return fmt.Sprintf("[%s] %s", SeverityLabel(it.Severity), OneLine(it.Title(), 0))
+}
+
+// allTaskEvents reports whether the batch contains only task alerts (used for the
+// summary title; mixed batches keep the neutral "漏洞汇总" wording).
+func allTaskEvents(items []Item) bool {
+	if len(items) == 0 {
+		return false
+	}
+	for _, it := range items {
+		if it.EventKind == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // markdownBody 渲染消息正文，返回正文与**实际写入的条目数**。
@@ -165,6 +186,24 @@ func markdownBatchIntro(m Message, items []Item, total int) string {
 // 单行化 + 转义。回链是管理员配置的 public_base_url 拼出来的，不是不可信内容，
 // 且必须是可点的链接，所以原样输出。
 func writeItem(b *strings.Builder, it Item, prefix string, single bool) {
+	if it.EventKind != "" {
+		line := prefix + "**" + markdownText(it.EventTitle, 0) + "**"
+		if !single {
+			if it.EventBody != "" {
+				line += " — " + markdownText(it.EventBody, 80)
+			}
+			b.WriteString(line + "\n")
+			return
+		}
+		b.WriteString(line + "\n")
+		if it.EventBody != "" {
+			fmt.Fprintf(b, "%s\n", markdownEscape(it.EventBody))
+		}
+		if it.DetailURL != "" {
+			fmt.Fprintf(b, "[查看详情](%s)\n", it.DetailURL)
+		}
+		return
+	}
 	line := fmt.Sprintf("%s**%s · %s**", prefix, SeverityLabel(it.Severity), markdownText(it.Title(), 0))
 	if !single {
 		// 汇总模式：单行呈现，资产与摘要压缩后跟在后面。

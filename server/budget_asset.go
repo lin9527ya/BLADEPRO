@@ -20,6 +20,7 @@ import (
 
 	"github.com/lin9527ya/bladepro/agent"
 	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/notify"
 	"github.com/lin9527ya/bladepro/srcmode"
 )
 
@@ -190,6 +191,8 @@ func (e *Engine) checkAssetTimeBudgets(ctx context.Context, t *Task) {
 			Summary: fmt.Sprintf("资产 #%d 时间预算耗尽（%d/%d 分钟），已收口 %d 格",
 				usage.AssetID, usage.UsedMinutes, doc.AssetTimeBudgetMinutes, marked),
 			Detail: text})
+		e.notifyTaskAlert(t, notify.EventSrcBudget,
+			fmt.Sprintf("资产 #%d 时间预算耗尽", usage.AssetID), text, "medium")
 		t.trigMu.Lock()
 		t.pendingTriggers = append(t.pendingTriggers, agent.TriggerEvent{Kind: "hint", Hints: []string{text}})
 		t.trigMu.Unlock()
@@ -210,6 +213,8 @@ func (e *Engine) assetBudgetNotice(t *Task, usage db.AssetTokenUsage, doc srcmod
 	e.emitActivity(t, db.Activity{Worker: "system", Kind: "system",
 		Summary: fmt.Sprintf("资产 #%d token 预算耗尽（%d/%d），已收口 %d 格", usage.AssetID, usage.Tokens, doc.AssetTokenBudget, marked),
 		Detail:  text})
+	e.notifyTaskAlert(t, notify.EventSrcBudget,
+		fmt.Sprintf("资产 #%d token 预算耗尽", usage.AssetID), text, "medium")
 	t.trigMu.Lock()
 	t.pendingTriggers = append(t.pendingTriggers, agent.TriggerEvent{Kind: "hint", Hints: []string{text}})
 	t.trigMu.Unlock()

@@ -193,6 +193,8 @@ type srcProgramReq struct {
 	RateLimit   int                  `json:"rate_limit"`
 	TimeWindow  string               `json:"time_window"`
 	SeverityMap map[string]string    `json:"severity_map"`
+	// RetentionDays 是该 program 的任务产物/日志保留天数（0=跟随全局）。
+	RetentionDays int `json:"retention_days"`
 }
 
 func (req srcProgramReq) toProgram() (*srcmode.Program, []byte, []byte, error) {
@@ -232,6 +234,7 @@ func (s *Server) createSrcProgram(w http.ResponseWriter, r *http.Request) {
 	row, err := s.m.PG().Src().CreateSrcProgram(r.Context(), db.SrcProgramInput{
 		CompanyID: p.CompanyID, Name: p.Name, Platform: p.Platform, ScopeNote: p.ScopeNote,
 		Rules: rulesJSON, RateLimit: p.RateLimit, TimeWindow: p.TimeWindow, SeverityMap: sevJSON,
+		RetentionDays: req.RetentionDays,
 	})
 	if err != nil {
 		writeErr(w, 400, err.Error())
@@ -280,6 +283,7 @@ func (s *Server) updateSrcProgram(w http.ResponseWriter, r *http.Request) {
 	row, err := s.m.PG().Src().UpdateSrcProgram(r.Context(), id, db.SrcProgramInput{
 		CompanyID: p.CompanyID, Name: p.Name, Platform: p.Platform, ScopeNote: p.ScopeNote,
 		Rules: rulesJSON, RateLimit: p.RateLimit, TimeWindow: p.TimeWindow, SeverityMap: sevJSON,
+		RetentionDays: req.RetentionDays,
 	})
 	if err != nil {
 		writeErr(w, 400, err.Error())

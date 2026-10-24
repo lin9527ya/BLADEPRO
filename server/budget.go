@@ -13,6 +13,7 @@ import (
 
 	"github.com/lin9527ya/bladepro/agent"
 	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/notify"
 )
 
 // BudgetStage classifies token usage against a task budget:
@@ -111,6 +112,8 @@ func (e *Engine) budgetNotice(t *Task, stage string, used, budget int64) {
 	if text == "" {
 		return
 	}
+	title, severity := budgetAlertText(stage, used, budget)
+	e.notifyTaskAlert(t, notify.EventSrcBudget, title, text, severity)
 	// 时间线留痕先落：档位提示既进 planner（hint），也落一条 system 活动，让人在
 	// 会话/图谱时间线上看到"何时触发了哪一档"，而不是只存在于 planner 上下文里。
 	// 顺序有意是"活动先落、hint 后投"：谁看到提示（含验收断言）时，时间线一定已有痕，

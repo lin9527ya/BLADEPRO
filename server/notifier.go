@@ -440,6 +440,19 @@ func (n *Notifier) itemFor(ctx context.Context, snap notify.Snapshot, baseURL st
 		FromStatus: snap.FromStatus,
 		ToStatus:   snap.ToStatus,
 	}
+	if notify.IsTaskEvent(snap.Kind) {
+		item.EventKind = snap.Kind
+		item.EventTitle = snap.Title
+		item.EventBody = snap.Body
+		if item.EventTitle == "" {
+			item.EventTitle = notify.TaskEventLabel(snap.Kind)
+		}
+		// 任务级告警回链到任务详情，而不是不存在的 finding 详情。
+		if baseURL != "" && snap.TaskID > 0 {
+			item.DetailURL = fmt.Sprintf("%s/function/tasks/detail?id=%d", baseURL, snap.TaskID)
+		}
+		return item, nil
+	}
 	if baseURL != "" {
 		// 详情页路由见 web/src/app/(main)/function/findings/detail/page.tsx，
 		// 它从 query 参数 id 读取漏洞 id。

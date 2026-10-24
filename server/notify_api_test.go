@@ -949,3 +949,36 @@ func TestNotifyTickBudgetFitsWithinLease(t *testing.T) {
 			worst, notifyLease, notifyMaxSendsPerChannelPerTick, notifySendTimeout)
 	}
 }
+
+// TestNotifyTaskAlertDelivery pins the task-alert path end to end: an event with
+// finding_id=0 is fanned out only to channels that opted in, and renders the
+// alert title/body instead of a vulnerability card.
+func TestNotifyTaskAlertDelivery(t *testing.T) {
+	f := newNotifyFixture(t)
+	hookOn := newFakeWebhook(t)
+	hookOff := newFakeWebhook(t)
+	onID := f.createChannel(t, map[string]any{
+		"name": "任务告警", "kind": notify.KindDingTalk, "config": map[string]any{"webhook": hookOn.URL},
+		"filter": map[string]any{"on_task_events": true},
+	})
+	offID := f.createChannel(t, map[string]any{
+		"name": "只收漏洞", "kind": notify.KindDingTalk, "config": map[string]any{"webhook": hookOff.URL},
+	})
+	notifyTaskAlert(context.Background(), f.pg, notify.EventSrcBudget, f.taskID, 0,
+		"Token 预算告急", "任务已用 95% 预算", "high")
+	f.deliver(t, onID, "")
+	f.deliver(t, offID, "")
+
+	if hookOn.count() != 1 {
+		t.Fatalf("开启任务告警的渠道应收到 1 条，实际 %d", hookOn.count())
+	}
+	text := markdownText(t, hookOn.last(t))
+	for _, want := range []string{"Token 预算告急", "任务已用 95% 预算"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("任务告警正文缺少 %q:\n%s", want, text)
+		}
+	}
+	if hookOff.count() != 0 {
+		t.Fatalf("未开启任务告警的渠道不应收到，实际 %d", hookOff.count())
+	}
+}

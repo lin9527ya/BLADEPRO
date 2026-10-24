@@ -245,3 +245,24 @@ func (d *DB) GetReviewDecision(ctx context.Context, kind, refKey string) (string
 	}
 	return action, err
 }
+
+// ClaimSrcAlert marks one alert key as sent and reports whether this caller won
+// the claim. The claim is a cooldown: a key may be re-sent only after `within`
+// has elapsed, so a 6-hour SLA scan cannot page the same overdue item every tick.
+func (d *DB) ClaimSrcAlert(ctx context.Context, key string, within time.Duration) (bool, error) {
+	if d == nil || key == "" {
+		return false, nil
+	}
+	secs := int(within.Seconds())
+	if secs <= 0 {
+		secs = 0
+	}
+	res, err := d.ExecContext(ctx, `INSERT INTO src_alert_marks(alert_key,sent_at) VALUES($1,now())
+ON CONFLICT (alert_key) DO UPDATE SET sent_at=now()
+WHERE src_alert_marks.sent_at < now() - ($2::int * interval '1 second')`, key, secs)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}

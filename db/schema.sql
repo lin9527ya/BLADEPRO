@@ -1805,6 +1805,12 @@ CREATE INDEX IF NOT EXISTS idx_evidence_artifacts_sha  ON evidence_artifacts(sha
 
 -- 人工复核队列的裁决留痕：队列项按 (kind, ref_key) 去重；已裁决的项不再重复出现。
 -- reject/retest 会改底层状态，但留痕仍保留，便于事后审计。
+-- 任务告警去重标记：SLA 扫描每 6 小时跑一次，同一条超时项在冷却期内只推一次。
+CREATE TABLE IF NOT EXISTS src_alert_marks (
+    alert_key TEXT PRIMARY KEY,
+    sent_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS review_decisions (
     id         BIGSERIAL PRIMARY KEY,
     kind       TEXT NOT NULL,
@@ -1932,11 +1938,14 @@ CREATE TABLE IF NOT EXISTS src_programs (
     time_window  TEXT NOT NULL DEFAULT '',
     -- severity_map: 内部等级 → 平台等级，例如 {"high":"critical","medium":"high"}。
     severity_map JSONB NOT NULL DEFAULT '{}'::jsonb,
+    -- retention_days: 该 program 的任务产物/日志保留天数（0=跟随全局设置）。
+    retention_days INT NOT NULL DEFAULT 0 CHECK (retention_days >= 0),
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_src_programs_name ON src_programs(lower(name));
 CREATE INDEX IF NOT EXISTS idx_src_programs_platform ON src_programs(platform, name);
+ALTER TABLE src_programs ADD COLUMN IF NOT EXISTS retention_days INT NOT NULL DEFAULT 0;
 DROP TRIGGER IF EXISTS trg_src_programs_upd ON src_programs;
 CREATE TRIGGER trg_src_programs_upd BEFORE UPDATE ON src_programs
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();

@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/lin9527ya/bladepro/notify"
 )
 
 // 台账状态（与 schema.sql 的 CHECK 一致）。
@@ -504,6 +506,30 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
 			return nil, err
 		}
 	}
+	// 平台结论回流到 IM：只在状态真正推进时记一条任务告警（重复 PATCH 不刷屏）。
+	// finding_id 保留真实发现，告警卡片才能回链到漏洞详情。
+	if changed && nextStatus != cur.Status {
+		title, severity := srcSubmissionAlertTitle(nextStatus)
+		if title != "" {
+			body := fmt.Sprintf("平台：%s\n发现：#%d %s\n状态：%s → %s",
+				displayPlatform(cur.Platform), cur.FindingID, cur.Title,
+				SrcSubmissionStatusLabel(cur.Status), SrcSubmissionStatusLabel(nextStatus))
+			if externalID != "" {
+				body += "\n平台编号：" + externalID
+			}
+			if verdictReason != "" {
+				body += "\n原因：" + SrcVerdictReasonLabel(verdictReason)
+			}
+			if reward != "" {
+				body += "\n奖励：" + reward
+			}
+			RecordNotificationEventTx(ctx, tx, notify.EventSrcSubmission, cur.FindingID, notify.Snapshot{
+				Kind: notify.EventSrcSubmission, TaskID: cur.TaskID, FindingID: cur.FindingID,
+				Title: title, Body: body, Summary: body, Severity: severity,
+				FromStatus: cur.Status, ToStatus: nextStatus,
+			})
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -739,4 +765,71 @@ func (s *SrcStore) SrcFinding(ctx context.Context, findingID int64) (*DBFinding,
 		return nil, nil
 	}
 	return s.db.GetFinding(findingID)
+}
+
+// srcSubmissionAlertTitle maps a verdict status to the IM alert title/severity.
+// Intermediate states (draft/ready/submitted/withdrawn) stay quiet: the operator
+// already sees them in the ledger; only platform outcomes need a push.
+func srcSubmissionAlertTitle(status string) (title, severity string) {
+	switch status {
+	case SrcSubRejected:
+		return "提交被平台驳回", "high"
+	case SrcSubDuplicate:
+		return "提交被判重复", "medium"
+	case SrcSubAccepted:
+		return "提交已被平台受理", "medium"
+	case SrcSubPaid:
+		return "赏金已到账", "low"
+	}
+	return "", ""
+}
+
+// SrcSubmissionStatusLabel is the human label used in alert bodies.
+func SrcSubmissionStatusLabel(status string) string {
+	switch status {
+	case SrcSubDraft:
+		return "草稿"
+	case SrcSubReady:
+		return "可提交"
+	case SrcSubSubmitted:
+		return "已提交"
+	case SrcSubAccepted:
+		return "已受理"
+	case SrcSubDuplicate:
+		return "重复"
+	case SrcSubRejected:
+		return "已驳回"
+	case SrcSubPaid:
+		return "已到账"
+	case SrcSubWithdrawn:
+		return "已撤回"
+	}
+	return status
+}
+
+// SrcVerdictReasonLabel renders a rejection reason code for humans.
+func SrcVerdictReasonLabel(reason string) string {
+	switch reason {
+	case SrcVerdictNotReproducible:
+		return "无法复现"
+	case SrcVerdictDuplicate:
+		return "已重复"
+	case SrcVerdictInsufficient:
+		return "信息不全"
+	case SrcVerdictNotVulnerability:
+		return "非漏洞"
+	case SrcVerdictOutOfScope:
+		return "超出范围"
+	case SrcVerdictOther:
+		return "其他"
+	}
+	return reason
+}
+
+// displayPlatform keeps empty platform readable in alerts.
+func displayPlatform(p string) string {
+	if strings.TrimSpace(p) == "" {
+		return "默认平台"
+	}
+	return p
 }

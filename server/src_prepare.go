@@ -19,6 +19,7 @@ import (
 
 	"github.com/lin9527ya/bladepro/agent"
 	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/notify"
 	"github.com/lin9527ya/bladepro/report"
 	"github.com/lin9527ya/bladepro/srcmode"
 )
@@ -194,6 +195,10 @@ func (s *Server) prepareSrcSubmission(ctx context.Context, req agent.SrcPrepareR
 	if dedupeOf == 0 && len(dupes) > 0 {
 		if err := store.SetSrcDedupeOf(ctx, f.ID, dupes[0].FindingID); err == nil {
 			dedupeOf = dupes[0].FindingID
+			notifyTaskAlert(ctx, s.m.PG(), notify.EventSrcDuplicate,
+				req.TaskID, f.ID, "发现疑似与已有发现重复",
+				fmt.Sprintf("发现 #%d「%s」指纹命中已有发现 #%d；交付门将其标为 dedupe_pending，需在 src_dedupe 定案（标 duplicate 或 clear）。",
+					f.ID, title, dedupeOf), "medium")
 		}
 	}
 

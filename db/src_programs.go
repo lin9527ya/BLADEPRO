@@ -25,30 +25,33 @@ type SrcProgram struct {
 	RateLimit   int             `json:"rate_limit"`
 	TimeWindow  string          `json:"time_window"`
 	SeverityMap json.RawMessage `json:"severity_map"`
-	CreatedAt   time.Time       `json:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at"`
+	// RetentionDays 是该 program 的任务产物/日志保留天数（0=跟随全局）。
+	RetentionDays int       `json:"retention_days"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // SrcProgramInput is the settable part of a program.
 type SrcProgramInput struct {
-	CompanyID   *int64          `json:"company_id,omitempty"`
-	Name        string          `json:"name"`
-	Platform    string          `json:"platform"`
-	ScopeNote   string          `json:"scope_note"`
-	Rules       json.RawMessage `json:"rules"`
-	RateLimit   int             `json:"rate_limit"`
-	TimeWindow  string          `json:"time_window"`
-	SeverityMap json.RawMessage `json:"severity_map"`
+	CompanyID     *int64          `json:"company_id,omitempty"`
+	Name          string          `json:"name"`
+	Platform      string          `json:"platform"`
+	ScopeNote     string          `json:"scope_note"`
+	Rules         json.RawMessage `json:"rules"`
+	RateLimit     int             `json:"rate_limit"`
+	TimeWindow    string          `json:"time_window"`
+	SeverityMap   json.RawMessage `json:"severity_map"`
+	RetentionDays int             `json:"retention_days"`
 }
 
 const srcProgramCols = `id, company_id, name, platform, scope_note, COALESCE(rules,'{}'::jsonb),
-rate_limit, time_window, COALESCE(severity_map,'{}'::jsonb), created_at, updated_at`
+rate_limit, time_window, COALESCE(severity_map,'{}'::jsonb), retention_days, created_at, updated_at`
 
 func scanSrcProgram(sc interface{ Scan(...any) error }) (*SrcProgram, error) {
 	var p SrcProgram
 	var rules, sev []byte
 	if err := sc.Scan(&p.ID, &p.CompanyID, &p.Name, &p.Platform, &p.ScopeNote, &rules,
-		&p.RateLimit, &p.TimeWindow, &sev, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		&p.RateLimit, &p.TimeWindow, &sev, &p.RetentionDays, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return nil, err
 	}
 	p.Rules = json.RawMessage(rules)
@@ -72,13 +75,16 @@ func (s *SrcStore) CreateSrcProgram(ctx context.Context, in SrcProgramInput) (*S
 	if name == "" {
 		return nil, fmt.Errorf("项目名不能为空")
 	}
+	if in.RetentionDays < 0 {
+		return nil, fmt.Errorf("保留天数不能为负（0 = 跟随全局）")
+	}
 	row, err := scanSrcProgram(s.db.QueryRowContext(ctx, `
-INSERT INTO src_programs(company_id, name, platform, scope_note, rules, rate_limit, time_window, severity_map)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+INSERT INTO src_programs(company_id, name, platform, scope_note, rules, rate_limit, time_window, severity_map, retention_days)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 RETURNING `+srcProgramCols,
 		in.CompanyID, name, strings.TrimSpace(in.Platform), strings.TrimSpace(in.ScopeNote),
 		programJSON(in.Rules, "{}"), in.RateLimit, strings.TrimSpace(in.TimeWindow),
-		programJSON(in.SeverityMap, "{}")))
+		programJSON(in.SeverityMap, "{}"), in.RetentionDays))
 	if err != nil {
 		if strings.Contains(err.Error(), "uq_src_programs_name") {
 			return nil, fmt.Errorf("项目名「%s」已存在", name)
@@ -100,15 +106,18 @@ func (s *SrcStore) UpdateSrcProgram(ctx context.Context, id int64, in SrcProgram
 	if name == "" {
 		return nil, fmt.Errorf("项目名不能为空")
 	}
+	if in.RetentionDays < 0 {
+		return nil, fmt.Errorf("保留天数不能为负（0 = 跟随全局）")
+	}
 	row, err := scanSrcProgram(s.db.QueryRowContext(ctx, `
 UPDATE src_programs SET
     company_id=$2, name=$3, platform=$4, scope_note=$5, rules=$6,
-    rate_limit=$7, time_window=$8, severity_map=$9
+    rate_limit=$7, time_window=$8, severity_map=$9, retention_days=$10
 WHERE id=$1
 RETURNING `+srcProgramCols,
 		id, in.CompanyID, name, strings.TrimSpace(in.Platform), strings.TrimSpace(in.ScopeNote),
 		programJSON(in.Rules, "{}"), in.RateLimit, strings.TrimSpace(in.TimeWindow),
-		programJSON(in.SeverityMap, "{}")))
+		programJSON(in.SeverityMap, "{}"), in.RetentionDays))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -312,6 +321,68 @@ GROUP BY 1 ORDER BY 2 DESC`, programID)
 			return out, err
 		}
 		out.Reasons[code] = n
+	}
+	return out, rows.Err()
+}
+
+// TaskProgramRetention returns task_id -> program retention_days for every task
+// bound to a program. Tasks not in the map fall back to the global setting.
+func (d *DB) TaskProgramRetention(ctx context.Context) (map[string]int, error) {
+	if d == nil {
+		return map[string]int{}, nil
+	}
+	rows, err := d.QueryContext(ctx, `SELECT t.id::text, p.retention_days
+FROM tasks t JOIN src_programs p ON p.id=t.src_program_id
+WHERE t.deleted_at IS NULL AND p.retention_days > 0`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var id string
+		var days int
+		if err := rows.Scan(&id, &days); err != nil {
+			return nil, err
+		}
+		out[id] = days
+	}
+	return out, rows.Err()
+}
+
+// ProgramRetentionGroups returns program_id -> retention_days and the task ids
+// belonging to each program (used by the cleanup sweeper to honour overrides).
+type ProgramRetentionGroup struct {
+	ProgramID int64
+	Days      int
+	TaskIDs   []string
+}
+
+// ProgramRetentionGroups lists programs with a retention override and their tasks.
+func (d *DB) ProgramRetentionGroups(ctx context.Context) ([]ProgramRetentionGroup, error) {
+	if d == nil {
+		return nil, nil
+	}
+	rows, err := d.QueryContext(ctx, `SELECT p.id, p.retention_days,
+  COALESCE(array_to_json(array_agg(t.id::text) FILTER (WHERE t.id IS NOT NULL))::text, '[]')
+FROM src_programs p LEFT JOIN tasks t ON t.src_program_id=p.id AND t.deleted_at IS NULL
+WHERE p.retention_days > 0
+GROUP BY p.id, p.retention_days ORDER BY p.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ProgramRetentionGroup{}
+	for rows.Next() {
+		var g ProgramRetentionGroup
+		var idsRaw string
+		if err := rows.Scan(&g.ProgramID, &g.Days, &idsRaw); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(idsRaw), &g.TaskIDs); err != nil {
+			return nil, fmt.Errorf("解析 program #%d 的任务列表失败: %w", g.ProgramID, err)
+		}
+		out = append(out, g)
 	}
 	return out, rows.Err()
 }

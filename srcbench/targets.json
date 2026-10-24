@@ -1,0 +1,57 @@
+[
+  {
+    "name": "local-vuln",
+    "base_url": "http://127.0.0.1:18080",
+    "mode": "src",
+    "budget": {
+      "timeout_seconds": 1800,
+      "max_intents_total": 80,
+      "max_intents_per_asset": 12
+    },
+    "notes": "本地故意有漏洞的靶场（srcbench/target）。仅用于授权基准测试；SSRF 端点只允许 loopback。",
+    "golden": [
+      {
+        "vulnclass": "authorization",
+        "endpoint": "GET /api/users/{id}",
+        "severity": "high",
+        "notes": "IDOR：未登录按 id 直接读他人资料（/api/users/2 返回 bob）"
+      },
+      {
+        "vulnclass": "unauth",
+        "endpoint": "GET /admin",
+        "severity": "high",
+        "notes": "管理面板无鉴权"
+      },
+      {
+        "vulnclass": "xss",
+        "endpoint": "GET /search?q",
+        "severity": "medium",
+        "notes": "反射型 XSS：q 原样回显"
+      },
+      {
+        "vulnclass": "ssrf",
+        "endpoint": "GET /proxy?url",
+        "severity": "high",
+        "notes": "服务端代取 loopback URL"
+      },
+      {
+        "vulnclass": "path_traversal",
+        "endpoint": "GET /download?file",
+        "severity": "high",
+        "notes": "路径穿越：../secret.txt 可读"
+      },
+      {
+        "vulnclass": "open_redirect",
+        "endpoint": "GET /redirect?to",
+        "severity": "low",
+        "notes": "开放重定向：to 不校验域"
+      },
+      {
+        "vulnclass": "cache_poisoning",
+        "endpoint": "GET /cache?key",
+        "severity": "medium",
+        "notes": "X-Forwarded-Host 进入可缓存页面且无 Vary"
+      }
+    ]
+  }
+]

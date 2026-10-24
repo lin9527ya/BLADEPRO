@@ -58,6 +58,17 @@
 - 回归：clear 证据/allow 开关、platform_exempt 豁免依据、static_page 按面白名单、
   Program→mode_doc 编译；集成测试夹具显式打开 allow 以聚焦各自断言。
 
+### 新增：SRC 金标靶场（P1 评测基建）
+
+- `srcbench/target/`：本地故意有漏洞的靶场（IDOR / 未授权 / 反射 XSS / SSRF /
+  路径穿越 / 开放重定向 / 缓存投毒），只监听本机，SSRF 只代取 loopback；
+  `go run ./srcbench/target -addr 127.0.0.1:18080` 启动。
+- `srcbench/targets.json`：金标清单（类型 + 归一化端点 + 期望等级 + 预算）。
+- `srcbench/score/`：把发现列表与金标对照，算 TP/FP/FN、Precision/Recall/F1、
+  等级一致率、覆盖格/收尾闸完成率与 token/命中；支持 Markdown/JSON 输出。
+- 靶场自检（每个金标漏洞真的存在）与打分器纯逻辑测试进 `go test ./srcbench/...`，
+  CI 不需 LLM 或外部服务；真实靶场（Juice Shop/DVWA/vulhub）按 README 扩展。
+
 ### 新增：PoC 可执行化（P1）
 
 - 交付包为每条进包发现增加 `attachments/<发现id>-<slug>/`：

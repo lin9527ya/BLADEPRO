@@ -69,3 +69,18 @@
 - **危害描述是否夸大**：八段正文的"危害"只能人工判；
 - **平台是否收**：不同平台的受理尺度不同，最终以平台结论回填台账
   （`accepted/rejected/duplicate`）为准——这也是台账存在的意义。
+
+
+## 五、金标靶场（srcbench/）
+
+人工 A/B 适合看趋势，不适合每次改动都回归。`srcbench/` 提供一个可复现的本地金标：
+
+- `srcbench/target`：故意有漏洞的本地应用（IDOR / 未授权 / XSS / SSRF / 路径穿越 /
+  开放重定向 / 缓存投毒），金标漏洞在 `srcbench/targets.json`；
+- `srcbench/score`：发现列表 vs 金标，输出 TP/FP/FN、P/R/F1、等级一致率、
+  覆盖格/收尾闸完成率与 token/命中；
+- 用法与扩展（Juice Shop/DVWA/vulhub）见 [srcbench/README.md](../srcbench/README.md)。
+
+建议：提示词、风险面、优先级、模型分层等改动，先在金标上跑同一预算的对照，
+再看本文的人工 A/B 指标；金标没有覆盖的部分（证据真实性、危害描述、平台受理）
+仍需人工抽检。

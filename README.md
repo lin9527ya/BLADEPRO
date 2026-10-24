@@ -137,7 +137,7 @@ report_finding → 绑 proof/verification 流量 → src_prepare_submission（�
 
 ### 设计文档
 
-完整方案（P0–P3、DDL、收尾门伪代码、风险与取舍）见 [docs/SRC挖掘agent改造方案.md](docs/SRC挖掘agent改造方案.md)；本仓已实现 P0（模式骨架）、P1（覆盖矩阵与收尾门）、P2（交付台账/证据合规/跨任务去重）、P3（平台项目与看板）。怎么衡量 SRC 模式值不值得用、回归要盯哪些数，见 [docs/SRC评测口径.md](docs/SRC评测口径.md)。
+完整方案（P0–P3、DDL、收尾门伪代码、风险与取舍）见 [docs/SRC挖掘agent改造方案.md](docs/SRC挖掘agent改造方案.md)；本仓已实现 P0（模式骨架）、P1（覆盖矩阵与收尾门）、P2（交付台账/证据合规/跨任务去重）、P3（平台项目与看板）。怎么衡量 SRC 模式值不值得用、回归要盯哪些数，见 [docs/SRC评测口径.md](docs/SRC评测口径.md)；可复现的金标靶场与打分器见 [srcbench/README.md](srcbench/README.md)。
 
 **与 src-dig 技能的范围约束融合**：本仓的 SRC 口径对齐 `~/.claude/skills/src-dig/`（收尾闸、N/A 语义、安全红线、交付校验）。映射表、数据模型与判定口径见 [docs/src-dig范围约束融合.md](docs/src-dig范围约束融合.md)；字节系/京东系/通用的平台规则 JSON 见 [docs/平台规则模板.md](docs/平台规则模板.md)。
 

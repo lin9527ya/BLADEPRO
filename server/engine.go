@@ -1089,6 +1089,17 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	// wrap the guard hooks so steer_work can inject a mid-run course-correction
 	// for THIS intent (drained before the worker's next tool call).
 	iid := intent.ID
+	wTaskID, _ := strconv.ParseInt(t.ID, 10, 64)
+	srcStore := e.m.pg.Src()
+	// 单元格租约在 worker 结束时释放（正常/异常/被 kill 都走这里）；过期也有 TTL 兜底。
+	defer func() {
+		if srcStore == nil {
+			return
+		}
+		if err := srcStore.ReleaseSrcLeases(context.Background(), wTaskID, iid); err != nil {
+			log.Printf("[src-lease] task %s 释放意图 #%d 的租约失败: %v", t.ID, iid, err)
+		}
+	}()
 	// 意图租约心跳：每个活动(LLM 回合/工具调用)最多每 TTL/3 续一次租——心跳即进度证据，
 	// 长时间无活动的 running 意图由任务协调器的看门狗取消并回收重派。续租失败（租约已
 	// 易主）只记日志：本 run 的终态写入会因 CAS 失败而自然让位。
@@ -1101,6 +1112,11 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 		}
 		if ok, err := t.Store.TouchIntentLease(iid, name, db.IntentLeaseTTL); err == nil && !ok {
 			log.Printf("[worker %s] task %s 意图 #%d 租约已易主，续租未生效", name, t.ID, iid)
+		}
+		if srcStore != nil {
+			if _, err := srcStore.RenewSrcLeases(context.Background(), wTaskID, iid, db.SrcLeaseTTL); err != nil {
+				log.Printf("[worker %s] task %s 意图 #%d 续单元格租约失败: %v", name, t.ID, iid, err)
+			}
 		}
 	}
 	emitRenew := func(r db.Activity) { renewLease(); emit(r) }
@@ -1120,7 +1136,6 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 		limit:  e.emptyTurnNudgeLimit(),
 		label:  label,
 	}
-	wTaskID, _ := strconv.ParseInt(t.ID, 10, 64)
 	e.BeginLLMCall(t.ID)
 	var reason harness.TerminalReason
 	var wrote agent.WriteCounts

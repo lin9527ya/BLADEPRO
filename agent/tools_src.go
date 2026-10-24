@@ -135,10 +135,12 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 			"asset_id": a.ID, "asset": a.Label, "asset_type": a.Type, "items": items,
 		})
 	}
+	leases, _ := t.srcStore.ListActiveSrcLeases(ctx, t.taskID)
 	return map[string]any{
 		"mode":         srcmode.ModeSrc,
 		"summary":      rep,
 		"gaps":         rep.Gaps,
+		"leases":       leases,
 		"gaps_total":   rep.GapsTotal,
 		"gaps_by_area": rep.GapsByArea,
 		"checks":       checkRows,
@@ -200,8 +202,15 @@ func (t *ToolSet) srcOverviewBlock(ctx context.Context) (map[string]any, error) 
 	if len(top) > 10 {
 		top = top[:10]
 	}
+	leases, _ := t.srcStore.ListActiveSrcLeases(ctx, t.taskID)
+	topLeases := leases
+	if len(topLeases) > 20 {
+		topLeases = topLeases[:20]
+	}
 	return map[string]any{
 		"gaps_total":            rep.GapsTotal,
+		"leases":                topLeases,
+		"leased_total":          len(leases),
 		"gaps_by_area":          rep.GapsByArea,
 		"top_gaps":              top,
 		"cells_total":           rep.CellsTotal,
@@ -393,6 +402,19 @@ func filterSnapshot(snap map[string]any, assetID int64, area string) map[string]
 			kept = append(kept, row)
 		}
 		out["checks"] = kept
+	}
+	if leases, ok := snap["leases"].([]db.SrcLease); ok {
+		kept := make([]db.SrcLease, 0, len(leases))
+		for _, l := range leases {
+			if assetID > 0 && l.AssetID != assetID {
+				continue
+			}
+			if area != "" && l.Area != area {
+				continue
+			}
+			kept = append(kept, l)
+		}
+		out["leases"] = kept
 	}
 	if gaps, ok := snap["gaps"].([]srcmode.Gap); ok {
 		kept := make([]srcmode.Gap, 0, len(gaps))

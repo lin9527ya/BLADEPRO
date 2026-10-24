@@ -1841,6 +1841,21 @@ CREATE INDEX IF NOT EXISTS idx_src_submissions_program ON src_submissions(progra
 -- =====================================================================
 ALTER TABLE src_cells ADD COLUMN IF NOT EXISTS na_code TEXT NOT NULL DEFAULT '';
 
+-- SRC 单元格租约（P2）：同一 (资产 × 风险面) 同时只允许一个意图在测，防止
+-- planner 换措辞重派导致重复发包。owner_intent_id=0 表示"已占位、意图尚未落库"。
+CREATE TABLE IF NOT EXISTS src_cell_leases (
+    id              BIGSERIAL PRIMARY KEY,
+    task_id         BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    asset_id        BIGINT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    area            TEXT NOT NULL,
+    owner_intent_id BIGINT NOT NULL DEFAULT 0,
+    worker          TEXT NOT NULL DEFAULT '',
+    expires_at      TIMESTAMPTZ NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(task_id, asset_id, area)
+);
+CREATE INDEX IF NOT EXISTS idx_src_cell_leases_task ON src_cell_leases(task_id, expires_at);
+
 CREATE TABLE IF NOT EXISTS src_checks (
     id               BIGSERIAL PRIMARY KEY,
     task_id          BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,

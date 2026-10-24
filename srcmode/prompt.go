@@ -90,7 +90,8 @@ func PlannerOverlay(doc ModeDoc) string {
 【SRC 模式】你的目标函数变了：不是"把一条链打穿、拿到据点"，而是**在授权范围内把覆盖矩阵的空格清零，并在每个空格上产出可提交的漏洞**。系统按 (站点资产 × 风险面) 记账，空格 = 没测；面之外还有一层**收尾闸**（JS 抽全 / 路径枚举 / 非 404 复测 / 方法矩阵 / 参数变体 / 防护对照 / 判死三条件 / 截图），engine 的收尾门两层都认。
 %s
 %s
-- 每轮先读态势里的 src 块（gaps_total / gaps_by_area / top_gaps / focus_asset），再决定派什么；派意图前可用 src_state 看完整矩阵与收尾项。
+- 每轮先读态势里的 src 块（gaps_total / gaps_by_area / top_gaps / focus_asset / leases），再决定派什么；派意图前可用 src_state 看完整矩阵与收尾项。
+- 态势里的 **leases** 是正在被其他意图测的「资产 × 风险面」；这些格先跳过，不要换措辞重复派——租约未释放时 add_intent 会直接拒绝并告诉你谁在测。
 - 本轮只派能**点亮空格**、或把 tested_clear 变 tested_found、或把收尾项做实的意图。同一格最多试 %d 次，超过必须以 budget_stop 收口并写原因。
 - **gaps_total > 0 时不要 prove_goal**：即使你认为目标已达成，engine 也会拒绝 done 并把缺口注入下一轮；反复被拒会被判 policy_blocked 交人工。
 - **不要把"问用户要不要继续"当成收尾**：gaps 没清零就继续派意图；确实做不动就 budget_stop + 原因，由收尾门报缺口给人。

@@ -1446,6 +1446,20 @@ type intentItem struct {
 //     仍在手(active)的战果；这条边是「哪些战果还没被推进过」的唯一依据。
 //
 // 挂上目标后不再写 origin 兜底边——意图经目标仍可回溯任务起点（README/链路图的形状）。
+// srcLeaseBusyMessage 把被占的格渲染成 planner 能直接执行的拒绝文案。
+func srcLeaseBusyMessage(busy []db.SrcLease) string {
+	parts := make([]string, 0, len(busy))
+	for _, l := range busy {
+		holder := l.Worker
+		if holder == "" {
+			holder = "其他 worker"
+		}
+		parts = append(parts, fmt.Sprintf("资产 %d 的 %s 面（%s，意图 #%d，租约到 %s）",
+			l.AssetID, l.Area, holder, l.OwnerIntentID, l.ExpiresAt.Format("15:04")))
+	}
+	return "以下格已有意图在测，别重复派：" + strings.Join(parts, "；") + "。先派别的格，或等租约释放。"
+}
+
 // checkIntentAssetCap 落实 mode_doc 的每资产意图上限：只数本任务的意图（继承的
 // 只读意图不占预算）。查询失败时放行，避免一次统计失败把 planner 卡死。
 func (t *ToolSet) checkIntentAssetCap(anchors []int64) error {
@@ -1554,6 +1568,21 @@ func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, er
 			return 0, "", err
 		}
 	}
+	// P2 每格租约：同一 (资产 × 风险面) 同时只允许一条意图在测。在这里占租约而不是
+	// worker 运行时——重复发包的根因是 planner 在同一格上换措辞连派多条意图。
+	leaseArea := ""
+	var leasedAssets []int64
+	if t.srcMode && t.srcStore != nil && t.taskID > 0 && len(anchors) > 0 {
+		leaseArea = db.NormalizeRiskArea(it.RiskArea)
+		_, busy, err := t.srcStore.AcquireSrcLeases(context.Background(), t.taskID, anchors, leaseArea, 0, "planner", db.SrcLeaseTTL)
+		if err != nil {
+			return 0, "", fmt.Errorf("获取单元格租约失败：%w", err)
+		}
+		if len(busy) > 0 {
+			return 0, "", fmt.Errorf("%s", srcLeaseBusyMessage(busy))
+		}
+		leasedAssets = anchors
+	}
 	payload := map[string]any{"summary": it.Summary, "risk_area": db.NormalizeRiskArea(it.RiskArea)}
 	// ATT&CK 技术标注：**标错不该让整条方向作废**，所以非法项由 NormalizeTechniques 丢弃，
 	// 不在这里返错。它是给交付物用的分类，不是约束。
@@ -1565,7 +1594,16 @@ func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, er
 	}
 	id, err := t.ts.AddIntent(payload, priority, anchors, "planner")
 	if err != nil {
+		if len(leasedAssets) > 0 {
+			_ = t.srcStore.ReleaseSrcLeasesByCells(context.Background(), t.taskID, leasedAssets, leaseArea)
+		}
 		return 0, "", err
+	}
+	if len(leasedAssets) > 0 {
+		if err := t.srcStore.BindSrcLeaseIntent(context.Background(), t.taskID, leasedAssets, leaseArea, id); err != nil {
+			// 绑定失败不撤销意图：租约仍能挡住重复派，只是 planner 看到的归属为空。
+			log.Printf("[src-lease] task %d 意图 #%d 绑定租约失败: %v", t.taskID, id, err)
+		}
 	}
 	q.round++
 	t.intentsRound++

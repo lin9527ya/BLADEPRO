@@ -58,6 +58,18 @@
 - 回归：clear 证据/allow 开关、platform_exempt 豁免依据、static_page 按面白名单、
   Program→mode_doc 编译；集成测试夹具显式打开 allow 以聚焦各自断言。
 
+### 新增：SRC 单元格租约（P2）
+
+- 新表 `src_cell_leases`：同一 `(task, asset, risk_area)` 同时只允许一条意图在测。
+- 租约在 `add_intent` 时占用（全有或全无）：同格已有意图时直接拒绝并说明持有人在测；
+  不同风险面仍可并行。意图落库后绑定 owner_intent_id，创建失败回滚占位租约。
+- worker 结束时释放（正常/异常/被 kill 都走同一 defer）；worker 活动时续租，
+  过期由 TTL（20 分钟）兜底。
+- `src_state` 与 `graph_overview.src` 新增 `leases` / `leased_total`，planner 提示词
+  明确"这些格先跳过，别换措辞重复派"。
+- 回归：租约存储（占用/繁忙/全有或全无/bind/续租/释放/过期重占/占位回滚）、
+  add_intent 同格拒绝与不同风险面并行。
+
 ### 新增：确定性只读探针（P2）
 
 - 新增 `src_probe` 工具（planner/worker）：把重复的收尾动作从 LLM 回合里拿掉。

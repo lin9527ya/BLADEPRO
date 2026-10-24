@@ -88,7 +88,36 @@ func shellCommandOf(toolName string, input []byte) string {
 		_ = json.Unmarshal(input, &in)
 		return in.URL
 	}
+	// MCP 工具是另一条出站路径：browser MCP 的 navigate/run_code/evaluate 参数里
+	// 带 URL 或整段脚本，之前完全不在 RoE 覆盖内。这里把整个入参当"动作面"交给
+	// ExtractTargetsDetailed 抽目标——只抽入参、不抽返回，目标之外的文本不会被当成目标。
+	if mcpEgressSurface(toolName) {
+		return string(input)
+	}
 	return ""
+}
+
+// mcpEgressSurface reports whether an MCP tool can make the browser/HTTP client
+// reach an arbitrary host. Browser tools are covered wholesale (arguments may
+// carry URLs inside code); generic MCP HTTP tools are matched by their suffix.
+// 名字不认识的新工具仍可能漏判，但把已知出站面收进来比"逐工具登记"更接近兜底。
+func mcpEgressSurface(toolName string) bool {
+	name := strings.ToLower(strings.TrimSpace(toolName))
+	if !strings.HasPrefix(name, "mcp__") {
+		return false
+	}
+	server, tool, ok := strings.Cut(strings.TrimPrefix(name, "mcp__"), "__")
+	if !ok {
+		return false
+	}
+	if server == "browser" || server == "playwright" {
+		return true
+	}
+	switch tool {
+	case "fetch", "http_request", "http_get", "http_post", "request", "navigate":
+		return true
+	}
+	return strings.HasPrefix(tool, "browser_")
 }
 
 var (

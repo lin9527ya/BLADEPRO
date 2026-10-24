@@ -102,7 +102,7 @@ func PlannerOverlay(doc ModeDoc) string {
 - **不要把"问用户要不要继续"当成收尾**：gaps 没清零就继续派意图；确实做不动就 budget_stop + 原因，由收尾门报缺口给人。
 - **先把 focus_asset 清零再换资产**（一种子闭环）：同一资产的面与收尾项都清零后，再换下一个资产；不要每个站都打一枪就换。
 - **四件套优先**：注入 / SSRF / XSS / RCE 是对有差分面的真实参数发 payload，不是"每个 path 喷个引号"。只回"请登录"且没有业务字段的面才可 N/A，且必须给 na_code。
-- 新增高价值面：**cache**（Cache-Control/Age/Vary/X-Cache、未键控头、缓存欺骗；有共享缓存就做 Vary/Age 对照并登记 cache_headers）、**desync**（CL.TE/TE.CL，只在授权目标、最小化、避免影响他人）、**oauth**（redirect_uri/state/pkce/scope/账号绑定）。平台明确不测时用 na_code 写依据，不要空白。
+- 新增高价值面：**cache**（Cache-Control/Age/Vary/X-Cache、未键控头、缓存欺骗；有共享缓存就做 Vary/Age 对照并登记 cache_headers）、**desync**（CL.TE/TE.CL，只在授权目标、最小化、避免影响他人）、**oauth**（redirect_uri/state/pkce/scope/账号绑定）、**graphql**（内省、批量查询、别名滥用、字段级越权）、**websocket**（握手鉴权、Origin、消息级注入/越权、限频）、**supply**（第三方 JS/SDK 密钥、回调校验、OSS 权限、SRI）。平台明确不测时用 na_code 写依据，不要空白。
 - 矩阵外的新面可以打，但先派一条能建格的意图（src_mark_cell 支持矩阵外的面），别做"打了但没落格"的活。
 - 单个资产最多吃 %d 条意图预算；还剩大面没测的站点优先，别在同一个站上反复换措辞重试。
 - 覆盖优先于深度：先把"每个站点 × 必做面 + 收尾项"铺平，再回到高价值面往下钻。禁止为拉平覆盖去追据点/凭据/持久化（策略已禁，提示词再强调：只读证明，到 whoami/id 即止）。
@@ -143,7 +143,7 @@ func WorkerOverlay(doc ModeDoc) string {
 - 只读证明：命令执行证明到 whoami/id 即止；不写 webshell、不建账号、不改配置、不横向移动。禁止对目标做破坏性写操作。
 - 整包当场抓、逐字照抄（原始请求 + 原始响应），报告要能直接贴。缺整包的 finding 在交付阶段会被打回。
 - 结论按证据分级：没复现的写成 fact，不写成 finding；同一格已试 %d 次仍无结论，就 budget_stop + 原因，别硬凑。
-- cache 面先看响应头：有 Age/X-Cache/CDN 语义才做 Vary 与未键控头对照；没有就 na(no_cache)。desync 只在已授权目标上做最小 CL/TE 对照，发现异常立即停手并写证据。oauth 重点看 redirect_uri 校验、state/pkce、scope 提升与账号绑定。
+- cache 面先看响应头：有 Age/X-Cache/CDN 语义才做 Vary 与未键控头对照；没有就 na(no_cache)。desync 只在已授权目标上做最小 CL/TE 对照，发现异常立即停手并写证据。oauth 重点看 redirect_uri 校验、state/pkce、scope 提升与账号绑定。graphql 先探 introspection 与批量/别名放大，再测字段级 authz；websocket 先抓握手（Cookie/Origin/Token），再对消息做越权与注入；supply 从外链 JS/SDK 找密钥与回调，不执行来源不明的第三方代码。
 - 如果格子带 **inherited_from_task_id**，说明上一轮任务已测过（证据在源任务）：本轮没有新证据就别改它；确实复测了，正常 src_mark_cell 覆盖即可，继承标记会自动清零。
 - 报出漏洞后，**顺手用 src_prepare_submission 写全描述/危害/修复**：这条发现的可提交件就是你的产出之一，别留给后面的人猜。缺证据（没绑 proof 流量）就先补绑再准备，准备不了要如实说明缺什么。中危及以上第一次准备会自动发起独立复验；等复验结论 reproduced 后再准备一次才会 ready。
 - 结束语固定四句：测了什么 / 结论 / 该格（或收尾项）终态 / 证据在哪。`, programNote(doc), redlineNote(doc), doc.MaxAttemptsPerCell)

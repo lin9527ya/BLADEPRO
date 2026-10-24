@@ -26,6 +26,9 @@ var NACodes = []NACode{
 	{Code: "no_object", Title: "纯登录墙，抽不出对象", Areas: []string{"authz", "logic"}},
 	{Code: "no_login_entry", Title: "清单里无发会话/重置/改绑/换票口", Areas: []string{"session"}},
 	{Code: "no_oauth", Title: "无 OAuth/OIDC 登录或授权入口", Areas: []string{"oauth"}},
+	{Code: "no_graphql", Title: "无 GraphQL 端点或查询入口", Areas: []string{"graphql"}},
+	{Code: "no_websocket", Title: "无 WebSocket/SSE 实时通道", Areas: []string{"websocket"}},
+	{Code: "no_third_party", Title: "无第三方 JS/SDK 或外部回调", Areas: []string{"supply"}},
 	{Code: "no_cache", Title: "响应无共享缓存语义（无 CDN/反代缓存）", Areas: []string{"cache"}},
 	{Code: "no_reverse_proxy", Title: "无反向代理/HTTP 复用边界", Areas: []string{"desync"}},
 	// 纯静态页只对"输入/执行/对象"类面成立；paths/cred 仍可能命中（备份、JS 密钥），

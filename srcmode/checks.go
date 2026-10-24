@@ -57,8 +57,9 @@ const (
 var CheckDefs = []CheckDef{
 	{
 		Key: "js_enum", Title: "JS 抽全",
-		Hint:       "内联 <script> + 外链 .js + 异步 chunk（*.async.js / __webpack_require__.e）+ sourcemap。CDN 拦死可降级：填 degraded=1 并写清降级原因。",
-		AssetTypes: []string{"app", "service", "endpoint"}, Weight: 30,
+		Hint: "内联 <script> + 外链 .js + 异步 chunk（*.async.js / __webpack_require__.e）+ sourcemap。CDN 拦死可降级：填 degraded=1 并写清降级原因。",
+		// endpoint 是单个路由，不是页面表面：强制 JS 清点只会制造无意义缺口。
+		AssetTypes: []string{"app", "service"}, Weight: 30,
 		Metrics: []MetricDef{
 			{Key: "js_inline", Label: "内联脚本数"},
 			{Key: "js_external", Label: "外链 JS 数"},

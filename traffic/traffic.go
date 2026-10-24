@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -49,9 +50,11 @@ CREATE TABLE IF NOT EXISTS exchanges (
   content_type TEXT,
   req_len      INTEGER,
   resp_len     INTEGER,
-  path         TEXT
+  path         TEXT,
+  task_id      INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_ex_host ON exchanges(host);
+CREATE INDEX IF NOT EXISTS idx_ex_task ON exchanges(task_id);
 CREATE INDEX IF NOT EXISTS idx_ex_tmpl ON exchanges(host, url_template);
 CREATE INDEX IF NOT EXISTS idx_ex_ts   ON exchanges(ts);
 CREATE INDEX IF NOT EXISTS idx_ex_status ON exchanges(status);
@@ -141,6 +144,11 @@ type Traffic struct {
 	wmu   sync.Mutex // serializes record() vs DeleteHost (incl. blob GC)
 	seq   atomic.Int64
 	proxy *mproxy.Proxy
+	// connTask maps a proxy client connection to the task that owns it. The task
+	// id arrives as Basic-auth username on CONNECT (see proxyTaskID); inner
+	// requests share the same connection, so this is what lets an exchange be
+	// attributed without threading a task id through every egress path.
+	connTask sync.Map // uuid.UUID → int64
 	// fts reports whether the full-text index is available. False on a driver
 	// build without FTS5: recording and metadata search still work, body search
 	// degrades to unsupported rather than erroring.
@@ -285,12 +293,49 @@ func (t *Traffic) initIndex() error {
 	if _, err := conn.ExecContext(ctx, indexSchema); err != nil {
 		return err
 	}
+	if err := ensureExchangeTaskColumn(ctx, conn); err != nil {
+		return err
+	}
 	if _, err := conn.ExecContext(ctx, ftsSchema); err != nil {
 		log.Printf("[traffic] 全文索引不可用，正文搜索将被禁用（元数据搜索不受影响）：%v", err)
 		return nil
 	}
 	t.fts = true
 	return nil
+}
+
+// ensureExchangeTaskColumn adds exchanges.task_id to databases created before
+// traffic attribution existed. CREATE TABLE IF NOT EXISTS above is a no-op there,
+// and SQLite has no ADD COLUMN IF NOT EXISTS, so probe PRAGMA first.
+func ensureExchangeTaskColumn(ctx context.Context, conn *sql.Conn) error {
+	rows, err := conn.QueryContext(ctx, `PRAGMA table_info(exchanges)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid       int
+			name, typ string
+			notnull   int
+			dflt      sql.NullString
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == "task_id" {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	_, err = conn.ExecContext(ctx, `ALTER TABLE exchanges ADD COLUMN task_id INTEGER NOT NULL DEFAULT 0`)
+	return err
 }
 
 // hostOnly strips an optional :port, so passthrough keys match whether the host
@@ -391,6 +436,56 @@ type sink struct {
 	t *Traffic
 }
 
+// Requestheaders learns which task owns this proxy connection. For HTTPS the
+// task id only travels on the CONNECT request, so the mapping is per connection;
+// Request/Response fire later on the decrypted requests of that same connection.
+// The header is dropped before forwarding so an internal task identifier never
+// reaches the target.
+func (s *sink) Requestheaders(f *mproxy.Flow) {
+	if f == nil || f.Request == nil || f.ConnContext == nil {
+		return
+	}
+	auth := f.Request.Header.Get("Proxy-Authorization")
+	if auth == "" {
+		return
+	}
+	f.Request.Header.Del("Proxy-Authorization")
+	if id := proxyTaskID(auth); id > 0 {
+		s.t.connTask.Store(f.ConnContext.Id(), id)
+	}
+}
+
+// ClientDisconnected releases the per-connection task mapping.
+func (s *sink) ClientDisconnected(cc *mproxy.ClientConn) {
+	if cc != nil {
+		s.t.connTask.Delete(cc.Id)
+	}
+}
+
+// proxyTaskID decodes "Basic base64(bp-task-<id>:x)" from Proxy-Authorization.
+// Unknown or malformed credentials yield 0 (unattributed, not an error): capture
+// must keep working for clients that don't carry a task identity.
+func proxyTaskID(header string) int64 {
+	const basic = "Basic "
+	if len(header) < len(basic) || !strings.EqualFold(header[:len(basic)], basic) {
+		return 0
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(header[len(basic):]))
+	if err != nil {
+		return 0
+	}
+	user, _, _ := strings.Cut(string(raw), ":")
+	const tag = "bp-task-"
+	if !strings.HasPrefix(user, tag) {
+		return 0
+	}
+	id, err := strconv.ParseInt(strings.TrimPrefix(user, tag), 10, 64)
+	if err != nil || id <= 0 {
+		return 0
+	}
+	return id
+}
+
 // Request runs after the full request is read and before it is sent upstream.
 // Blocking here is exactly the queueing behavior we want: the connection waits
 // instead of being rejected. Stream flows skip Request/Response addons (see
@@ -460,6 +555,12 @@ func (t *Traffic) record(f *mproxy.Flow) {
 
 	ct := f.Response.Header.Get("Content-Type")
 	url := f.Request.URL.String()
+	taskID := int64(0)
+	if f.ConnContext != nil {
+		if v, ok := t.connTask.Load(f.ConnContext.Id()); ok {
+			taskID, _ = v.(int64)
+		}
+	}
 	reqHead := fmt.Sprintf("%s %s %s\n%s", method, f.Request.URL.RequestURI(), f.Request.Proto, requestHeaderLines(f.Request))
 	respHead := fmt.Sprintf("HTTP %d\n%s", f.Response.StatusCode, headerLines(f.Response.Header))
 	// Bodies are spilled before the transaction opens: blob writes are filesystem
@@ -476,10 +577,10 @@ func (t *Traffic) record(f *mproxy.Flow) {
 
 	// path stays empty for db-resident exchanges; a non-empty path marks a legacy
 	// row whose bodies still live in the old on-disk tree (see Get).
-	res, err := tx.Exec(`INSERT OR REPLACE INTO exchanges(id,ts,host,method,url_template,url,status,content_type,req_len,resp_len,path)
-VALUES(?,?,?,?,?,?,?,?,?,?,'')`,
+	res, err := tx.Exec(`INSERT OR REPLACE INTO exchanges(id,ts,host,method,url_template,url,status,content_type,req_len,resp_len,path,task_id)
+VALUES(?,?,?,?,?,?,?,?,?,?,'',?)`,
 		id, now.Unix(), host, method, tmpl, url, f.Response.StatusCode, ct,
-		len(f.Request.Body), len(f.Response.Body))
+		len(f.Request.Body), len(f.Response.Body), taskID)
 	if err != nil {
 		log.Printf("[traffic] 记录 %s 失败（写索引）：%v", url, err)
 		return
@@ -773,6 +874,9 @@ type ExchangeMeta struct {
 	ContentType string `json:"content_type"`
 	RespLen     int    `json:"resp_len"`
 	Path        string `json:"path"`
+	// TaskID is the task that owned the proxy connection (0 = unknown: browser
+	// traffic, pre-attribution rows, or clients without proxy identity).
+	TaskID int64 `json:"task_id,omitempty"`
 }
 
 // Search returns paged exchange metadata (never bodies).
@@ -780,7 +884,7 @@ func (t *Traffic) Search(host string, page, size int) ([]ExchangeMeta, error) {
 	if size <= 0 || size > 500 {
 		size = 100
 	}
-	q := `SELECT id,ts,host,method,url_template,url,status,content_type,resp_len,path FROM exchanges`
+	q := `SELECT id,ts,host,method,url_template,url,status,content_type,resp_len,path,task_id FROM exchanges`
 	args := []any{}
 	if host != "" {
 		q += ` WHERE host=?`
@@ -796,7 +900,7 @@ func (t *Traffic) Search(host string, page, size int) ([]ExchangeMeta, error) {
 	var out []ExchangeMeta
 	for rows.Next() {
 		var m ExchangeMeta
-		if err := rows.Scan(&m.ID, &m.TS, &m.Host, &m.Method, &m.URLTemplate, &m.URL, &m.Status, &m.ContentType, &m.RespLen, &m.Path); err != nil {
+		if err := rows.Scan(&m.ID, &m.TS, &m.Host, &m.Method, &m.URLTemplate, &m.URL, &m.Status, &m.ContentType, &m.RespLen, &m.Path, &m.TaskID); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -818,7 +922,7 @@ func (t *Traffic) Since(host string, since int64, limit int) ([]ExchangeMeta, er
 	if limit <= 0 || limit > 20000 {
 		limit = 20000
 	}
-	q := `SELECT id,ts,host,method,url_template,url,status,content_type,resp_len,path
+	q := `SELECT id,ts,host,method,url_template,url,status,content_type,resp_len,path,task_id
 FROM exchanges WHERE host=?`
 	args := []any{host}
 	if since > 0 {
@@ -835,7 +939,7 @@ FROM exchanges WHERE host=?`
 	var out []ExchangeMeta
 	for rows.Next() {
 		var m ExchangeMeta
-		if err := rows.Scan(&m.ID, &m.TS, &m.Host, &m.Method, &m.URLTemplate, &m.URL, &m.Status, &m.ContentType, &m.RespLen, &m.Path); err != nil {
+		if err := rows.Scan(&m.ID, &m.TS, &m.Host, &m.Method, &m.URLTemplate, &m.URL, &m.Status, &m.ContentType, &m.RespLen, &m.Path, &m.TaskID); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -2054,7 +2158,7 @@ func (t *Traffic) query(host, contains, bodyContains string, page, limit int) ([
 	if page < 0 {
 		page = 0
 	}
-	q := `SELECT id,ts,host,method,url_template,url,status,content_type,resp_len,path FROM exchanges WHERE 1=1`
+	q := `SELECT id,ts,host,method,url_template,url,status,content_type,resp_len,path,task_id FROM exchanges WHERE 1=1`
 	args := []any{}
 	if host != "" {
 		hostName, port, err := normalizeSearchHost(host)
@@ -2101,7 +2205,7 @@ func (t *Traffic) query(host, contains, bodyContains string, page, limit int) ([
 	var out []ExchangeMeta
 	for rows.Next() {
 		var m ExchangeMeta
-		if err := rows.Scan(&m.ID, &m.TS, &m.Host, &m.Method, &m.URLTemplate, &m.URL, &m.Status, &m.ContentType, &m.RespLen, &m.Path); err != nil {
+		if err := rows.Scan(&m.ID, &m.TS, &m.Host, &m.Method, &m.URLTemplate, &m.URL, &m.Status, &m.ContentType, &m.RespLen, &m.Path, &m.TaskID); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -2194,10 +2298,11 @@ func (t *Traffic) Tools() []actool.CoreTool {
 				URL     string `json:"url"`
 				Status  int    `json:"status"`
 				RespLen int    `json:"resp_len"`
+				TaskID  int64  `json:"task_id,omitempty"`
 			}
 			lite := make([]liteRow, 0, len(rows))
 			for _, r := range rows {
-				lite = append(lite, liteRow{ID: r.ID, Method: r.Method, URL: r.URL, Status: r.Status, RespLen: r.RespLen})
+				lite = append(lite, liteRow{ID: r.ID, Method: r.Method, URL: r.URL, Status: r.Status, RespLen: r.RespLen, TaskID: r.TaskID})
 			}
 			b, _ := json.Marshal(lite)
 			return actool.Text(string(b)), nil

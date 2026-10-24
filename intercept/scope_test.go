@@ -69,6 +69,11 @@ func TestShellCommandOfExtractsNetworkTargets(t *testing.T) {
 		{"Bash still works", "Bash", `{"command":"curl https://evil.example.com/x"}`, "evil.example.com"},
 		{"shell_open still works", "shell_open", `{"command":"nmap 8.8.8.8"}`, "8.8.8.8"},
 		{"shell_send still works", "shell_send", `{"text":"curl http://8.8.8.8/x"}`, "8.8.8.8"},
+		{"browser MCP navigate", "mcp__browser__browser_navigate", `{"url":"https://evil.example.com/login"}`, "evil.example.com"},
+		{"browser MCP run_code carries a url inside code", "mcp__browser__browser_run_code", `{"code":"await page.goto('https://evil.example.com/x')"}`, "evil.example.com"},
+		{"browser MCP evaluate carries a host name", "mcp__browser__browser_evaluate", `{"function":"() => fetch('http://8.8.8.8/')"}`, "8.8.8.8"},
+		{"generic MCP fetch tool", "mcp__fetch__fetch", `{"url":"https://evil.example.com/a"}`, "evil.example.com"},
+		{"non-network MCP tool yields nothing", "mcp__filesystem__read_file", `{"path":"/tmp/evil.example.com.txt"}`, ""},
 		{"non-network tool yields nothing", "insert_assets", `{"host":"evil.example.com"}`, ""},
 	}
 	for _, tc := range cases {

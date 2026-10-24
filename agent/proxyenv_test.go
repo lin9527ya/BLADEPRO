@@ -49,3 +49,31 @@ func TestProxyEnvInjectsCAWhenRecording(t *testing.T) {
 		}
 	}
 }
+
+// TestProxyEnvForTaskTagsAttribution pins the task-identity contract used by the
+// recorder: only http(s) proxies get the bp-task-<id> userinfo (socks5 userinfo
+// means SOCKS auth), and the env carries BLADEPRO_TASK_ID for tool-side filters.
+func TestProxyEnvForTaskTagsAttribution(t *testing.T) {
+	if got := ProxyURLForTask("http://127.0.0.1:8788", 42); got != "http://bp-task-42@127.0.0.1:8788" {
+		t.Fatalf("ProxyURLForTask=%q", got)
+	}
+	if got := ProxyURLForTask("socks5://127.0.0.1:1080", 42); got != "socks5://127.0.0.1:1080" {
+		t.Fatalf("socks5 URL must stay untouched, got %q", got)
+	}
+	env := ProxyEnvForTask("http://127.0.0.1:8788", "", 42)
+	var hasID, hasTaggedProxy bool
+	for _, e := range env {
+		if e == "BLADEPRO_TASK_ID=42" {
+			hasID = true
+		}
+		if strings.HasPrefix(e, "HTTP_PROXY=http://bp-task-42@") {
+			hasTaggedProxy = true
+		}
+	}
+	if !hasID || !hasTaggedProxy {
+		t.Fatalf("task env incomplete: %v", env)
+	}
+	if env := ProxyEnvForTask("", "", 42); env == nil {
+		t.Fatal("empty proxy must still expose task id env")
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -229,6 +230,33 @@ func (w *Worker) SetWebSearch(o WebSearchOpts) { w.webSearch = o }
 // behalf (P13 托管长任务) must get the SAME env as the agent's own Bash tool, or its
 // traffic would bypass the recording MITM (no evidence binding) and fail TLS.
 func ProxyEnv(proxyAddr, caCert string) []string { return proxyEnv(proxyAddr, caCert) }
+
+// ProxyEnvForTask is ProxyEnv plus the task identity: the proxy URL carries
+// bp-task-<id> as Basic-auth username (decoded by the recorder) and the child
+// environment gets BLADEPRO_TASK_ID for tools that attribute their own egress.
+// 任务归属只影响记账，不改变出口路径；没传 taskID 时行为与 ProxyEnv 完全一致。
+func ProxyEnvForTask(proxyAddr, caCert string, taskID int64) []string {
+	env := proxyEnv(ProxyURLForTask(proxyAddr, taskID), caCert)
+	if taskID > 0 {
+		env = append(env, "BLADEPRO_TASK_ID="+strconv.FormatInt(taskID, 10))
+	}
+	return env
+}
+
+// ProxyURLForTask tags an http(s) proxy URL with the task identity. socks5
+// userinfo means SOCKS authentication, not a task id, so it is left untouched.
+func ProxyURLForTask(proxyAddr string, taskID int64) string {
+	raw := strings.TrimSpace(proxyAddr)
+	if raw == "" || taskID <= 0 {
+		return raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return raw
+	}
+	u.User = url.User("bp-task-" + strconv.FormatInt(taskID, 10))
+	return u.String()
+}
 
 // EnsureRunDir is the same convention as ensureRunDir for callers holding the task
 // id in the ledger's string form (the P13 execution service): a host-launched long
@@ -561,7 +589,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 		// WebFetch 走记录代理，其 HTTP 与 curl 一样被留痕；载入代理 CA 让经 MITM
 		// 重签的 HTTPS 证书能【正常校验通过】（而非关掉校验）。proxy 空则直连。
 		EnableWebFetch: true,
-		WebFetchProxy:  w.proxyAddr,
+		WebFetchProxy:  ProxyURLForTask(w.proxyAddr, taskID),
 		WebFetchCACert: w.proxyCACert,
 		// 联网搜索(可选)。ddgs 无需 key；brave-free 需 BraveKey；tavily 需 TavilyKey。
 		// WebSearchProxy 是独立的出口代理(http/https/socks5)，与记录流量的 MITM 代理无关；空则直连。
@@ -574,7 +602,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 		DeepSeekSearchModel:  w.webSearch.DeepSeekModel,
 		WebSearchProxy:       w.webSearch.Proxy,
 		// Bash 子命令的 HTTP 默认走记录代理 + 信任其 CA（工具无需 -x/-k）。
-		BashEnv:    proxyEnv(w.proxyAddr, w.proxyCACert),
+		BashEnv:    ProxyEnvForTask(w.proxyAddr, w.proxyCACert, taskID),
 		WorkingDir: runDir,
 		MaxTurns:   w.maxTurns, // 0 = unlimited (configurable in agent management)
 		// 墙钟预算,轮边界判,不打断半路;0 = 不限。有任务级 deadline 时夹逼到 min(自身预算,

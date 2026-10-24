@@ -333,6 +333,12 @@ SRC 用一套**粗粒度、可判定**的面，和 `db.RiskAreas` 的细粒度 i
 | `cred` | 凭证/密钥/会话泄露 | `*`, `js-hardcoded`, `repo-leak` |
 | `paths` | 敏感路径/备份/配置 | `*`, `enum-200`, `non404-retest` |
 | `session` | 登录/重置/JWT/OAuth/默认口令 | `*`, `login-bypass`, `jwt` |
+| `oauth` | OAuth/OIDC 流程与配置 | `*`, `redirect-uri`, `state`, `pkce` |
+| `graphql` | GraphQL 内省/批量/别名滥用 | `*`, `introspection`, `batching`, `authz` |
+| `websocket` | WebSocket/实时通道 | `*`, `auth`, `origin`, `message-injection` |
+| `supply` | 第三方 JS/SDK/供应链 | `*`, `third-party-js`, `sdk-key`, `callback` |
+| `cache` | Web 缓存投毒/欺骗 | `*`, `poison`, `deception`, `vary` |
+| `desync` | HTTP 请求走私/desync | `*`, `cl-te`, `te-cl`, `h2` |
 | `upload` | 上传/穿越/解析差异 | `*`, `bypass`, `lfi` |
 | `logic` | 状态机/金额/竞态/批量赋值 | `*`, `state-skip`, `race` |
 | `host` | 端口/服务暴露/已知 CVE | `*`, `exposed`, `cve` |

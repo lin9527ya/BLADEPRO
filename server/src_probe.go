@@ -104,7 +104,7 @@ func (s *Server) runSrcProbe(ctx context.Context, req agent.SrcProbeRequest) (*s
 			return nil, fmt.Errorf("该 host 没有已录制的非 404 路由：先跑 paths 探针或用工具抓包")
 		}
 	}
-	client, note := s.srcProbeClient()
+	client, note := s.srcProbeClient(req.TaskID)
 	rate := doc.RateLimit
 	if rate <= 0 {
 		rate = srcProbeDefaultRate
@@ -235,13 +235,17 @@ func (s *Server) srcProbeRetestURLs(taskID int64, host string) ([]string, error)
 }
 
 // srcProbeClient 构造走录制代理的 HTTP 客户端；CA 载入失败时只提示、不阻断。
-func (s *Server) srcProbeClient() (*http.Client, string) {
+func (s *Server) srcProbeClient(taskID int64) (*http.Client, string) {
 	note := "未走录制代理：本次探针不会进入证据链"
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 	if addr := strings.TrimSpace(s.m.ProxyAddr()); addr != "" {
-		if pu, err := url.Parse("http://" + addr); err == nil {
+		raw := addr
+		if !strings.Contains(raw, "://") {
+			raw = "http://" + raw
+		}
+		if pu, err := url.Parse(agent.ProxyURLForTask(raw, taskID)); err == nil {
 			tr.Proxy = http.ProxyURL(pu)
 			note = "经录制代理（探针请求会进入流量证据）"
 		}

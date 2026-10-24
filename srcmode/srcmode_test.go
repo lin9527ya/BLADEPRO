@@ -88,11 +88,11 @@ func TestParseToleratesBadSnapshot(t *testing.T) {
 
 func TestRequiredFor(t *testing.T) {
 	doc := DefaultDoc()
-	if got := doc.RequiredFor("app"); len(got) != 12 {
-		t.Fatalf("app 必做面应有 12 个（含四件套 + cache/oauth），got %v", got)
+	if got := doc.RequiredFor("app"); len(got) != 15 {
+		t.Fatalf("app 必做面应有 15 个（含四件套 + cache/oauth/graphql/websocket/supply），got %v", got)
 	}
-	if got := doc.RequiredFor("endpoint"); len(got) != 7 {
-		t.Fatalf("endpoint 必做面应有 7 个（含四件套），got %v", got)
+	if got := doc.RequiredFor("endpoint"); len(got) != 8 {
+		t.Fatalf("endpoint 必做面应有 8 个（含四件套 + graphql），got %v", got)
 	}
 	if got := doc.RequiredFor("ip"); len(got) != 2 {
 		t.Fatalf("ip 必做面应有 2 个，got %v", got)
@@ -366,7 +366,7 @@ func TestProgramAppliesPlatformTemplate(t *testing.T) {
 }
 
 func TestNewRiskAreas(t *testing.T) {
-	for _, area := range []string{"cache", "desync", "oauth"} {
+	for _, area := range []string{"cache", "desync", "oauth", "graphql", "websocket", "supply"} {
 		if !IsArea(area) {
 			t.Fatalf("missing area %s", area)
 		}
@@ -383,13 +383,37 @@ func TestNewRiskAreas(t *testing.T) {
 	if !NACodeAllowed("cache", "no_cache") || !NACodeAllowed("desync", "no_reverse_proxy") || !NACodeAllowed("oauth", "no_oauth") {
 		t.Fatal("new area N/A codes should be allowed")
 	}
+	if !NACodeAllowed("graphql", "no_graphql") || !NACodeAllowed("websocket", "no_websocket") || !NACodeAllowed("supply", "no_third_party") {
+		t.Fatal("graphql/websocket/supply N/A codes should be allowed")
+	}
+	if NACodeAllowed("graphql", "no_cache") || NACodeAllowed("websocket", "no_input") {
+		t.Fatal("N/A codes must stay scoped to their area")
+	}
+	for _, want := range []string{"graphql", "websocket", "supply"} {
+		if !containsStr(app, want) {
+			t.Fatalf("app required areas=%v missing %s", app, want)
+		}
+	}
+	if !containsStr(DefaultRequiredAreas("endpoint"), "graphql") {
+		t.Fatal("endpoint should require graphql (GraphQL endpoints are endpoint assets)")
+	}
 	if _, ok := FindCheck("cache_headers"); !ok {
 		t.Fatal("cache_headers check missing")
 	}
-	for _, item := range []string{"cache/poison", "desync/cl-te", "oauth/redirect-uri"} {
+	for _, item := range []string{"cache/poison", "desync/cl-te", "oauth/redirect-uri",
+		"graphql/introspection", "websocket/message-injection", "supply/sdk-key"} {
 		area, sub, err := SplitItem(item)
 		if err != nil || !ItemAllowed(area, sub) {
 			t.Fatalf("item %s invalid: %v", item, err)
 		}
+	}
+	// endpoint 是单个路由，不该被页面级的 JS 清点收尾项拖住。
+	for _, c := range ChecksFor("endpoint") {
+		if c.Key == "js_enum" {
+			t.Fatal("endpoint assets must not require js_enum")
+		}
+	}
+	if len(ChecksFor("app")) == 0 {
+		t.Fatal("app assets should still have closure checks")
 	}
 }

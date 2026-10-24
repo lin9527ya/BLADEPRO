@@ -43,6 +43,14 @@ export function RuntimeSection({ s }: { s: ReturnType<typeof useSettingsState> }
     setAssetTokenBudget,
     savingAssetBudget,
     saveAssetTokenBudget,
+    egressGlobalQPS,
+    setEgressGlobalQPS,
+    egressHostQPS,
+    setEgressHostQPS,
+    egressWaitMS,
+    setEgressWaitMS,
+    savingEgress,
+    saveEgress,
   } = s;
 
   return (
@@ -108,6 +116,55 @@ export function RuntimeSection({ s }: { s: ReturnType<typeof useSettingsState> }
                 onChange={(e) => setAssetTokenBudget(e.target.value)}
               />
               <Button type="button" onClick={saveAssetTokenBudget} disabled={!loaded || savingAssetBudget}>
+                保存
+              </Button>
+            </div>
+          </Field>
+        </SubBlock>
+
+        <SubBlock title="出站速率治理（录制代理）" icon={<GaugeIcon className="text-muted-foreground size-4" />}>
+          <Field
+            label="全局 / 单 host QPS"
+            htmlFor="egress-global-qps"
+            hint={
+              <>
+                所有经过录制代理的目标流量（Bash/curl、run_execution、WebFetch、browser MCP）按
+                <b>全局</b>与<b>单 host</b>两级令牌桶排队；到达上限时等待而不是报错，超过排队上限后放行
+                （fail-open）。<b>0 = 关闭</b>。只治理经录制代理的流量；capture 关闭且未配置全局代理时目标直连，
+                不经过这里。
+              </>
+            }
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                id="egress-global-qps"
+                inputMode="decimal"
+                autoComplete="off"
+                className="w-32"
+                placeholder="全局 QPS"
+                value={egressGlobalQPS}
+                disabled={!loaded || savingEgress}
+                onChange={(e) => setEgressGlobalQPS(e.target.value)}
+              />
+              <Input
+                inputMode="decimal"
+                autoComplete="off"
+                className="w-32"
+                placeholder="单 host QPS"
+                value={egressHostQPS}
+                disabled={!loaded || savingEgress}
+                onChange={(e) => setEgressHostQPS(e.target.value)}
+              />
+              <Input
+                inputMode="numeric"
+                autoComplete="off"
+                className="w-40"
+                placeholder="排队上限 ms（0=10s）"
+                value={egressWaitMS}
+                disabled={!loaded || savingEgress}
+                onChange={(e) => setEgressWaitMS(e.target.value)}
+              />
+              <Button type="button" onClick={saveEgress} disabled={!loaded || savingEgress}>
                 保存
               </Button>
             </div>

@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+### 新增：全局出站速率治理（P2）
+
+- 录制代理新增**全局 + 单 host 两级令牌桶**：Bash/curl、run_execution、WebFetch、
+  browser MCP 等所有经过录制代理的目标流量统一排队，不再依赖每个工具自觉限速。
+- 到达上限时**等待而不是报错**；等待超过上限（默认 10s，可配）后放行（fail-open）
+  并计入 waived——限速的目的是避免打挂目标/触发风控，不是让任务无故失败。
+- 设置项 `egress_global_qps` / `egress_host_qps` / `egress_max_wait_ms`（0 = 关闭），
+  系统设置页即时生效，改完不需要重启或重建 agent。既有任务并发、worker 数与
+  program 探针 QPS 仍各自生效。
+- 边界：只治理经录制代理的流量；capture 关闭且未配置全局出口代理时目标直连，
+  不经过代理层。设置页已写明。
+- 回归：令牌桶节奏、host 桶隔离、超过等待上限 fail-open 与计数、关闭后立即放行。
+
 ### 新增：资产级 token 预算（P2）
 
 - `llm_usage` 增加 `asset_id`：按意图 payload 的**主资产**归因（多资产意图只记第一个，

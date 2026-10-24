@@ -64,6 +64,7 @@ func scopeHoursSetting(pg *db.DB) string {
 func (s *Server) settingsPayload() map[string]any {
 	on, backend, braveKey, tavilyKey, proxy := s.m.WebSearch()
 	pyStored, _, _ := s.m.pg.GetSetting(settingPythonInterp)
+	egressGlobal, egressHost, egressWait := s.m.EgressLimits()
 	intelKey, _, _ := s.m.pg.GetSetting(settingIntelKey)
 	updateToken, _, _ := s.m.pg.GetSetting(settingUpdateToken)
 	intelEmail, _, _ := s.m.pg.GetSetting(settingIntelEmail)
@@ -81,14 +82,18 @@ func (s *Server) settingsPayload() map[string]any {
 		"task_token_budget":     s.taskTokenBudget(),
 		// 资产级 token 预算（默认 0=关）：SRC 任务里单资产用量达上限后停止派意图并
 		// 把未完成格转 budget_stop；建任务时快照进 mode_doc。
-		"src_asset_token_budget":   s.srcAssetTokenBudget(),
-		"llm_record":               s.m.LLMRecordEnabled(),
-		"web_search_enabled":       on,
-		"web_search_backend":       backend,
-		"brave_key_set":            strings.TrimSpace(braveKey) != "",
-		"tavily_key_set":           strings.TrimSpace(tavilyKey) != "",
-		"web_search_proxy":         proxy,                       // 独立出口代理(http/https/socks5)，空=直连
-		"global_proxy":             s.m.GlobalProxy(),           // 全局出口代理(http/https/socks5)，所有目标流量走它，空=直连
+		"src_asset_token_budget": s.srcAssetTokenBudget(),
+		"llm_record":             s.m.LLMRecordEnabled(),
+		"web_search_enabled":     on,
+		"web_search_backend":     backend,
+		"brave_key_set":          strings.TrimSpace(braveKey) != "",
+		"tavily_key_set":         strings.TrimSpace(tavilyKey) != "",
+		"web_search_proxy":       proxy,             // 独立出口代理(http/https/socks5)，空=直连
+		"global_proxy":           s.m.GlobalProxy(), // 全局出口代理(http/https/socks5)，所有目标流量走它，空=直连
+		// 出站速率治理（录制代理层）：0 = 关闭。host 桶与全局桶同时生效。
+		"egress_global_qps":        egressGlobal,
+		"egress_host_qps":          egressHost,
+		"egress_max_wait_ms":       egressWait,
 		"python_interpreter":       strings.TrimSpace(pyStored), // 用户/自动设的值(空=用运行时检测)
 		"workers":                  s.m.Workers(),               // 并发工作 agent 数(默认3)；对之后启动的任务生效
 		"task_concurrency_enabled": concOn,                      // 任务并发上限开关(默认关)
@@ -207,10 +212,14 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		WebSearchBackend *string `json:"web_search_backend"`
 		BraveKey         *string `json:"brave_search_api_key"`
 		TavilyKey        *string `json:"tavily_search_api_key"`
-		WebSearchProxy   *string `json:"web_search_proxy"`   // 独立出口代理(http/https/socks5)；null=不改，""=清空
-		GlobalProxy      *string `json:"global_proxy"`       // 全局出口代理(http/https/socks5)；null=不改，""=清空(直连)
-		PythonInterp     *string `json:"python_interpreter"` // 自定义脚本工具的 python 解释器路径
-		Workers          *int    `json:"workers"`            // 并发工作 agent 数(>0)；对之后启动的任务生效
+		WebSearchProxy   *string `json:"web_search_proxy"` // 独立出口代理(http/https/socks5)；null=不改，""=清空
+		GlobalProxy      *string `json:"global_proxy"`     // 全局出口代理(http/https/socks5)；null=不改，""=清空(直连)
+		// 出站速率（录制代理层）：两个 QPS 都是 0 = 关闭；wait 0 = 默认 10s。
+		EgressGlobalQPS *float64 `json:"egress_global_qps"`
+		EgressHostQPS   *float64 `json:"egress_host_qps"`
+		EgressMaxWaitMS *int     `json:"egress_max_wait_ms"`
+		PythonInterp    *string  `json:"python_interpreter"` // 自定义脚本工具的 python 解释器路径
+		Workers         *int     `json:"workers"`            // 并发工作 agent 数(>0)；对之后启动的任务生效
 		// 任务并发上限:同时「运行中」的任务数上限。关闭=不限;开启后新建任务超限则排队,有空位自动启动。
 		ConcurrencyEnabled *bool `json:"task_concurrency_enabled"`
 		ConcurrencyLimit   *int  `json:"task_concurrency_limit"`
@@ -596,6 +605,30 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		changed = true
+	}
+	if req.EgressGlobalQPS != nil || req.EgressHostQPS != nil || req.EgressMaxWaitMS != nil {
+		globalQPS, hostQPS, waitMS := s.m.EgressLimits()
+		if req.EgressGlobalQPS != nil {
+			globalQPS = *req.EgressGlobalQPS
+		}
+		if req.EgressHostQPS != nil {
+			hostQPS = *req.EgressHostQPS
+		}
+		if req.EgressMaxWaitMS != nil {
+			waitMS = *req.EgressMaxWaitMS
+		}
+		if globalQPS < 0 || globalQPS > 10000 || hostQPS < 0 || hostQPS > 10000 {
+			writeErr(w, 400, "出站 QPS 必须在 0–10000 之间（0 = 关闭）")
+			return
+		}
+		if waitMS < 0 || waitMS > 120000 {
+			writeErr(w, 400, "出站排队上限必须在 0–120000 毫秒之间（0 = 默认 10s）")
+			return
+		}
+		if err := s.m.SetEgressLimits(globalQPS, hostQPS, waitMS); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
 	}
 	if req.GlobalProxy != nil {
 		// Validation failure (bad scheme/host) is a client error, not a 500.

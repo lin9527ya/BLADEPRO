@@ -1826,6 +1826,11 @@ export interface Settings {
   // 全局出口代理(http/https/socks5，可带 user:pass)，所有目标流量走它。开启流量捕获时作为
   // MITM 上游；关闭捕获时直接注入 agent 的 bash/WebFetch。空=直连。
   global_proxy?: string;
+  // 出站速率治理（录制代理层）：0 = 关闭；host 桶与全局桶同时生效。
+  egress_global_qps?: number;
+  egress_host_qps?: number;
+  // 单个请求最长排队时间（毫秒）；0 = 默认 10s，超时放行（fail-open）。
+  egress_max_wait_ms?: number;
   // ---- P21 情报源（先接 FOFA）----
   // key 与 web search 同款：只写不读，读侧只给 fofa_key_set 布尔。
   fofa_key_set?: boolean;

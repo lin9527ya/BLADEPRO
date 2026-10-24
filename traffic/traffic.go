@@ -165,6 +165,8 @@ type Traffic struct {
 	// reason; connections to them are tunneled transparently (fail-open) so the
 	// request still reaches the target — unrecorded — instead of being killed.
 	pass sync.Map // hostname(string) -> struct{}
+	// rate is the optional global/host egress governor (nil = off). See ratelimit.go.
+	rate atomic.Pointer[egressGovernor]
 	// upstream is the global egress proxy every captured request is forwarded
 	// through (nil = dial targets directly). Both the intercepted and the
 	// transparent-passthrough paths honor it (go-mitmproxy's getUpstreamConn),
@@ -387,6 +389,17 @@ func (t *Traffic) DB() *sql.DB { return t.db }
 type sink struct {
 	mproxy.BaseAddon
 	t *Traffic
+}
+
+// Request runs after the full request is read and before it is sent upstream.
+// Blocking here is exactly the queueing behavior we want: the connection waits
+// instead of being rejected. Stream flows skip Request/Response addons (see
+// mproxy.Flow.Stream), so long-lived streams are not throttled per frame.
+func (s *sink) Request(f *mproxy.Flow) {
+	if f == nil || f.Request == nil || f.Request.URL == nil {
+		return
+	}
+	s.t.waitEgress(f.Request.URL.Hostname())
 }
 
 func (s *sink) Response(f *mproxy.Flow) {

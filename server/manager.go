@@ -256,6 +256,10 @@ type Manager struct {
 	braveKey         string
 	tavilyKey        string
 	webSearchProxy   string
+	// 全局出站速率（录制代理层）：0 = 关闭。host 级桶 + 全局桶，超过等待上限放行。
+	egressGlobalQPS float64
+	egressHostQPS   float64
+	egressWaitMS    int
 	// globalProxy is the egress proxy all target traffic routes through
 	// (http/https/socks5, optional user:pass). Empty = direct. When traffic
 	// capture is on it becomes the MITM's upstream; when capture is off it is
@@ -278,8 +282,12 @@ const (
 	// (http/https/socks5). Empty = direct. Distinct from web_search_proxy (which
 	// only routes the search backend) and the per-profile LLM proxy.
 	settingGlobalProxy = "global_proxy"
-	settingWorkers     = "workers"
-	settingLLMRecord   = "llm_record"
+	// 出站速率治理（录制代理层）。0 = 关闭；host 桶与全局桶同时生效。
+	settingEgressGlobalQPS = "egress_global_qps"
+	settingEgressHostQPS   = "egress_host_qps"
+	settingEgressWaitMS    = "egress_max_wait_ms"
+	settingWorkers         = "workers"
+	settingLLMRecord       = "llm_record"
 	// settingCompactionPrompt（P14）是领域化压缩模板（7 段）。空 = 用内置模板。
 	// 刻意放 settings 而不是 agent_prompts：它不是某个 agent 的提示词，没有对应
 	// agent 行；塞进 agent_prompts 需要在 Agent 管理里凭空多出一个假 agent。
@@ -513,6 +521,10 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 	}
 	// Asset auto-completion engine (§5): HTTP probes routed through the recording
 	// proxy (via m.ProxyAddr, which honors the traffic-capture toggle).
+	m.egressGlobalQPS = settingFloat(pg, settingEgressGlobalQPS)
+	m.egressHostQPS = settingFloat(pg, settingEgressHostQPS)
+	m.egressWaitMS = settingInt(pg, settingEgressWaitMS)
+	m.applyEgressLimits()
 	m.trafficOn = pg.GetBool(settingTrafficCapture, false)
 	// LLM 录制开关（默认关）。录制器每次调用时读取此标志。
 	m.llmRecOn = pg.GetBool(settingLLMRecord, false)
@@ -561,6 +573,84 @@ func (m *Manager) CancelTaskExecutions(taskID, reason string) int {
 		return 0
 	}
 	return m.execs.CancelAll(taskID, reason)
+}
+
+// EgressLimits returns the configured global/host QPS and max queue wait (ms).
+func (m *Manager) EgressLimits() (globalQPS, hostQPS float64, waitMS int) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.egressGlobalQPS, m.egressHostQPS, m.egressWaitMS
+}
+
+// SetEgressLimits persists and hot-applies the proxy-level egress governor.
+// Negative/zero QPS disables that level; waitMS <= 0 uses the 10s default.
+func (m *Manager) SetEgressLimits(globalQPS, hostQPS float64, waitMS int) error {
+	if globalQPS < 0 {
+		globalQPS = 0
+	}
+	if hostQPS < 0 {
+		hostQPS = 0
+	}
+	if waitMS < 0 {
+		waitMS = 0
+	}
+	if err := m.pg.SetSetting(settingEgressGlobalQPS, strconv.FormatFloat(globalQPS, 'f', -1, 64)); err != nil {
+		return err
+	}
+	if err := m.pg.SetSetting(settingEgressHostQPS, strconv.FormatFloat(hostQPS, 'f', -1, 64)); err != nil {
+		return err
+	}
+	if err := m.pg.SetSetting(settingEgressWaitMS, strconv.Itoa(waitMS)); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.egressGlobalQPS, m.egressHostQPS, m.egressWaitMS = globalQPS, hostQPS, waitMS
+	m.mu.Unlock()
+	m.applyEgressLimits()
+	return nil
+}
+
+func (m *Manager) applyEgressLimits() {
+	if m.traffic == nil {
+		return
+	}
+	globalQPS, hostQPS, waitMS := m.EgressLimits()
+	m.traffic.SetEgressLimits(traffic.EgressLimits{
+		GlobalQPS: globalQPS, HostQPS: hostQPS,
+		MaxWait: time.Duration(waitMS) * time.Millisecond,
+	})
+}
+
+// settingFloat reads a non-negative float setting (0 on missing/parse error).
+func settingFloat(pg *pgdb.DB, key string) float64 {
+	if pg == nil {
+		return 0
+	}
+	v, ok, err := pg.GetSetting(key)
+	if err != nil || !ok {
+		return 0
+	}
+	f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+	if err != nil || f < 0 {
+		return 0
+	}
+	return f
+}
+
+// settingInt reads a non-negative int setting (0 on missing/parse error).
+func settingInt(pg *pgdb.DB, key string) int {
+	if pg == nil {
+		return 0
+	}
+	v, ok, err := pg.GetSetting(key)
+	if err != nil || !ok {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 // TrafficEnabled reports whether traffic capture is on (default off). When off,

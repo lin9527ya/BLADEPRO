@@ -76,6 +76,11 @@ export function useSettingsState() {
   // 资产级 token 预算（SRC，0 = 关闭）。
   const [assetTokenBudget, setAssetTokenBudget] = React.useState("0");
   const [savingAssetBudget, setSavingAssetBudget] = React.useState(false);
+  // 出站速率治理（录制代理层）：0 = 关闭。
+  const [egressGlobalQPS, setEgressGlobalQPS] = React.useState("0");
+  const [egressHostQPS, setEgressHostQPS] = React.useState("0");
+  const [egressWaitMS, setEgressWaitMS] = React.useState("0");
+  const [savingEgress, setSavingEgress] = React.useState(false);
   // P24 执行资源限额与外部 MCP 守卫（0 = 不限；保存即对之后提交的执行/调用生效）。
   const [execCPU, setExecCPU] = React.useState("1800");
   const [execMem, setExecMem] = React.useState("0");
@@ -146,6 +151,9 @@ export function useSettingsState() {
     setWorkers(String(s.workers ?? 3));
     setTokenBudget(String(s.task_token_budget ?? 0));
     setAssetTokenBudget(String(s.src_asset_token_budget ?? 0));
+    setEgressGlobalQPS(String(s.egress_global_qps ?? 0));
+    setEgressHostQPS(String(s.egress_host_qps ?? 0));
+    setEgressWaitMS(String(s.egress_max_wait_ms ?? 0));
     setInjectPlanner(s.constraints_inject_planner !== false);
     setInjectWorker(s.constraints_inject_worker !== false);
     setNoaCompaction(!!s.noa_compaction);
@@ -361,6 +369,37 @@ export function useSettingsState() {
       })
       .catch((e) => toast.error("保存失败：" + (e as Error).message))
       .finally(() => setSavingAssetBudget(false));
+  };
+
+  const saveEgress = () => {
+    const globalQPS = Number(egressGlobalQPS.trim() === "" ? "0" : egressGlobalQPS);
+    const hostQPS = Number(egressHostQPS.trim() === "" ? "0" : egressHostQPS);
+    const waitMS = Number(egressWaitMS.trim() === "" ? "0" : egressWaitMS);
+    if (!Number.isFinite(globalQPS) || globalQPS < 0 || globalQPS > 10000) {
+      toast.error("全局 QPS 必须在 0–10000（0 = 关闭）");
+      return;
+    }
+    if (!Number.isFinite(hostQPS) || hostQPS < 0 || hostQPS > 10000) {
+      toast.error("单 host QPS 必须在 0–10000（0 = 关闭）");
+      return;
+    }
+    if (!Number.isInteger(waitMS) || waitMS < 0 || waitMS > 120000) {
+      toast.error("排队上限必须是 0–120000 的整数毫秒（0 = 默认 10s）");
+      return;
+    }
+    setSavingEgress(true);
+    api
+      .setSettings({
+        egress_global_qps: globalQPS,
+        egress_host_qps: hostQPS,
+        egress_max_wait_ms: waitMS,
+      })
+      .then((s) => {
+        apply(s);
+        toast.success(globalQPS > 0 || hostQPS > 0 ? "已保存出站速率限制（即时生效）" : "已关闭出站速率限制");
+      })
+      .catch((e) => toast.error("保存失败：" + (e as Error).message))
+      .finally(() => setSavingEgress(false));
   };
 
   const savePython = () => {
@@ -711,6 +750,14 @@ export function useSettingsState() {
     setAssetTokenBudget,
     savingAssetBudget,
     setSavingAssetBudget,
+    egressGlobalQPS,
+    setEgressGlobalQPS,
+    egressHostQPS,
+    setEgressHostQPS,
+    egressWaitMS,
+    setEgressWaitMS,
+    savingEgress,
+    setSavingEgress,
     execCPU,
     setExecCPU,
     execMem,
@@ -809,6 +856,7 @@ export function useSettingsState() {
     saveWorkers,
     saveTokenBudget,
     saveAssetTokenBudget,
+    saveEgress,
     savePython,
     detectPython,
     toggleTraffic,

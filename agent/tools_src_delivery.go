@@ -84,7 +84,8 @@ func (t *ToolSet) srcPrepareSubmission() actool.CoreTool {
 			"  · 正文：描述/危害/修复必须写全，出现「待补」这类占位符直接拒绝；\n"+
 			"  · 证据合规：中危及以上要有 proof/verification 绑定；Content-Length 不得大于实际正文；"+
 			"同一请求标识头（x-request-id 等）不得跨步骤重复；主机必须在任务范围内；\n"+
-			"  · 查重：按「漏洞类型 + 归一化端点」算指纹，跨任务命中会写 dedupe_of 并挡在收尾门前。\n"+
+			"  · 查重：按「漏洞类型 + 归一化端点」算指纹，跨任务命中会写 dedupe_of 并挡在收尾门前；\n"+
+			"  · 独立复验：中危及以上必须有 verdict=reproduced 的独立复验（首次准备会自动发起，等结论回来后再准备一次）。\n"+
 			"issues 非空 = 还不能交（台账落 draft，按清单补齐后重调）。issues 为空 = ready。\n"+
 			"描述可省略（回落到该发现的报告/摘要，但仍要过占位符检查）。",
 		obj(map[string]any{

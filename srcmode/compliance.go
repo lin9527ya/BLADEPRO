@@ -194,6 +194,9 @@ func dedupeIssues(in []ComplianceIssue) []ComplianceIssue {
 	return out
 }
 
+// IsMediumPlus 是 isMediumPlus 的导出形式：server 侧用它决定是否要求独立复验。
+func IsMediumPlus(severity string) bool { return isMediumPlus(severity) }
+
 // isMediumPlus 判断严重度是否达到"必须齐备证据"的门槛。
 func isMediumPlus(severity string) bool {
 	switch strings.ToLower(strings.TrimSpace(severity)) {

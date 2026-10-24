@@ -307,3 +307,20 @@ func TestProgramExemptAreas(t *testing.T) {
 		t.Fatal("allow_reason_only_clear 未编译进 mode_doc")
 	}
 }
+
+// TestProgramRequireRetest 钉住提交前独立复验的开关：默认开；program 显式
+// require_retest=false 才编译成关闭。
+func TestProgramRequireRetest(t *testing.T) {
+	if !DefaultDoc().RequireRetest {
+		t.Fatal("默认应要求 medium+ 提交前独立复验")
+	}
+	p := &Program{Name: "no-retest"}
+	off := false
+	p.Rules.RequireRetest = &off
+	if err := p.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if doc := p.ApplyToModeDoc(DefaultDoc()); doc.RequireRetest {
+		t.Fatal("program 显式关闭后 mode_doc 仍要求复验")
+	}
+}

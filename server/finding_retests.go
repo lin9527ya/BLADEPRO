@@ -59,10 +59,6 @@ func (s *Server) listFindingRetests(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) startFindingRetest(w http.ResponseWriter, r *http.Request) {
-	pg := s.pg(w)
-	if pg == nil {
-		return
-	}
 	id, ok := pathInt(r, "id")
 	if !ok || id <= 0 {
 		writeErr(w, 400, "bad finding id")
@@ -74,56 +70,64 @@ func (s *Server) startFindingRetest(w http.ResponseWriter, r *http.Request) {
 	if !decodeConversationRequest(w, r, &req) {
 		return
 	}
-	req.Notes = strings.TrimSpace(req.Notes)
-	if utf8.RuneCountInString(req.Notes) > 4000 {
-		writeErr(w, 400, "复测补充说明最多 4000 个字符")
+	retest, created, code, err := s.startFindingRetestCore(r.Context(), id, strings.TrimSpace(req.Notes))
+	if err != nil {
+		writeErr(w, code, err.Error())
 		return
 	}
-	f, err := pg.GetFinding(id)
+	if created {
+		code = http.StatusAccepted
+	} else {
+		code = http.StatusOK
+	}
+	writeJSON(w, code, map[string]any{"retest": retest, "created": created})
+}
+
+// startFindingRetestCore 是 HTTP 与 SRC 提交前自动复验共用的入口。返回的 code 是
+// 失败时应回给 HTTP 的状态码（内部调用忽略它）。created=false 表示已有在跑的复测。
+func (s *Server) startFindingRetestCore(ctx context.Context, findingID int64, notes string) (*db.FindingRetest, bool, int, error) {
+	if findingID <= 0 {
+		return nil, false, http.StatusBadRequest, errors.New("bad finding id")
+	}
+	if utf8.RuneCountInString(notes) > 4000 {
+		return nil, false, http.StatusBadRequest, errors.New("复测补充说明最多 4000 个字符")
+	}
+	pg := s.m.pg
+	f, err := pg.GetFinding(findingID)
 	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
+		return nil, false, http.StatusInternalServerError, err
 	}
 	if f == nil {
-		writeErr(w, 404, "finding not found")
-		return
+		return nil, false, http.StatusNotFound, errors.New("finding not found")
 	}
 	a, err := pg.GetAgentByKey(db.FindingRetestAgentKey)
 	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
+		return nil, false, http.StatusInternalServerError, err
 	}
 	if a == nil || !a.Enabled {
-		writeErr(w, 409, "漏洞复测 Agent 不存在或未启用，请在 Agent 管理中配置 retester")
-		return
+		return nil, false, http.StatusConflict, errors.New("漏洞复测 Agent 不存在或未启用，请在 Agent 管理中配置 retester")
 	}
 	for _, key := range []string{"get_finding_retest_context", "record_finding_retest_result"} {
 		t, err := pg.GetTool(key)
 		if err != nil {
-			writeErr(w, 500, err.Error())
-			return
+			return nil, false, http.StatusInternalServerError, err
 		}
 		if t == nil || !t.Enabled || !slices.Contains(t.Agents, a.Key) {
-			writeErr(w, 409, "请为复测 Agent 启用并绑定工具："+key)
-			return
+			return nil, false, http.StatusConflict, errors.New("请为复测 Agent 启用并绑定工具：" + key)
 		}
 	}
 	if s.resolveChatAgent(&db.Conversation{AgentKey: a.Key}) == nil {
-		writeErr(w, 503, s.chatUnavailableReason())
-		return
+		return nil, false, http.StatusServiceUnavailable, errors.New(s.chatUnavailableReason())
 	}
 	if s.ctx.Err() != nil {
-		writeErr(w, 503, "服务正在停止")
-		return
+		return nil, false, http.StatusServiceUnavailable, errors.New("服务正在停止")
 	}
-	retest, conv, created, err := pg.CreateFindingRetest(r.Context(), id, req.Notes)
+	retest, conv, created, err := pg.CreateFindingRetest(ctx, findingID, notes)
 	if errors.Is(err, sql.ErrNoRows) {
-		writeErr(w, 404, "finding not found")
-		return
+		return nil, false, http.StatusNotFound, errors.New("finding not found")
 	}
 	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
+		return nil, false, http.StatusInternalServerError, err
 	}
 	if created {
 		busyKey := s.convBusyKey(conv.ID)
@@ -132,11 +136,7 @@ func (s *Server) startFindingRetest(w http.ResponseWriter, r *http.Request) {
 		s.chatRuns.mu.Unlock()
 		s.runConversation(conv, retest.InitialMessage(), busyKey)
 	}
-	code := http.StatusOK
-	if created {
-		code = http.StatusAccepted
-	}
-	writeJSON(w, code, map[string]any{"retest": retest, "created": created})
+	return retest, created, http.StatusOK, nil
 }
 
 // Both tools derive the finding from server-owned conversation context. Tool

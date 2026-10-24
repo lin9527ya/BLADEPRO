@@ -65,6 +65,8 @@ type ProgramRules struct {
 	MaxRecordsRead int `json:"max_records_read,omitempty"`
 	// AllowReasonOnlyClear 允许 tested_clear 不挂证据节点（默认 false）。
 	AllowReasonOnlyClear *bool `json:"allow_reason_only_clear,omitempty"`
+	// RequireRetest 要求 medium+ 提交前有独立复验（默认 true；显式 false 才关闭）。
+	RequireRetest *bool `json:"require_retest,omitempty"`
 	// ExemptAreas 是平台明确不测的风险面；只有这里列出的面才允许 na(platform_exempt)。
 	ExemptAreas []string `json:"exempt_areas,omitempty"`
 	// RequireScreenshots 平台要求关键步骤截图时置真。
@@ -237,6 +239,9 @@ func (p *Program) ApplyToModeDoc(doc ModeDoc) ModeDoc {
 	}
 	if p.Rules.AllowReasonOnlyClear != nil {
 		out.AllowReasonOnlyClear = *p.Rules.AllowReasonOnlyClear
+	}
+	if p.Rules.RequireRetest != nil {
+		out.RequireRetest = *p.Rules.RequireRetest
 	}
 	if len(p.Rules.ExemptAreas) > 0 {
 		seen := map[string]bool{}

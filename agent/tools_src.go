@@ -153,6 +153,7 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 			"program":               t.srcDoc.Program,
 			"check_tier":            t.srcDoc.Tier(),
 			"require_screenshots":   t.srcDoc.RequireScreenshots,
+			"require_retest":        t.srcDoc.RequireRetest,
 			"checks_total":          rep.ChecksTotal,
 			"checks_done":           rep.ChecksDone,
 		},

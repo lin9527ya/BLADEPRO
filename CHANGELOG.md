@@ -58,6 +58,20 @@
 - 回归：clear 证据/allow 开关、platform_exempt 豁免依据、static_page 按面白名单、
   Program→mode_doc 编译；集成测试夹具显式打开 allow 以聚焦各自断言。
 
+### 新增：提交前独立复验（P1）
+
+- medium+ 发现在 `src_prepare_submission` 准备交付件前，必须有一次
+  `finding_retests.verdict=reproduced` 的独立复验；复验由 retester agent 在干净会话里
+  只按原始证据做最小重放（复用现有复测链路，不新建子系统）。
+- 第一次准备会自动发起复验并落 draft（issue 写清会话号与下一步）；等结论 reproduced
+  后再准备一次才会 ready。已有 `fixed`/`inconclusive` 结论不自动重试，避免每次准备都
+  烧一轮复验。
+- 开关：`mode_doc.require_retest` 默认 true；program 规则 `require_retest:false` 可显式
+  关闭（编译进任务快照）。
+- `src_state` 的 doc 块与 worker/planner 提示词同步说明；`src_prepare_submission` 工具
+  描述补上复验要求。
+- 回归：复验状态判定（reproduced/active/fixed）、RequireRetest 默认与 program 关闭。
+
 ### 新增：收尾项指标的流量核验（P0-7）
 
 - 新增只读核验器：从录制流量推导 `paths / methods / js / sourcemap / non404 /

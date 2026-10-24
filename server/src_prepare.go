@@ -137,6 +137,13 @@ func (s *Server) prepareSrcSubmission(ctx context.Context, req agent.SrcPrepareR
 		issues = append(issues, "证据不合规："+is.Detail)
 	}
 	issues = append(issues, srcmode.ValidateReportText(title, description, impact, fix)...)
+	// P1：medium+ 必须有独立复验 reproduced。没有就在这一刻自动发起（干净会话、
+	// 只按原始证据最小重放）；首次准备不会是 ready，等复验结论回来后再准备一次。
+	if srcmode.IsMediumPlus(f.Severity) && doc.RequireRetest {
+		if msg := s.ensureSrcRetest(ctx, f); msg != "" {
+			issues = append(issues, "独立复验："+msg)
+		}
+	}
 	// 成品再查一遍报文层：缺 Host、整行省略号、跨步骤重复的唯一标识头、
 	// Content-Length 与正文不符。快照层查过的东西在导出后仍可能被改坏。
 	for _, p := range srcmode.CheckReportMarkdown(markdown) {

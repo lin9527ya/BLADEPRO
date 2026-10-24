@@ -71,6 +71,9 @@ type ModeDoc struct {
 	// AllowReasonOnlyClear 允许 tested_clear 只写说明、不挂证据节点。默认 false：
 	// "没证据的 clear 等于没测"；只有明确接受人工复核的档位才应打开。
 	AllowReasonOnlyClear bool `json:"allow_reason_only_clear,omitempty"`
+	// RequireRetest 要求 medium+ 发现在准备交付件前必须有一次独立复验
+	// （finding_retests.verdict=reproduced）。默认 true；program 可显式关闭。
+	RequireRetest bool `json:"require_retest"`
 	// PlatformExemptAreas 是 program 显式声明的平台豁免面：只有列在这里的面才允许
 	// na_code=platform_exempt，避免把"平台不测"当成万能 N/A。
 	PlatformExemptAreas []string `json:"platform_exempt_areas,omitempty"`
@@ -86,6 +89,7 @@ func DefaultDoc() ModeDoc {
 		AllowBudgetStop:    false,
 		MaxAttemptsPerCell: DefaultMaxAttemptsPerCell,
 		MaxIntentsPerAsset: DefaultMaxIntentsPerAsset,
+		RequireRetest:      true,
 	}
 }
 

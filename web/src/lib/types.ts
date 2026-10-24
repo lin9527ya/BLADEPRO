@@ -2829,7 +2829,10 @@ export type ReviewKind =
   | "retest_inconclusive"
   | "dedupe_pending"
   | "budget_stop"
-  | "suspicious_na";
+  | "suspicious_na"
+  | "ready_stale"
+  | "submitted_stale"
+  | "accepted_unpaid";
 
 export interface ReviewQueueItem {
   kind: ReviewKind;
@@ -2915,4 +2918,19 @@ export interface SrcFunnel {
   by_program: SrcFunnelProgram[];
   by_severity: SrcFunnelSeverity[];
   daily: SrcFunnelDay[];
+}
+
+/** 台账状态历史的一行（GET /api/src/submissions/{id}/events）。 */
+export interface SrcSubmissionEvent {
+  id: number;
+  submission_id: number;
+  from_status?: string;
+  to_status: string;
+  external_id?: string;
+  platform_level?: string;
+  reward?: string;
+  verdict_reason?: string;
+  note?: string;
+  actor?: string;
+  created_at: string;
 }

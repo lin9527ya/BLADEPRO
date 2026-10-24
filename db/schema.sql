@@ -1890,6 +1890,23 @@ DROP TRIGGER IF EXISTS trg_src_submissions_upd ON src_submissions;
 CREATE TRIGGER trg_src_submissions_upd BEFORE UPDATE ON src_submissions
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+-- 台账状态历史：每次新建/状态推进/关键字段变化写一行，让"谁在什么时候把状态
+-- 推到了哪一步、平台编号/驳回原因是什么"可追溯。
+CREATE TABLE IF NOT EXISTS src_submission_events (
+    id             BIGSERIAL PRIMARY KEY,
+    submission_id  BIGINT NOT NULL REFERENCES src_submissions(id) ON DELETE CASCADE,
+    from_status    TEXT NOT NULL DEFAULT '',
+    to_status      TEXT NOT NULL DEFAULT '',
+    external_id    TEXT NOT NULL DEFAULT '',
+    platform_level TEXT NOT NULL DEFAULT '',
+    reward         TEXT NOT NULL DEFAULT '',
+    verdict_reason TEXT NOT NULL DEFAULT '',
+    note           TEXT NOT NULL DEFAULT '',
+    actor          TEXT NOT NULL DEFAULT '',
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_src_submission_events_sub ON src_submission_events(submission_id, id DESC);
+
 -- =====================================================================
 -- SRC 平台面（P3）：SRC 平台/项目与其规则
 --

@@ -31,12 +31,18 @@ type ReviewItem struct {
 }
 
 // ReviewQueue aggregates pending human-review items. limit caps the whole union.
-func (d *DB) ReviewQueue(ctx context.Context, limit int) ([]ReviewItem, error) {
+func (d *DB) ReviewQueue(ctx context.Context, limit, staleDays int) ([]ReviewItem, error) {
 	if d == nil {
 		return []ReviewItem{}, nil
 	}
 	if limit <= 0 || limit > 500 {
 		limit = 200
+	}
+	if staleDays <= 0 {
+		staleDays = 7
+	}
+	if staleDays > 90 {
+		staleDays = 90
 	}
 	rows, err := d.QueryContext(ctx, `
 WITH items AS (
@@ -124,12 +130,57 @@ WITH items AS (
   WHERE t.mode='src' AND t.deleted_at IS NULL AND t.status NOT IN ('done','failed','timeout')
   GROUP BY c.task_id, c.asset_id, t.name, t.description, a.url, a.domain, a.ip, a.app_name, a.root_domain
   HAVING count(*) FILTER (WHERE c.area IN ('injection','ssrf','xss','rce') AND c.state='na' AND c.item='*') = 4
+
+  UNION ALL
+  -- 6) ready 超过 SLA 未提交
+  SELECT 'ready_stale',
+         'ready_stale:' || s.id || ':' || (extract(epoch FROM s.updated_at)::bigint)::text,
+         s.task_id, COALESCE(NULLIF(t.name,''), t.description, ''),
+         s.finding_id, s.id, 0, 0, '', '', '', '',
+         'ready 超过 SLA 未提交',
+         COALESCE(NULLIF(s.title,''), f.name, f.vulnclass),
+         COALESCE(NULLIF(s.severity,''), f.severity),
+         s.updated_at
+  FROM src_submissions s
+  JOIN findings f ON f.id=s.finding_id
+  LEFT JOIN tasks t ON t.id=s.task_id
+  WHERE s.status='ready' AND s.updated_at < now() - ($2::int * interval '1 day')
+
+  UNION ALL
+  -- 7) submitted 超过 SLA 无平台结论
+  SELECT 'submitted_stale',
+         'submitted_stale:' || s.id || ':' || (extract(epoch FROM COALESCE(s.submitted_at,s.updated_at))::bigint)::text,
+         s.task_id, COALESCE(NULLIF(t.name,''), t.description, ''),
+         s.finding_id, s.id, 0, 0, '', '', '', '',
+         'submitted 超过 SLA 无平台结论',
+         COALESCE(NULLIF(s.title,''), f.name, f.vulnclass),
+         COALESCE(NULLIF(s.severity,''), f.severity),
+         COALESCE(s.submitted_at, s.updated_at)
+  FROM src_submissions s
+  JOIN findings f ON f.id=s.finding_id
+  LEFT JOIN tasks t ON t.id=s.task_id
+  WHERE s.status='submitted' AND COALESCE(s.submitted_at,s.updated_at) < now() - ($2::int * interval '1 day')
+
+  UNION ALL
+  -- 8) accepted 超过 SLA 未到账
+  SELECT 'accepted_unpaid',
+         'accepted_unpaid:' || s.id || ':' || (extract(epoch FROM COALESCE(s.verdict_at,s.updated_at))::bigint)::text,
+         s.task_id, COALESCE(NULLIF(t.name,''), t.description, ''),
+         s.finding_id, s.id, 0, 0, '', '', '', '',
+         'accepted 超过 SLA 未到账',
+         COALESCE(NULLIF(s.title,''), f.name, f.vulnclass),
+         COALESCE(NULLIF(s.severity,''), f.severity),
+         COALESCE(s.verdict_at, s.updated_at)
+  FROM src_submissions s
+  JOIN findings f ON f.id=s.finding_id
+  LEFT JOIN tasks t ON t.id=s.task_id
+  WHERE s.status='accepted' AND COALESCE(s.verdict_at,s.updated_at) < now() - ($2::int * interval '1 day')
 )
 SELECT kind, ref_key, task_id, task_label, finding_id, submission_id, retest_id,
        asset_id, asset_label, area, item, state, reason, title, severity, updated_at
 FROM items
 ORDER BY updated_at DESC
-LIMIT $1`, limit)
+LIMIT $1`, limit, staleDays)
 	if err != nil {
 		return nil, err
 	}

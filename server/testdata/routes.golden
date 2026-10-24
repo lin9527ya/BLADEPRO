@@ -131,6 +131,7 @@ GET /api/src/programs/{id}	server.(*Server).getSrcProgram-fm
 GET /api/src/programs/{id}/scope	server.(*Server).getSrcProgramScope-fm
 GET /api/src/stats	server.(*Server).getSrcStats-fm
 GET /api/src/submissions	server.(*Server).listSrcSubmissions-fm
+GET /api/src/submissions/{id}/events	server.(*Server).listSrcSubmissionEvents-fm
 GET /api/stats	server.(*Server).stats-fm
 GET /api/storage/report	server.(*Server).getStorageReport-fm
 GET /api/sync/scopesentry/projects	server.(*Server).syncSSProjects-fm

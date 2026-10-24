@@ -46,6 +46,7 @@ func (s *Server) registerSrcDelivery(mux routeRegistrar) {
 	mux.HandleFunc("PATCH /api/findings/{id}/src-dedupe", s.patchFindingSrcDedupe)
 	mux.HandleFunc("GET /api/src/submissions", s.listSrcSubmissions)
 	mux.HandleFunc("PATCH /api/src/submissions/{id}", s.patchSrcSubmission)
+	mux.HandleFunc("GET /api/src/submissions/{id}/events", s.listSrcSubmissionEvents)
 }
 
 // prepareSrcSubmission 是交付准备的唯一实现：
@@ -179,6 +180,7 @@ func (s *Server) prepareSrcSubmission(ctx context.Context, req agent.SrcPrepareR
 		Description:         description, Impact: impact, Fix: fix, ReportMD: markdown,
 		Status: status, ReportReady: ready, Compliance: complianceJSON,
 		ProgramID: programID, PlatformLevel: platformLevel,
+		Actor: firstNonEmpty(req.Actor, "agent"),
 	})
 	if err != nil {
 		return nil, err
@@ -350,6 +352,7 @@ func (s *Server) postFindingSrcSubmission(w http.ResponseWriter, r *http.Request
 	res, err := s.prepareSrcSubmission(r.Context(), agent.SrcPrepareRequest{
 		TaskID: *f.TaskID, FindingID: f.ID, Platform: req.Platform,
 		Title: req.Title, Description: req.Description, Impact: req.Impact, Fix: req.Fix,
+		Actor: "human",
 	})
 	if err != nil {
 		writeErr(w, 400, err.Error())
@@ -423,6 +426,7 @@ func (s *Server) patchSrcSubmission(w http.ResponseWriter, r *http.Request) {
 	}
 	store := s.m.PG().Src()
 	before, _ := store.GetSrcSubmission(r.Context(), id)
+	patch.Actor = "human"
 	sub, err := store.UpdateSrcSubmission(r.Context(), id, patch)
 	if err != nil {
 		writeErr(w, 400, err.Error())
@@ -434,4 +438,27 @@ func (s *Server) patchSrcSubmission(w http.ResponseWriter, r *http.Request) {
 	}
 	sub.ReportMD = ""
 	writeJSON(w, 200, sub)
+}
+
+// listSrcSubmissionEvents returns the ledger transition history (oldest first).
+func (s *Server) listSrcSubmissionEvents(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(strings.TrimSpace(r.PathValue("id")), 10, 64)
+	if id <= 0 {
+		writeErr(w, 400, "bad submission id")
+		return
+	}
+	store := s.m.PG().Src()
+	if sub, err := store.GetSrcSubmission(r.Context(), id); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	} else if sub == nil {
+		writeErr(w, 404, "台账不存在")
+		return
+	}
+	events, err := store.ListSrcSubmissionEvents(r.Context(), id)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"events": events, "total": len(events)})
 }

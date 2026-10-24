@@ -31,6 +31,9 @@ const KIND_LABEL: Record<ReviewKind, string> = {
   dedupe_pending: "疑似重复",
   budget_stop: "预算停",
   suspicious_na: "四件套全 N/A",
+  ready_stale: "待提交超 SLA",
+  submitted_stale: "已提交超 SLA",
+  accepted_unpaid: "已受理未到账",
 };
 
 const KIND_TONE: Record<ReviewKind, string> = {
@@ -39,6 +42,9 @@ const KIND_TONE: Record<ReviewKind, string> = {
   dedupe_pending: "border-violet-500/40 text-violet-600 dark:text-violet-400",
   budget_stop: "border-orange-500/40 text-orange-600 dark:text-orange-400",
   suspicious_na: "border-rose-500/40 text-rose-600 dark:text-rose-400",
+  ready_stale: "border-sky-500/40 text-sky-600 dark:text-sky-400",
+  submitted_stale: "border-amber-500/40 text-amber-600 dark:text-amber-400",
+  accepted_unpaid: "border-emerald-500/40 text-emerald-600 dark:text-emerald-400",
 };
 
 function itemLabel(item: ReviewQueueItem): string {
@@ -143,7 +149,8 @@ export function ReviewQueueDialog({ onChanged }: { onChanged?: () => void }) {
             <ShieldAlertIcon className="size-4 text-amber-500" /> 人工复核队列
           </DialogTitle>
           <DialogDescription>
-            按严重度 × 不确定性 × 临界程度排序：报告缺段、复验存疑、疑似重复、预算停、四件套全 N/A。
+            按严重度 × 不确定性 × 临界程度排序：报告缺段、复验存疑、疑似重复、预算停、
+            四件套全 N/A，以及台账 SLA（ready 未提交 / submitted 无结论 / accepted 未到账）。
             可批量接受/打回/退回重测；已处理项不再重复出现。
           </DialogDescription>
         </DialogHeader>

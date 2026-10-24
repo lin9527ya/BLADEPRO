@@ -78,7 +78,18 @@ VALUES ($1,'completed','inconclusive','{}'::jsonb,'签名已过期，无法确�
 		t.Fatalf("retest: %v", err)
 	}
 
-	items, err := d.ReviewQueue(ctx, 100)
+	// SLA：ready 超过 7 天未提交也要进队列。
+	var staleFinding int64
+	if err := d.QueryRow(`INSERT INTO findings(task_id, vulnclass, name, severity, status)
+VALUES ($1,'XSS','待提交超时','medium','confirmed') RETURNING id`, task.ID).Scan(&staleFinding); err != nil {
+		t.Fatalf("stale finding: %v", err)
+	}
+	if _, err := d.Exec(`INSERT INTO src_submissions(task_id, finding_id, platform, status, title, severity, created_at, updated_at)
+VALUES ($1,$2,'','ready','待提交超时','medium', now()-interval '10 days', now()-interval '10 days')`, task.ID, staleFinding); err != nil {
+		t.Fatalf("stale submission: %v", err)
+	}
+
+	items, err := d.ReviewQueue(ctx, 100, 7)
 	if err != nil {
 		t.Fatalf("queue: %v", err)
 	}
@@ -88,7 +99,7 @@ VALUES ($1,'completed','inconclusive','{}'::jsonb,'签名已过期，无法确�
 			byKind[it.Kind] = it
 		}
 	}
-	for _, kind := range []string{"report_missing", "retest_inconclusive", "dedupe_pending", "budget_stop", "suspicious_na"} {
+	for _, kind := range []string{"report_missing", "retest_inconclusive", "dedupe_pending", "budget_stop", "suspicious_na", "ready_stale"} {
 		if _, ok := byKind[kind]; !ok {
 			t.Fatalf("missing kind %s in %+v", kind, items)
 		}

@@ -34,6 +34,7 @@ import type {
   SrcMatrixCell,
   SrcPrepareResult,
   SrcSubmission,
+  SrcSubmissionEvent,
   SrcTaskState,
 } from "@/lib/types";
 
@@ -95,6 +96,16 @@ const SUBMISSION_NEXT: Record<string, string[]> = {
   paid: [],
   withdrawn: [],
 };
+
+// 台账停留天数：ready/submitted/accepted 是"等人/等平台"的状态，超过 7 天标黄提醒。
+function submissionAgeDays(sub: SrcSubmission): number | null {
+  if (!["ready", "submitted", "accepted"].includes(sub.status)) return null;
+  const ts = sub.status === "submitted" ? sub.submitted_at ?? sub.updated_at : sub.updated_at ?? sub.created_at;
+  if (!ts) return null;
+  const ms = Date.now() - new Date(ts).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return 0;
+  return Math.floor(ms / 86_400_000);
+}
 
 function submissionTone(status: string): string {
   switch (status) {
@@ -225,6 +236,8 @@ export function SrcTab({ taskId }: { taskId: string }) {
   const [ledgerVerdictReason, setLedgerVerdictReason] = React.useState("");
   const [ledgerError, setLedgerError] = React.useState("");
   const [ledgerSaving, setLedgerSaving] = React.useState(false);
+  const [ledgerEvents, setLedgerEvents] = React.useState<SrcSubmissionEvent[]>([]);
+  const [ledgerEventsLoading, setLedgerEventsLoading] = React.useState(false);
 
   const [prepareOpen, setPrepareOpen] = React.useState(false);
   const [prepFindingID, setPrepFindingID] = React.useState("");
@@ -386,6 +399,13 @@ export function SrcTab({ taskId }: { taskId: string }) {
     setLedgerReward(sub.reward ?? "");
     setLedgerVerdictReason(sub.verdict_reason ?? "");
     setLedgerError("");
+    setLedgerEvents([]);
+    setLedgerEventsLoading(true);
+    void api
+      .srcSubmissionEvents(sub.id)
+      .then((r) => setLedgerEvents(r.events ?? []))
+      .catch(() => setLedgerEvents([]))
+      .finally(() => setLedgerEventsLoading(false));
   };
 
   const submitLedger = async () => {
@@ -815,6 +835,7 @@ export function SrcTab({ taskId }: { taskId: string }) {
                     <TableHead>状态</TableHead>
                     <TableHead>平台编号</TableHead>
                     <TableHead>回报</TableHead>
+                    <TableHead className="text-right">等待</TableHead>
                     <TableHead className="text-right">操作</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -846,6 +867,17 @@ export function SrcTab({ taskId }: { taskId: string }) {
                       </TableCell>
                       <TableCell className="font-mono text-xs">{sub.external_id || "—"}</TableCell>
                       <TableCell className="text-xs">{sub.reward || "—"}</TableCell>
+                      <TableCell className="text-right text-xs tabular-nums">
+                        {(() => {
+                          const days = submissionAgeDays(sub);
+                          if (days == null) return "—";
+                          return (
+                            <span className={days >= 7 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}>
+                              {days} 天
+                            </span>
+                          );
+                        })()}
+                      </TableCell>
                       <TableCell className="text-right">
                         <Button size="sm" variant="ghost" onClick={() => openLedger(sub)}>
                           改状态
@@ -1078,6 +1110,38 @@ export function SrcTab({ taskId }: { taskId: string }) {
             {ledgerError ? (
               <p className="text-destructive text-xs [overflow-wrap:anywhere]">{ledgerError}</p>
             ) : null}
+            <div className="grid gap-1.5 border-t pt-3">
+              <Label className="text-xs">状态历史</Label>
+              {ledgerEventsLoading ? (
+                <p className="text-muted-foreground text-xs">加载中…</p>
+              ) : ledgerEvents.length === 0 ? (
+                <p className="text-muted-foreground text-xs">暂无历史记录。</p>
+              ) : (
+                <div className="grid max-h-44 gap-1 overflow-y-auto pr-1">
+                  {[...ledgerEvents].reverse().map((ev) => (
+                    <div key={ev.id} className="rounded border p-1.5 text-[11px]">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                        <span className="text-muted-foreground tabular-nums">
+                          {new Date(ev.created_at).toLocaleString("zh-CN", { hour12: false })}
+                        </span>
+                        <span className="font-medium">
+                          {(SUBMISSION_STATUS_LABELS[ev.from_status ?? ""] ?? ev.from_status) || "新建"} →{" "}
+                          {SUBMISSION_STATUS_LABELS[ev.to_status] ?? ev.to_status}
+                        </span>
+                        {ev.actor ? <span className="text-muted-foreground">by {ev.actor}</span> : null}
+                      </div>
+                      <div className="text-muted-foreground [overflow-wrap:anywhere]">
+                        {ev.external_id ? `编号 ${ev.external_id} · ` : ""}
+                        {ev.platform_level ? `等级 ${ev.platform_level} · ` : ""}
+                        {ev.reward ? `回报 ${ev.reward} · ` : ""}
+                        {ev.verdict_reason ? `原因 ${VERDICT_REASON_LABELS[ev.verdict_reason] ?? ev.verdict_reason}` : ""}
+                        {ev.note ? ` ${ev.note}` : ""}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setLedgerTarget(null)}>

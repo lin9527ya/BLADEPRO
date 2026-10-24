@@ -27,6 +27,9 @@ var reviewKinds = map[string]bool{
 	"dedupe_pending":      true,
 	"budget_stop":         true,
 	"suspicious_na":       true,
+	"ready_stale":         true,
+	"submitted_stale":     true,
+	"accepted_unpaid":     true,
 }
 
 var fourPieceAreas = []string{"injection", "ssrf", "xss", "rce"}
@@ -34,7 +37,11 @@ var fourPieceAreas = []string{"injection", "ssrf", "xss", "rce"}
 func (s *Server) listReviewQueue(w http.ResponseWriter, r *http.Request) {
 	limit := atoiDefault(r.URL.Query().Get("limit"), 200)
 	kindFilter := strings.TrimSpace(r.URL.Query().Get("kind"))
-	items, err := s.m.pg.ReviewQueue(r.Context(), limit)
+	slaDays := atoiDefault(r.URL.Query().Get("sla_days"), 7)
+	if slaDays <= 0 || slaDays > 90 {
+		slaDays = 7
+	}
+	items, err := s.m.pg.ReviewQueue(r.Context(), limit, slaDays)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -96,6 +103,12 @@ func reviewScore(it db.ReviewItem) int {
 	case "report_missing":
 		bonus = 40
 	case "retest_inconclusive":
+		bonus = 35
+	case "ready_stale":
+		bonus = 45
+	case "submitted_stale":
+		bonus = 40
+	case "accepted_unpaid":
 		bonus = 35
 	case "budget_stop":
 		bonus = 20
@@ -192,6 +205,10 @@ func (s *Server) applyReviewAction(ctx context.Context, action string, it review
 		if it.TaskID <= 0 || it.AssetID <= 0 {
 			return fmt.Errorf("四件套 N/A 项缺少 task_id/asset_id")
 		}
+	case "ready_stale", "submitted_stale", "accepted_unpaid":
+		if it.FindingID <= 0 || it.SubmissionID <= 0 {
+			return fmt.Errorf("台账 SLA 项缺少 finding_id/submission_id")
+		}
 	}
 	switch action {
 	case "accept":
@@ -210,10 +227,12 @@ func (s *Server) applyReviewAction(ctx context.Context, action string, it review
 		case "dedupe_pending":
 			if it.SubmissionID > 0 {
 				status := db.SrcSubDuplicate
-				if _, err := s.m.pg.Src().UpdateSrcSubmission(ctx, it.SubmissionID, db.SrcSubmissionPatch{Status: &status}); err != nil {
+				if _, err := s.m.pg.Src().UpdateSrcSubmission(ctx, it.SubmissionID, db.SrcSubmissionPatch{Status: &status, Actor: "review"}); err != nil {
 					return err
 				}
 			}
+		case "ready_stale", "submitted_stale", "accepted_unpaid":
+			// 接受 = 认可当前等待状态，只留痕；平台结论仍由平台给。
 		}
 	case "reject":
 		switch it.Kind {
@@ -245,6 +264,14 @@ func (s *Server) applyReviewAction(ctx context.Context, action string, it review
 					return err
 				}
 			}
+		case "ready_stale":
+			// 打回一个还没提交的 ready 件 = 撤回，不让它继续占着交付队列。
+			status := db.SrcSubWithdrawn
+			if _, err := s.m.pg.Src().UpdateSrcSubmission(ctx, it.SubmissionID, db.SrcSubmissionPatch{Status: &status, Actor: "review"}); err != nil {
+				return err
+			}
+		case "submitted_stale", "accepted_unpaid":
+			// 平台已接手，不能由本地"打回"改写平台结论；只留痕让人去平台跟进。
 		}
 	case "retest":
 		switch it.Kind {
@@ -264,6 +291,10 @@ func (s *Server) applyReviewAction(ctx context.Context, action string, it review
 				if _, err := s.m.pg.Src().DeleteSrcCells(ctx, it.TaskID, it.AssetID, area, ""); err != nil {
 					return err
 				}
+			}
+		case "ready_stale", "submitted_stale", "accepted_unpaid":
+			if _, _, _, err := s.startFindingRetestCore(ctx, it.FindingID, note); err != nil {
+				return err
 			}
 		}
 	}
@@ -292,6 +323,12 @@ func reviewKindLabel(kind string) string {
 		return "预算停"
 	case "suspicious_na":
 		return "四件套全 N/A"
+	case "ready_stale":
+		return "待提交超 SLA"
+	case "submitted_stale":
+		return "已提交超 SLA"
+	case "accepted_unpaid":
+		return "已受理未到账"
 	}
 	return kind
 }

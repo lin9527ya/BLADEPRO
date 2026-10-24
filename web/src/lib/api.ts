@@ -115,6 +115,7 @@ import type {
   SrcProgramInput,
   SrcStats,
   SrcSubmission,
+  SrcSubmissionEvent,
   SrcTaskState,
   SSProject,
   SSTask,
@@ -554,6 +555,9 @@ export const api = {
       `/src/submissions${suffix ? `?${suffix}` : ""}`,
     );
   },
+  // 台账状态历史（新建/推进/关键字段变更）。
+  srcSubmissionEvents: (id: number) =>
+    get<{ events: SrcSubmissionEvent[]; total: number }>(`/src/submissions/${id}/events`),
   // 推进台账状态机（submitted 必须带 external_id；duplicate 必须先登记 dedupe_of）。
   patchSrcSubmission: (
     id: number,

@@ -27,6 +27,8 @@ type SrcPrepareRequest struct {
 	Description string `json:"description,omitempty"`
 	Impact      string `json:"impact,omitempty"`
 	Fix         string `json:"fix,omitempty"`
+	// Actor 只由宿主设置（human/agent），用于台账状态历史。
+	Actor string `json:"-"`
 }
 
 // SrcDuplicateRef 是查重命中的一条（可能是别的任务里的同一个洞）。

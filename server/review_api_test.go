@@ -126,6 +126,42 @@ VALUES ($1,'IDOR','复核测试发现','high','pending') RETURNING id`, task.ID)
 		}
 	}
 
+	// ready 超 SLA 打回 → 台账 withdrawn。
+	var staleFinding int64
+	if err := m.pg.QueryRow(`INSERT INTO findings(task_id, vulnclass, name, severity, status)
+VALUES ($1,'XSS','待提交超时','medium','confirmed') RETURNING id`, task.ID).Scan(&staleFinding); err != nil {
+		t.Fatalf("stale finding: %v", err)
+	}
+	if _, err := m.pg.Exec(`INSERT INTO src_submissions(task_id, finding_id, platform, status, title, severity, created_at, updated_at)
+VALUES ($1,$2,'','ready','待提交超时','medium', now()-interval '10 days', now()-interval '10 days')`, task.ID, staleFinding); err != nil {
+		t.Fatalf("stale submission: %v", err)
+	}
+	code, out = do("GET", "/api/review/queue", nil)
+	var staleItem map[string]any
+	for _, raw := range out["items"].([]any) {
+		item := raw.(map[string]any)
+		if item["kind"] == "ready_stale" && int64(item["finding_id"].(float64)) == staleFinding {
+			staleItem = item
+		}
+	}
+	if staleItem == nil {
+		t.Fatalf("ready_stale item missing: %v", out)
+	}
+	code, out = do("POST", "/api/review/actions", map[string]any{
+		"action": "reject", "note": "超时撤回",
+		"items": []map[string]any{staleItem},
+	})
+	if code != 200 || out["ok"].(float64) != 1 {
+		t.Fatalf("reject stale: %d %v", code, out)
+	}
+	var staleStatus string
+	if err := m.pg.QueryRow(`SELECT status FROM src_submissions WHERE finding_id=$1 AND platform=''`, staleFinding).Scan(&staleStatus); err != nil {
+		t.Fatal(err)
+	}
+	if staleStatus != db.SrcSubWithdrawn {
+		t.Fatalf("stale status=%q want withdrawn", staleStatus)
+	}
+
 	// retest 预算停 → 删除该格（变回空白）。
 	if _, err := m.pg.Src().UpsertSrcCell(ctx, &db.SrcCell{
 		TaskID: task.ID, AssetID: assetID, Area: "xss", Item: "*",

@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+### 新增：台账闭环——状态历史与 SLA 提醒（P2）
+
+- 新表 `src_submission_events`：台账新建、状态推进、平台编号/等级/回报/驳回原因/
+  备注变化都留痕（actor 区分 agent/human/review）；准备与更新在同一事务里写历史。
+- 新接口 `GET /api/src/submissions/{id}/events`；发现详情台账弹窗展示时间线
+  （谁在何时把状态推到哪一步、编号/回报/驳回原因）。
+- 台账列表增加「等待」列：ready/submitted/accepted 停留 ≥7 天标黄提醒。
+- 复核队列新增三类 SLA 项：ready 超期未提交、submitted 超期无平台结论、
+  accepted 超期未到账（默认 7 天，可用 `sla_days` 调整）；接受=留痕，
+  ready 打回=撤回，其余打回不篡改平台结论，退回重测走独立复验。
+- 回归：状态历史新建/推进/字段变化、SLA 队列项与 ready 打回撤回、台账弹窗历史。
 ### 新增：SRC 自动入范围白名单（P2）
 
 - `insert_assets` 与 worker 意图资产在 SRC 任务里不再无条件写 `task_scope`：

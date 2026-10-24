@@ -203,6 +203,8 @@ type SrcSubmissionInput struct {
 	// P3：绑定的平台项目 + 该项目等级映射后的平台等级（没有映射时为空）。
 	ProgramID     int64
 	PlatformLevel string
+	// Actor 记入状态历史（agent / human / system）；空 = agent。
+	Actor string
 }
 
 // PrepareSrcSubmission 写（或更新）一条台账 + 它的元数据，并把报告是否齐备记到
@@ -237,6 +239,9 @@ func (s *SrcStore) PrepareSrcSubmission(ctx context.Context, in SrcSubmissionInp
 	if in.ProgramID > 0 {
 		programID = in.ProgramID
 	}
+	oldStatus := ""
+	_ = tx.QueryRowContext(ctx, `SELECT status FROM src_submissions WHERE finding_id=$1 AND platform=$2`, in.FindingID, platform).Scan(&oldStatus)
+	var committedStatus string
 	err = tx.QueryRowContext(ctx, `
 INSERT INTO src_submissions(task_id, finding_id, platform, title, severity, status, fingerprint,
                             description, impact, fix, report_md, program_id, platform_level)
@@ -254,9 +259,9 @@ ON CONFLICT (finding_id, platform) DO UPDATE SET
     -- 已交出去的行保持它自己的状态：重写正文不该把它拉回 draft。
     status         = CASE WHEN src_submissions.status IN ('submitted','accepted','duplicate','rejected','paid','withdrawn')
                           THEN src_submissions.status ELSE EXCLUDED.status END
-RETURNING id`,
+RETURNING id, status`,
 		in.TaskID, in.FindingID, platform, in.Title, in.Severity, status, in.Fingerprint,
-		in.Description, in.Impact, in.Fix, in.ReportMD, programID, in.PlatformLevel).Scan(&rowID)
+		in.Description, in.Impact, in.Fix, in.ReportMD, programID, in.PlatformLevel).Scan(&rowID, &committedStatus)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -272,6 +277,17 @@ ON CONFLICT (finding_id) DO UPDATE SET
     updated_at           = now()`,
 		in.FindingID, in.TaskID, in.Fingerprint, in.DegradedFingerprint, string(compliance), in.ReportReady); err != nil {
 		return nil, nil, err
+	}
+	if oldStatus == "" || oldStatus != committedStatus {
+		actor := strings.TrimSpace(in.Actor)
+		if actor == "" {
+			actor = "agent"
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO src_submission_events(submission_id, from_status, to_status, external_id, platform_level, actor)
+VALUES ($1,$2,$3,'',$4,$5)`, rowID, oldStatus, committedStatus, in.PlatformLevel, actor); err != nil {
+			return nil, nil, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, nil, err
@@ -372,6 +388,8 @@ func (s *SrcStore) ListSrcSubmissions(ctx context.Context, f SrcSubmissionFilter
 
 // SrcSubmissionPatch is a partial ledger update (nil = leave unchanged).
 type SrcSubmissionPatch struct {
+	// Actor 是状态历史里的操作者（human / agent / system）；空 = human。
+	Actor         string  `json:"-"`
 	Status        *string `json:"status,omitempty"`
 	ExternalID    *string `json:"external_id,omitempty"`
 	PlatformLevel *string `json:"platform_level,omitempty"`
@@ -453,7 +471,15 @@ func (s *SrcStore) UpdateSrcSubmission(ctx context.Context, id int64, patch SrcS
 		now := time.Now()
 		verdictAt = &now
 	}
-	_, err = s.db.ExecContext(ctx, `
+	changed := nextStatus != cur.Status || externalID != cur.ExternalID ||
+		platformLevel != cur.PlatformLevel || reward != cur.Reward ||
+		note != cur.Note || verdictReason != cur.VerdictReason
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `
 UPDATE src_submissions SET
     status         = $2,
     external_id    = $3,
@@ -463,8 +489,22 @@ UPDATE src_submissions SET
     verdict_reason = $7,
     submitted_at   = COALESCE($8, submitted_at),
     verdict_at     = COALESCE($9, verdict_at)
-WHERE id=$1`, id, nextStatus, externalID, platformLevel, reward, note, verdictReason, submittedAt, verdictAt)
-	if err != nil {
+WHERE id=$1`, id, nextStatus, externalID, platformLevel, reward, note, verdictReason, submittedAt, verdictAt); err != nil {
+		return nil, err
+	}
+	if changed {
+		actor := strings.TrimSpace(patch.Actor)
+		if actor == "" {
+			actor = "human"
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO src_submission_events(submission_id, from_status, to_status, external_id, platform_level, reward, verdict_reason, note, actor)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+			id, cur.Status, nextStatus, externalID, platformLevel, reward, verdictReason, note, actor); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return s.GetSrcSubmission(ctx, id)

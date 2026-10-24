@@ -210,6 +210,7 @@ func (e *Engine) deadlineCoordinator(ctx context.Context, t *Task) {
 		if time.Since(lastAssetBudgetCheck) >= assetBudgetSweepInterval && !e.isSettling(t.ID) {
 			lastAssetBudgetCheck = time.Now()
 			e.checkAssetTokenBudgets(ctx, t)
+			e.checkAssetTimeBudgets(ctx, t)
 		}
 		// P20 探索策略停摆：策略内已无可行方向（窗口内被拒达阈值、期间没有任何成功
 		// 创建的意图、也没有在跑的活）——再唤醒 planner 只会继续烧 token，主动收尾。

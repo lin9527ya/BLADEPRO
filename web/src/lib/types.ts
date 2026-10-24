@@ -1937,6 +1937,9 @@ export interface Settings {
   // 资产级 token 预算（SRC，默认 0=关）：单资产用量达上限后停止派意图并把未完成格
   // 转 budget_stop；建任务时快照进 mode_doc。
   src_asset_token_budget?: number;
+  // 资产级墙钟预算（SRC，分钟，默认 0=关）：从资产首次产生 LLM 用量起算，到点后与
+  // token 预算同样收口并转向其他资产；建任务时快照进 mode_doc。
+  src_asset_time_budget_minutes?: number;
   // 任务并发上限:同时「运行中」的任务数上限。关闭=不限;开启后新建任务超限则排队,有空位自动启动。
   task_concurrency_enabled?: boolean; // 默认 false
   task_concurrency_limit?: number; // 开启后默认 5

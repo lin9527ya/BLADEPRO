@@ -5,8 +5,18 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"strconv"
+	"time"
 )
+
+// AssetTimeUsage is one asset's wall-clock spend inside a task: the timestamp of
+// its first attributed LLM call and how long ago that was.
+type AssetTimeUsage struct {
+	AssetID     int64     `json:"asset_id"`
+	StartedAt   time.Time `json:"started_at"`
+	UsedMinutes int       `json:"used_minutes"`
+}
 
 // TokenUsedByAsset sums the token spend attributed to one asset in this task.
 func (s *SrcStore) TokenUsedByAsset(ctx context.Context, taskID, assetID int64) (int64, error) {
@@ -64,4 +74,55 @@ ORDER BY used DESC, asset_id`, strconv.FormatInt(taskID, 10), budget)
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// AssetsOverTimeBudget returns the assets whose first attributed call is older
+// than the per-asset wall-clock budget. An asset that has not produced any LLM
+// usage yet has no start time and is never considered exhausted.
+func (s *SrcStore) AssetsOverTimeBudget(ctx context.Context, taskID int64, minutes int) ([]AssetTimeUsage, error) {
+	if s == nil || s.db == nil || taskID <= 0 || minutes <= 0 {
+		return []AssetTimeUsage{}, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT asset_id, MIN(ts)
+FROM llm_usage WHERE task_id=$1 AND asset_id > 0
+GROUP BY asset_id
+HAVING MIN(ts) <= now() - ($2::int * interval '1 minute')
+ORDER BY MIN(ts), asset_id`, strconv.FormatInt(taskID, 10), minutes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	now := time.Now()
+	out := []AssetTimeUsage{}
+	for rows.Next() {
+		var u AssetTimeUsage
+		if err := rows.Scan(&u.AssetID, &u.StartedAt); err != nil {
+			return nil, err
+		}
+		u.UsedMinutes = int(now.Sub(u.StartedAt).Minutes())
+		if u.UsedMinutes < minutes {
+			u.UsedMinutes = minutes
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// AssetStartedAt returns when an asset first produced LLM usage in this task
+// (zero time when it has none yet). The asset time budget measures from here:
+// an asset that was never worked on has no clock running.
+func (s *SrcStore) AssetStartedAt(ctx context.Context, taskID, assetID int64) (time.Time, error) {
+	if s == nil || s.db == nil || taskID <= 0 || assetID <= 0 {
+		return time.Time{}, nil
+	}
+	var started sql.NullTime
+	err := s.db.QueryRowContext(ctx, `SELECT MIN(ts) FROM llm_usage WHERE task_id=$1 AND asset_id=$2`,
+		strconv.FormatInt(taskID, 10), assetID).Scan(&started)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if !started.Valid {
+		return time.Time{}, nil
+	}
+	return started.Time, nil
 }

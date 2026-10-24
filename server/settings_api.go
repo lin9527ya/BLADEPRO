@@ -83,13 +83,16 @@ func (s *Server) settingsPayload() map[string]any {
 		// 资产级 token 预算（默认 0=关）：SRC 任务里单资产用量达上限后停止派意图并
 		// 把未完成格转 budget_stop；建任务时快照进 mode_doc。
 		"src_asset_token_budget": s.srcAssetTokenBudget(),
-		"llm_record":             s.m.LLMRecordEnabled(),
-		"web_search_enabled":     on,
-		"web_search_backend":     backend,
-		"brave_key_set":          strings.TrimSpace(braveKey) != "",
-		"tavily_key_set":         strings.TrimSpace(tavilyKey) != "",
-		"web_search_proxy":       proxy,             // 独立出口代理(http/https/socks5)，空=直连
-		"global_proxy":           s.m.GlobalProxy(), // 全局出口代理(http/https/socks5)，所有目标流量走它，空=直连
+		// 资产级墙钟预算（分钟，默认 0=关）：从资产首次产生 LLM 用量起算，
+		// 到点后与 token 预算同样收口并转向其他资产。
+		"src_asset_time_budget_minutes": s.srcAssetTimeBudgetMinutes(),
+		"llm_record":                    s.m.LLMRecordEnabled(),
+		"web_search_enabled":            on,
+		"web_search_backend":            backend,
+		"brave_key_set":                 strings.TrimSpace(braveKey) != "",
+		"tavily_key_set":                strings.TrimSpace(tavilyKey) != "",
+		"web_search_proxy":              proxy,             // 独立出口代理(http/https/socks5)，空=直连
+		"global_proxy":                  s.m.GlobalProxy(), // 全局出口代理(http/https/socks5)，所有目标流量走它，空=直连
 		// 出站速率治理（录制代理层）：0 = 关闭。host 桶与全局桶同时生效。
 		"egress_global_qps":        egressGlobal,
 		"egress_host_qps":          egressHost,
@@ -205,7 +208,8 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		AgentAutoRetest     *bool  `json:"agent_auto_retest"`
 		TaskTokenBudget     *int64 `json:"task_token_budget"`
 		SrcAssetTokenBudget *int64 `json:"src_asset_token_budget"`
-		LLMRecord           *bool  `json:"llm_record"` // LLM 录制开关（默认关）；即时生效，无需重建 agent
+		SrcAssetTimeBudget  *int   `json:"src_asset_time_budget_minutes"` // 分钟；0=关
+		LLMRecord           *bool  `json:"llm_record"`                    // LLM 录制开关（默认关）；即时生效，无需重建 agent
 		// Web search. WebSearchEnabled/Backend toggle the tool + backend; BraveKey/TavilyKey
 		// are optional — omit (null) to leave a stored key untouched, send "" to clear.
 		WebSearchEnabled *bool   `json:"web_search_enabled"`
@@ -579,6 +583,17 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.m.pg.SetSetting(settingAssetTokenBudget, strconv.FormatInt(v, 10)); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.SrcAssetTimeBudget != nil {
+		v := *req.SrcAssetTimeBudget
+		if v < 0 || v > 30*24*60 {
+			writeErr(w, 400, "资产时间预算必须是 0–43200 分钟（30 天；0 = 关闭）")
+			return
+		}
+		if err := s.m.pg.SetSetting(settingAssetTimeBudget, strconv.Itoa(v)); err != nil {
 			writeErr(w, 500, err.Error())
 			return
 		}

@@ -43,6 +43,10 @@ export function RuntimeSection({ s }: { s: ReturnType<typeof useSettingsState> }
     setAssetTokenBudget,
     savingAssetBudget,
     saveAssetTokenBudget,
+    assetTimeBudget,
+    setAssetTimeBudget,
+    savingAssetTimeBudget,
+    saveAssetTimeBudget,
     egressGlobalQPS,
     setEgressGlobalQPS,
     egressHostQPS,
@@ -116,6 +120,40 @@ export function RuntimeSection({ s }: { s: ReturnType<typeof useSettingsState> }
                 onChange={(e) => setAssetTokenBudget(e.target.value)}
               />
               <Button type="button" onClick={saveAssetTokenBudget} disabled={!loaded || savingAssetBudget}>
+                保存
+              </Button>
+            </div>
+          </Field>
+        </SubBlock>
+
+        <SubBlock title="资产时间预算（SRC）" icon={<GaugeIcon className="text-muted-foreground size-4" />}>
+          <Field
+            label="单资产墙钟预算（分钟）"
+            htmlFor="asset-time-budget"
+            hint={
+              <>
+                仅 SRC 任务：从资产<b>首次产生 LLM 用量</b>起算。单个资产投入超过上限后，新意图会被拒绝，
+                未完成的覆盖格自动转 budget_stop，预算转向其他资产；任务本身不会因此收尾。建任务时快照，
+                运行中改全局设置不影响已建任务。留空或 <b>0</b> = 关闭。
+                <br />
+                {Number(assetTimeBudget) > 0
+                  ? `已配置 · 单资产超过 ${assetTimeBudget} 分钟自动收口`
+                  : "未配置 · 资产不设时间上限"}
+              </>
+            }
+          >
+            <div className="flex items-center gap-2">
+              <Input
+                id="asset-time-budget"
+                inputMode="numeric"
+                autoComplete="off"
+                className="max-w-xl"
+                placeholder="例如 120（0 = 关闭）"
+                value={assetTimeBudget}
+                disabled={!loaded || savingAssetTimeBudget}
+                onChange={(e) => setAssetTimeBudget(e.target.value)}
+              />
+              <Button type="button" onClick={saveAssetTimeBudget} disabled={!loaded || savingAssetTimeBudget}>
                 保存
               </Button>
             </div>

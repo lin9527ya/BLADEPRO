@@ -23,6 +23,8 @@ const (
 	maxAttemptsLimit          = 10
 	maxIntentsPerAssetLimit   = 500
 	maxAssetTokenBudget       = 1_000_000_000_000
+	// maxAssetTimeBudgetMinutes caps the per-asset wall-clock budget (30 days).
+	maxAssetTimeBudgetMinutes = 30 * 24 * 60
 	DocVersion                = 1
 )
 
@@ -52,6 +54,11 @@ type ModeDoc struct {
 	// 新意图会被 add_intent 拒绝，引擎把该资产未完成的格自动标成 budget_stop，
 	// 并向 planner 投递一次提示，让预算转向其他资产。
 	AssetTokenBudget int64 `json:"asset_token_budget,omitempty"`
+	// AssetTimeBudgetMinutes 是单个资产的墙钟预算（分钟，0 = 不限）。从该资产第一次
+	// 产生 LLM 用量起算；到点后与 token 预算同样收口：未完成格转 budget_stop，
+	// 新意图被拒，预算转向其他资产。时间预算不因暂停/等待人工而暂停——它约束的是
+	// 「这个资产占用了任务多久」，不是模型实际思考时长。
+	AssetTimeBudgetMinutes int `json:"asset_time_budget_minutes,omitempty"`
 	// HardItems 是"必须逐个点亮"的细分项（如 paths/enum-200）；不写则每个面只需 '*'。
 	HardItems []string `json:"hard_items,omitempty"`
 	// SkipReportGate 关掉"medium+ 发现必须齐备可提交件"这条收尾门（默认**要求**）。
@@ -143,6 +150,12 @@ func Resolve(mode string, raw json.RawMessage) (json.RawMessage, ModeDoc, error)
 	}
 	if doc.AssetTokenBudget > maxAssetTokenBudget {
 		return nil, ModeDoc{}, fmt.Errorf("asset_token_budget 不能超过 %d", int64(maxAssetTokenBudget))
+	}
+	if doc.AssetTimeBudgetMinutes < 0 {
+		return nil, ModeDoc{}, fmt.Errorf("asset_time_budget_minutes 不能为负数（0 = 不限）")
+	}
+	if doc.AssetTimeBudgetMinutes > maxAssetTimeBudgetMinutes {
+		return nil, ModeDoc{}, fmt.Errorf("asset_time_budget_minutes 不能超过 %d（30 天）", maxAssetTimeBudgetMinutes)
 	}
 	for assetType, areas := range doc.RequiredAreas {
 		if !IsAssetType(assetType) {

@@ -101,3 +101,85 @@ VALUES ($1,'subdomain',$2,'manual','asset budget test')`, taskID, domain); err !
 		t.Fatalf("second sweep touched the cell again: %+v %v", again, err)
 	}
 }
+
+// TestCheckAssetTimeBudgetsStopsAsset pins the wall-clock sibling of the token
+// budget: an asset worked on past the budget closes its untouched cells once,
+// while a fresh asset (no usage yet) is untouched.
+func TestCheckAssetTimeBudgetsStopsAsset(t *testing.T) {
+	m, err := NewManager(t.TempDir(), "")
+	if err != nil {
+		t.Skipf("postgres unavailable (%v) — skipping", err)
+	}
+	defer m.Close()
+
+	doc := srcmode.DefaultDoc()
+	doc.AssetTimeBudgetMinutes = 60
+	doc.AllowBudgetStop = true
+	raw, _ := json.Marshal(doc)
+	task, err := m.CreateTaskWithOptions("asset-time-budget", "资产级时间预算",
+		db.TaskCreateOptions{Mode: srcmode.ModeSrc, ModeDoc: raw})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	taskID, err := strconv.ParseInt(task.ID, 10, 64)
+	if err != nil || taskID <= 0 {
+		t.Fatalf("bad task id %q", task.ID)
+	}
+	t.Cleanup(func() { _ = m.pg.DeleteTask(taskID) })
+
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
+	oldDomain := "asset-time-old-" + suffix + ".example"
+	freshDomain := "asset-time-fresh-" + suffix + ".example"
+	ctx := context.Background()
+	mkAsset := func(domain string) int64 {
+		id, err := m.pg.Assets().UpsertSubdomain(db.UpsertSubdomainReq{Domain: domain, TaskID: taskID})
+		if err != nil {
+			t.Fatalf("upsert asset %s: %v", domain, err)
+		}
+		t.Cleanup(func() { _, _ = m.pg.Exec(`DELETE FROM assets WHERE id=$1`, id) })
+		if _, err := m.pg.Exec(`INSERT INTO task_scope(task_id, kind, domain, source, reason)
+VALUES ($1,'subdomain',$2,'manual','asset time budget test')`, taskID, domain); err != nil {
+			t.Fatalf("dst scope: %v", err)
+		}
+		return id
+	}
+	oldAsset := mkAsset(oldDomain)
+	freshAsset := mkAsset(freshDomain)
+	if err := m.pg.InsertLLMUsage(&db.LLMUsage{
+		TaskID: strconv.FormatInt(taskID, 10), AssetID: oldAsset,
+		Worker: "worker", InputTokens: 10, OutputTokens: 10, Status: "ok",
+	}); err != nil {
+		t.Fatalf("insert usage: %v", err)
+	}
+	// 把首次用量推到 2 小时前：超过 60 分钟预算。
+	if _, err := m.pg.Exec(`UPDATE llm_usage SET ts=now()-interval '2 hours' WHERE task_id=$1 AND asset_id=$2`,
+		strconv.FormatInt(taskID, 10), oldAsset); err != nil {
+		t.Fatalf("backdate usage: %v", err)
+	}
+
+	tk, ok := m.Task(task.ID)
+	if !ok {
+		t.Fatal("task not in manager")
+	}
+	e := NewEngine(m)
+	e.checkAssetTimeBudgets(ctx, tk)
+
+	areas := doc.RequiredFor("subdomain")
+	stopped, err := m.pg.Src().GetSrcCell(ctx, taskID, oldAsset, areas[0], srcmode.AreaAll)
+	if err != nil || stopped == nil {
+		t.Fatalf("old asset should be closed: %+v %v", stopped, err)
+	}
+	if stopped.State != db.SrcStateBudgetStop || !strings.Contains(stopped.Reason, "时间预算") {
+		t.Fatalf("stopped cell=%+v", stopped)
+	}
+	if fresh, err := m.pg.Src().GetSrcCell(ctx, taskID, freshAsset, areas[0], srcmode.AreaAll); err != nil || fresh != nil {
+		t.Fatalf("fresh asset must not be closed: %+v %v", fresh, err)
+	}
+
+	// 幂等：第二次扫描不改写已收口的格。
+	e.checkAssetTimeBudgets(ctx, tk)
+	again, err := m.pg.Src().GetSrcCell(ctx, taskID, oldAsset, areas[0], srcmode.AreaAll)
+	if err != nil || again == nil || again.Attempts != stopped.Attempts {
+		t.Fatalf("second sweep touched the cell again: %+v %v", again, err)
+	}
+}

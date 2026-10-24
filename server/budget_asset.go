@@ -25,6 +25,7 @@ import (
 
 const (
 	settingAssetTokenBudget = "src_asset_token_budget"
+	settingAssetTimeBudget  = "src_asset_time_budget_minutes"
 	// 资产预算扫描节流：llm_usage 是热表，每 15s 一次足够及时且不增加明显负担。
 	assetBudgetSweepInterval = 15 * time.Second
 	maxAssetTokenBudgetValue = int64(1_000_000_000_000)
@@ -33,6 +34,28 @@ const (
 // srcAssetTokenBudget resolves the global per-asset token budget (0 = off).
 func (s *Server) srcAssetTokenBudget() int64 {
 	return parseTokenBudgetSetting(s.m.pg, settingAssetTokenBudget)
+}
+
+// srcAssetTimeBudgetMinutes resolves the global per-asset wall-clock budget
+// (minutes, 0 = off).
+func (s *Server) srcAssetTimeBudgetMinutes() int {
+	pg := s.m.pg
+	if pg == nil {
+		return 0
+	}
+	v, ok, err := pg.GetSetting(settingAssetTimeBudget)
+	if err != nil || !ok {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n <= 0 {
+		return 0
+	}
+	const max = 30 * 24 * 60
+	if n > max {
+		n = max
+	}
+	return n
 }
 
 // parseTokenBudgetSetting reads a non-negative token budget setting.
@@ -75,7 +98,8 @@ func (e *Engine) checkAssetTokenBudgets(ctx context.Context, t *Task) {
 		if _, loaded := e.assetBudgetDone.LoadOrStore(key, true); loaded {
 			continue
 		}
-		marked, err := markAssetBudgetStop(ctx, e.m.pg.Src(), taskID, doc, usage.AssetID, doc.AssetTokenBudget, usage.Tokens)
+		reason := fmt.Sprintf("资产 token 预算耗尽（%d/%d），未完成项自动收口为 budget_stop", usage.Tokens, doc.AssetTokenBudget)
+		marked, err := markAssetStop(ctx, e.m.pg.Src(), taskID, doc, usage.AssetID, reason)
 		if err != nil {
 			e.assetBudgetDone.Delete(key) // 下一轮重试；不要吞掉一次瞬时 DB 错误
 			log.Printf("[budget] task %s 资产 #%d 预算收口失败: %v", t.ID, usage.AssetID, err)
@@ -85,10 +109,10 @@ func (e *Engine) checkAssetTokenBudgets(ctx context.Context, t *Task) {
 	}
 }
 
-// markAssetBudgetStop writes budget_stop for every still-blank required cell of
-// one asset. Existing terminal cells (including a worker's fresh result) are left
+// markAssetStop writes budget_stop for every still-blank required cell of one
+// asset. Existing terminal cells (including a worker's fresh result) are left
 // untouched; a worker that finishes later overwrites its own cell normally.
-func markAssetBudgetStop(ctx context.Context, store *db.SrcStore, taskID int64, doc srcmode.ModeDoc, assetID, budget, used int64) (int, error) {
+func markAssetStop(ctx context.Context, store *db.SrcStore, taskID int64, doc srcmode.ModeDoc, assetID int64, reason string) (int, error) {
 	asset, err := store.SrcAssetInScope(ctx, taskID, assetID)
 	if err != nil {
 		return 0, err
@@ -96,7 +120,6 @@ func markAssetBudgetStop(ctx context.Context, store *db.SrcStore, taskID int64, 
 	if asset == nil {
 		return 0, nil // 资产已移出范围：不再为它写格
 	}
-	reason := fmt.Sprintf("资产 token 预算耗尽（%d/%d），未完成项自动收口为 budget_stop", used, budget)
 	marked := 0
 	for _, area := range doc.RequiredFor(asset.Type) {
 		items := []string{srcmode.AreaAll}
@@ -121,6 +144,59 @@ func markAssetBudgetStop(ctx context.Context, store *db.SrcStore, taskID int64, 
 		}
 	}
 	return marked, nil
+}
+
+// checkAssetTimeBudgets is the wall-clock sibling of checkAssetTokenBudgets:
+// once an asset has been worked on for longer than the per-asset budget, its
+// untouched cells are closed as budget_stop and the planner is told to move on.
+// Time is measured from the asset's first attributed LLM call, so assets that
+// were never worked on are never "exhausted".
+func (e *Engine) checkAssetTimeBudgets(ctx context.Context, t *Task) {
+	if e == nil || e.m == nil || e.m.pg == nil || t == nil || strings.TrimSpace(t.Mode) != srcmode.ModeSrc {
+		return
+	}
+	doc := srcmode.Parse(t.ModeDoc)
+	if doc.AssetTimeBudgetMinutes <= 0 {
+		return
+	}
+	taskID := tidOfTask(t)
+	if taskID <= 0 {
+		return
+	}
+	exhausted, err := e.m.pg.Src().AssetsOverTimeBudget(ctx, taskID, doc.AssetTimeBudgetMinutes)
+	if err != nil {
+		log.Printf("[budget] task %s 读取资产时间预算失败: %v", t.ID, err)
+		return
+	}
+	for _, usage := range exhausted {
+		key := "time|" + t.ID + "|" + strconv.FormatInt(usage.AssetID, 10)
+		if _, loaded := e.assetTimeDone.LoadOrStore(key, true); loaded {
+			continue
+		}
+		reason := fmt.Sprintf("资产时间预算耗尽（已运行 %d 分钟 / 上限 %d 分钟），未完成项自动收口为 budget_stop",
+			usage.UsedMinutes, doc.AssetTimeBudgetMinutes)
+		marked, err := markAssetStop(ctx, e.m.pg.Src(), taskID, doc, usage.AssetID, reason)
+		if err != nil {
+			e.assetTimeDone.Delete(key)
+			log.Printf("[budget] task %s 资产 #%d 时间预算收口失败: %v", t.ID, usage.AssetID, err)
+			continue
+		}
+		text := fmt.Sprintf("⏱️【资产时间预算耗尽】资产 #%d 已投入 %d 分钟（上限 %d）：系统已把该资产 %d 个未完成格标为 budget_stop。把预算让给其他资产（focus_asset），不要在同一资产上继续加码。",
+			usage.AssetID, usage.UsedMinutes, doc.AssetTimeBudgetMinutes, marked)
+		if !doc.AllowBudgetStop {
+			text += " 当前任务不允许 budget_stop 放行，收尾门仍会把这些格报成缺口：需要人工放行或提高 asset_time_budget_minutes。"
+		}
+		e.emitActivity(t, db.Activity{Worker: "system", Kind: "system",
+			Summary: fmt.Sprintf("资产 #%d 时间预算耗尽（%d/%d 分钟），已收口 %d 格",
+				usage.AssetID, usage.UsedMinutes, doc.AssetTimeBudgetMinutes, marked),
+			Detail: text})
+		t.trigMu.Lock()
+		t.pendingTriggers = append(t.pendingTriggers, agent.TriggerEvent{Kind: "hint", Hints: []string{text}})
+		t.trigMu.Unlock()
+		t.Notify()
+		log.Printf("[budget] task %s 资产 #%d 时间预算耗尽 (%d/%d 分钟)，已收口 %d 格",
+			t.ID, usage.AssetID, usage.UsedMinutes, doc.AssetTimeBudgetMinutes, marked)
+	}
 }
 
 // assetBudgetNotice tells the planner once per exhausted asset, and records an

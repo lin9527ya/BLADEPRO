@@ -76,6 +76,9 @@ export function useSettingsState() {
   // 资产级 token 预算（SRC，0 = 关闭）。
   const [assetTokenBudget, setAssetTokenBudget] = React.useState("0");
   const [savingAssetBudget, setSavingAssetBudget] = React.useState(false);
+  // 资产级墙钟预算（SRC，分钟，0 = 关闭）。
+  const [assetTimeBudget, setAssetTimeBudget] = React.useState("0");
+  const [savingAssetTimeBudget, setSavingAssetTimeBudget] = React.useState(false);
   // 出站速率治理（录制代理层）：0 = 关闭。
   const [egressGlobalQPS, setEgressGlobalQPS] = React.useState("0");
   const [egressHostQPS, setEgressHostQPS] = React.useState("0");
@@ -151,6 +154,7 @@ export function useSettingsState() {
     setWorkers(String(s.workers ?? 3));
     setTokenBudget(String(s.task_token_budget ?? 0));
     setAssetTokenBudget(String(s.src_asset_token_budget ?? 0));
+    setAssetTimeBudget(String(s.src_asset_time_budget_minutes ?? 0));
     setEgressGlobalQPS(String(s.egress_global_qps ?? 0));
     setEgressHostQPS(String(s.egress_host_qps ?? 0));
     setEgressWaitMS(String(s.egress_max_wait_ms ?? 0));
@@ -369,6 +373,23 @@ export function useSettingsState() {
       })
       .catch((e) => toast.error("保存失败：" + (e as Error).message))
       .finally(() => setSavingAssetBudget(false));
+  };
+
+  const saveAssetTimeBudget = () => {
+    const n = Number(assetTimeBudget.trim() === "" ? "0" : assetTimeBudget);
+    if (!Number.isInteger(n) || n < 0 || n > 43200) {
+      toast.error("资产时间预算必须是 0–43200 分钟（0 = 关闭）");
+      return;
+    }
+    setSavingAssetTimeBudget(true);
+    api
+      .setSettings({ src_asset_time_budget_minutes: n })
+      .then((s) => {
+        apply(s);
+        toast.success(n > 0 ? `已保存资产时间预算（${n} 分钟）` : "已关闭资产时间预算");
+      })
+      .catch((e) => toast.error("保存失败：" + (e as Error).message))
+      .finally(() => setSavingAssetTimeBudget(false));
   };
 
   const saveEgress = () => {
@@ -750,6 +771,11 @@ export function useSettingsState() {
     setAssetTokenBudget,
     savingAssetBudget,
     setSavingAssetBudget,
+    assetTimeBudget,
+    setAssetTimeBudget,
+    savingAssetTimeBudget,
+    setSavingAssetTimeBudget,
+    saveAssetTimeBudget,
     egressGlobalQPS,
     setEgressGlobalQPS,
     egressHostQPS,

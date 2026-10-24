@@ -156,7 +156,8 @@ type Engine struct {
 	inflight        sync.Map // taskID -> *int64, 在跑的 planner.Plan + worker.Execute 计数(用于 drain)
 	coordStarted    sync.Map // taskID -> bool, deadline 协调器是否已启动(Run/reload 去重)
 	budgetStage     sync.Map // taskID -> string, token 预算提示已投递到的最高档(每档一次)
-	assetBudgetDone sync.Map // "taskID|assetID" -> bool, 资产预算耗尽收口已执行(每资产一次)
+	assetBudgetDone sync.Map // "taskID|assetID" -> bool, 资产 token 预算耗尽收口已执行(每资产一次)
+	assetTimeDone   sync.Map // "time|taskID|assetID" -> bool, 资产时间预算耗尽收口已执行(每资产一次)
 	execWatch       sync.Map // intentID -> bool, P13 执行观察者已注册(去重;执行终态→意图退回 open)
 
 	// resolve returns a task's dedicated planner/worker (wired by the server as the

@@ -205,9 +205,21 @@ func (s *Server) prepareTaskCreate(ctx context.Context, req createTaskReq) (*pre
 	}
 	// 资产级 token 预算（P2）：mode_doc 显式给了就用自己的；没给（0）则继承全局
 	// setting `src_asset_token_budget`，创建时快照进 mode_doc，运行中改全局不影响。
-	if srcDoc.IsSrc() && srcDoc.AssetTokenBudget <= 0 {
-		if v := s.srcAssetTokenBudget(); v > 0 {
-			srcDoc.AssetTokenBudget = v
+	if srcDoc.IsSrc() && (srcDoc.AssetTokenBudget <= 0 || srcDoc.AssetTimeBudgetMinutes <= 0) {
+		changed := false
+		if srcDoc.AssetTokenBudget <= 0 {
+			if v := s.srcAssetTokenBudget(); v > 0 {
+				srcDoc.AssetTokenBudget = v
+				changed = true
+			}
+		}
+		if srcDoc.AssetTimeBudgetMinutes <= 0 {
+			if v := s.srcAssetTimeBudgetMinutes(); v > 0 {
+				srcDoc.AssetTimeBudgetMinutes = v
+				changed = true
+			}
+		}
+		if changed {
 			modeDoc, err = json.Marshal(srcDoc)
 			if err != nil {
 				return nil, taskErr(500, err.Error())

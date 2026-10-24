@@ -7,6 +7,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	acperm "github.com/lin9527ya/Norma/permission"
@@ -1504,6 +1505,29 @@ func (t *ToolSet) checkAssetTokenBudget(ctx context.Context, anchors []int64) er
 	return nil
 }
 
+// checkAssetTimeBudget 落实 mode_doc.asset_time_budget_minutes：资产从首次产生
+// LLM 用量起的墙钟时间达到上限后不再接受新意图。与 token 预算同样 fail-open：
+// 统计失败不该把 planner 卡死，引擎侧仍会做 budget_stop 收口。
+func (t *ToolSet) checkAssetTimeBudget(ctx context.Context, anchors []int64) error {
+	if !t.srcMode || t.srcStore == nil || t.taskID <= 0 || t.srcDoc.AssetTimeBudgetMinutes <= 0 {
+		return nil
+	}
+	for _, aid := range anchors {
+		started, err := t.srcStore.AssetStartedAt(ctx, t.taskID, aid)
+		if err != nil || started.IsZero() {
+			continue
+		}
+		used := int(time.Since(started).Minutes())
+		if used < t.srcDoc.AssetTimeBudgetMinutes {
+			continue
+		}
+		return fmt.Errorf("资产 %d 的时间预算已用尽（已 %d 分钟 / 上限 %d 分钟，asset_time_budget_minutes）：不要再向该资产派意图；"+
+			"把未完成的格用 src_mark_cell 标 budget_stop，预算让给其他资产；确需继续请提高预算或人工放行",
+			aid, used, t.srcDoc.AssetTimeBudgetMinutes)
+	}
+	return nil
+}
+
 func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, error) {
 	if strings.TrimSpace(it.Summary) == "" {
 		return 0, "", fmt.Errorf("summary 不能为空")
@@ -1589,6 +1613,9 @@ func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, er
 			return 0, "", err
 		}
 		if err := t.checkAssetTokenBudget(context.Background(), anchors); err != nil {
+			return 0, "", err
+		}
+		if err := t.checkAssetTimeBudget(context.Background(), anchors); err != nil {
 			return 0, "", err
 		}
 	}

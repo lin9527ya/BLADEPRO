@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### 新增：SRC 全局漏斗看板（P2）
+
+- 新接口 `GET /api/src/funnel?days=30&program_id=`：一条链
+  资产 → 在范围资产 → 有终态格资产 → 有洞资产 → 中危+发现 → 报告齐备 →
+  已提交 → 已受理 → 已到账。
+- 同时返回按 program、按等级（critical/high/medium/low）与按天（UTC）的拆分，
+  以及 token / cost_usd 和「每条齐备发现的成本」。
+- 资产在范围口径复用 `scopeJoinPredicate`（含 program_scope 的 out 排除）；
+  台账状态按 finding 去重计数，避免多平台重复提交把漏斗灌水。
+- 工作台新增「SRC 转化漏斗」卡片：7/30/90 天切换、转化率、按项目表与等级摘要。
+- 回归：漏斗聚合（范围资产、终态/有洞资产、中危+、齐备、受理、token/成本、
+  按项目/等级/天拆分）；路由快照更新。
 ### 新增：高风险面 cache / desync / oauth（P2）
 
 - 新增三个风险面并进入默认覆盖矩阵：

@@ -2863,3 +2863,56 @@ export interface ReviewActionResults {
   failed: number;
   results: { ref_key: string; ok: boolean; error?: string }[];
 }
+
+// ---- SRC 全局漏斗（GET /api/src/funnel）----
+export interface SrcFunnelStage {
+  key: string;
+  label: string;
+  value: number;
+}
+
+export interface SrcFunnelProgram {
+  program_id: number;
+  name: string;
+  tasks: number;
+  assets_terminal: number;
+  findings_medium_plus: number;
+  reports_ready: number;
+  submitted: number;
+  accepted: number;
+  paid: number;
+  tokens: number;
+  cost_usd: number;
+}
+
+export interface SrcFunnelSeverity {
+  severity: string;
+  findings: number;
+  reports_ready: number;
+  submitted: number;
+  accepted: number;
+  paid: number;
+}
+
+export interface SrcFunnelDay {
+  date: string;
+  tasks: number;
+  findings: number;
+  tokens: number;
+  cost_usd: number;
+}
+
+export interface SrcFunnel {
+  days: number;
+  program_id?: number;
+  program_name?: string;
+  stages: SrcFunnelStage[];
+  tasks: number;
+  cells_terminal: number;
+  tokens: number;
+  cost_usd: number;
+  cost_per_effective: number;
+  by_program: SrcFunnelProgram[];
+  by_severity: SrcFunnelSeverity[];
+  daily: SrcFunnelDay[];
+}

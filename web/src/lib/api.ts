@@ -110,6 +110,7 @@ import type {
   SrcPrepareResult,
   ProgramScopeInput,
   ProgramScopeRow,
+  SrcFunnel,
   SrcProgram,
   SrcProgramInput,
   SrcStats,
@@ -566,6 +567,12 @@ export const api = {
   // ---- SRC 平台项目（P3）----
   // 项目 = 一个平台的规则集（禁用手段/写操作、限速、时间窗、等级映射、必做面）。
   srcPrograms: () => get<{ programs: SrcProgram[]; total: number }>("/src/programs"),
+  srcFunnel: (params?: { days?: number; programId?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.days) qs.set("days", String(params.days));
+    if (params?.programId) qs.set("program_id", String(params.programId));
+    return get<SrcFunnel>(`/src/funnel${qs.toString() ? `?${qs}` : ""}`);
+  },
   createSrcProgram: (input: SrcProgramInput) => post<SrcProgram>("/src/programs", input),
   srcProgramScope: (id: number) =>
     get<{ rows: ProgramScopeRow[]; total: number }>(`/src/programs/${id}/scope`),

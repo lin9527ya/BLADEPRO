@@ -25,6 +25,7 @@ func (s *Server) registerSrcPrograms(mux routeRegistrar) {
 	mux.HandleFunc("GET /api/src/programs/{id}/scope", s.getSrcProgramScope)
 	mux.HandleFunc("PUT /api/src/programs/{id}/scope", s.putSrcProgramScope)
 	mux.HandleFunc("GET /api/src/stats", s.getSrcStats)
+	mux.HandleFunc("GET /api/src/funnel", s.getSrcFunnel)
 }
 
 // srcProgramFromRow 把库里的 JSON 行转成 srcmode.Program（JSON 坏掉时返回错误，
@@ -372,4 +373,32 @@ func (s *Server) putSrcProgramScope(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"rows": rows, "total": len(rows)})
+}
+
+// getSrcFunnel returns the global SRC funnel plus program/severity/daily splits.
+// Query: days (default 30, max 365), program_id (0/absent = all).
+func (s *Server) getSrcFunnel(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	days := atoiDefault(q.Get("days"), 30)
+	if days <= 0 {
+		days = 30
+	}
+	if days > 365 {
+		days = 365
+	}
+	var programID int64
+	if v := strings.TrimSpace(q.Get("program_id")); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || id < 0 {
+			writeErr(w, 400, "bad program_id")
+			return
+		}
+		programID = id
+	}
+	funnel, err := s.m.PG().SrcFunnel(r.Context(), db.SrcFunnelQuery{Days: days, ProgramID: programID})
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, funnel)
 }

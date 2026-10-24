@@ -125,6 +125,7 @@ GET /api/skills/missing	server.(*Server).fsMissingSkills-fm
 GET /api/skills/{name}/files	server.(*Server).fsListFiles-fm
 GET /api/skills/{name}/files/{file...}	server.(*Server).fsReadFile-fm
 GET /api/skills/{name}/usage	server.(*Server).fsSkillUsage-fm
+GET /api/src/funnel	server.(*Server).getSrcFunnel-fm
 GET /api/src/programs	server.(*Server).listSrcPrograms-fm
 GET /api/src/programs/{id}	server.(*Server).getSrcProgram-fm
 GET /api/src/programs/{id}/scope	server.(*Server).getSrcProgramScope-fm

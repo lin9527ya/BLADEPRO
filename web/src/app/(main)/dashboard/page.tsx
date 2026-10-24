@@ -7,6 +7,7 @@ import dynamic from "next/dynamic";
 
 import { RowActivity } from "./_components/activityrow";
 import { RowAssetTraffic } from "./_components/assettrafficrow";
+import { RowSrcFunnel } from "./_components/src-funnel-card";
 import { RowStatCards } from "./_components/statcards";
 import { RowTaskTable } from "./_components/tasktable";
 import { useDashboardState } from "./_components/use-dashboard-state";
@@ -40,6 +41,9 @@ export default function DashboardPage() {
 
       {/* ── Row 2: LLM Token 消耗 ── */}
       <RowTokenCard s={tokenCard} />
+
+      {/* ── Row 2.5: SRC 转化漏斗 ── */}
+      <RowSrcFunnel />
 
       {/* ── Row 3: 活动流 | 发现 ── */}
       <RowActivity s={activityRow} />

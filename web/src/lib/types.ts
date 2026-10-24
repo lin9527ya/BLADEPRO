@@ -1358,6 +1358,15 @@ export interface Finding {
   confidence?: string; // 置信度标定 high/medium/low;空=未标定
   counterevidence?: string; // ruled_out 的反证（点名控制点）
   proof_gap?: string; // open_proof_gap 的缺口说明
+  // 影响面/定级建议（P1）：结构化字段 + 服务端算出的 CVSS 一致性提示。
+  cwe?: string;
+  cvss_vector?: string;
+  cvss_score?: number;
+  cvss_band?: string;
+  severity_agrees?: boolean;
+  impact_scope?: string;
+  repro_env?: string;
+  test_accounts?: string;
   intent_id?: string;
   param_id?: string;
   task_id?: string;

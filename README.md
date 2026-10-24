@@ -88,6 +88,8 @@ report_finding → 绑 proof/verification 流量 → src_prepare_submission（�
 
 **独立复验**：中危及以上在准备交付件前必须有一次 `verdict=reproduced` 的独立复验（retester 会话，干净上下文，只按原始证据做最小重放）。第一次准备会自动发起并落 `draft`；等结论回来后再准备一次才会 `ready`。`fixed`/`inconclusive` 不会自动重试。program 可用 `require_retest:false` 关闭。
 
+**影响面/定级建议**：`report_finding` 可填 `cwe` / `cvss_vector` / `impact_scope` / `repro_env` / `test_accounts`。服务端按 CVSS 3.1 算 base score，与自报等级不一致时只提示（`severity_agrees=false`），不替你改等级；这些字段会进发现详情与 SRC 报告头部。
+
 **去重**：精确指纹 = 受控漏洞类型 + 归一化端点集合（路径里的对象 ID 折叠为 `{id}`），只在有绑定流量时才有值。跨任务命中会写 `dedupe_of` 并把 `delivery/duplicate` 顶到收尾门上，必须有人定案（台账标 `duplicate` 或 `src_dedupe clear`）才放行。没有流量时用「类型 + 资产 host/路径 + 参数名」算 `d1:` 降级指纹，只作低置信疑似重复提示（`suspects`），**不自动定案**。
 
 **台账状态机**：`draft → ready → submitted → accepted | duplicate | rejected`，`accepted → paid`，任意 → `withdrawn`。`submitted` 必须带 `external_id`（平台编号或提交凭证）；`duplicate` 必须已登记 `dedupe_of`。驳回时填 `verdict_reason`（无法复现/已重复/信息不全/非漏洞/超出范围/其他）——它会聚合进平台项目的历史成绩，并在下次建任务时写进提示词；`accepted` 会自动沉淀打法卡片，`rejected` 给同技术栈同类型的卡片记失败。

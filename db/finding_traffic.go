@@ -364,6 +364,12 @@ type RecordFindingInput struct {
 	// the report names those instead of guessing).
 	Confidence string
 	AssetIDs   []int64
+	// 影响面/定级建议（P1）：结构化字段；空 = 未提供。
+	CWE          string
+	CVSSVector   string
+	ImpactScope  string
+	ReproEnv     string
+	TestAccounts string
 }
 
 type RecordedFinding struct {
@@ -421,8 +427,11 @@ VALUES($1,'finding',$2,9,'confirmed',$3) RETURNING id`, in.ExplorationID, string
 		assets = []int64{}
 	}
 	raw, _ := json.Marshal(assets)
-	if err := tx.QueryRow(`INSERT INTO findings(task_id,node_id,vulnclass,name,severity,summary,evidence,worker,asset_ids,confidence)
-VALUES(NULLIF($1,0),$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`, in.TaskID, out.NodeID, in.VulnClass, in.Name, in.Severity, in.Summary, in.Evidence, in.Worker, string(raw), in.Confidence).Scan(&out.FindingID); err != nil {
+	if err := tx.QueryRow(`INSERT INTO findings(task_id,node_id,vulnclass,name,severity,summary,evidence,worker,asset_ids,confidence,
+	cwe,cvss_vector,impact_scope,repro_env,test_accounts)
+VALUES(NULLIF($1,0),$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
+		in.TaskID, out.NodeID, in.VulnClass, in.Name, in.Severity, in.Summary, in.Evidence, in.Worker, string(raw), in.Confidence,
+		in.CWE, in.CVSSVector, in.ImpactScope, in.ReproEnv, in.TestAccounts).Scan(&out.FindingID); err != nil {
 		return nil, err
 	}
 	// 在**同一事务**里登记一条推送事件：提交即保证「漏洞落库」与「推送任务存在」

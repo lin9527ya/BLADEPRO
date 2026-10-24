@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -515,5 +516,37 @@ func TestAddFindingFollowUpIntent(t *testing.T) {
 	}
 	if _, _, err := store.AddFindingFollowUpIntent(findingID, findingNodeID, "should fail", auditInput); !errors.Is(err, ErrFindingOriginUnavailable) {
 		t.Fatalf("missing source node: want ErrFindingOriginUnavailable, got %v", err)
+	}
+}
+
+// TestFindingStructuredFieldsRoundTrip 钉住影响面/定级建议的结构化字段落库与读取。
+func TestFindingStructuredFieldsRoundTrip(t *testing.T) {
+	d, err := Open(testDSN(t))
+	if err != nil {
+		t.Skipf("postgres unavailable (%v) — skipping", err)
+	}
+	defer d.Close()
+	tk, err := d.CreateTask("结构化字段测试", "目标", nil, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.DeleteTask(tk.ID)
+	es := d.Exploration(tk.ExplorationID)
+	rec, err := es.RecordFinding(context.Background(), RecordFindingInput{
+		TaskID: tk.ID, Worker: "test", VulnClass: "authorization", Name: "越权",
+		Severity: "high", Summary: "摘要",
+		CWE: "CWE-639", CVSSVector: "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H",
+		ImpactScope: "可读取他租户订单", ReproEnv: "两个租户账号", TestAccounts: "userA/userB",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := d.GetFinding(rec.FindingID)
+	if err != nil || f == nil {
+		t.Fatalf("get finding: %v %+v", err, f)
+	}
+	if f.CWE != "CWE-639" || f.CVSSVector == "" || f.ImpactScope != "可读取他租户订单" ||
+		f.ReproEnv != "两个租户账号" || f.TestAccounts != "userA/userB" {
+		t.Fatalf("结构化字段未回读：%+v", f)
 	}
 }

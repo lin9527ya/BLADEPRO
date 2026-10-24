@@ -35,6 +35,12 @@ type DBFinding struct {
 	Confidence      string // 置信度标定 high/medium/low;"" = 未标定
 	Counterevidence string // ruled_out 的反证(点名控制点)
 	ProofGap        string // open_proof_gap 的缺口说明
+	// 影响面/定级建议（P1）：结构化字段，机器只做一致性校验，不替人裁决。
+	CWE             string // "CWE-639,CWE-284"（可为空）
+	CVSSVector      string // "CVSS:3.1/..."（可为空）
+	ImpactScope     string // 影响面：数据量/用户数/业务影响
+	ReproEnv        string // 复现环境/前置条件
+	TestAccounts    string // 测试账号说明
 	Report          string // 详细报告(Markdown);仅 GetFinding 填充,列表查询不带
 	CreatedAt       time.Time
 	TaskDescription string // populated via LEFT JOIN on tasks
@@ -155,7 +161,9 @@ const findingSelectCols = `f.id, f.task_id, f.node_id, f.vulnclass, COALESCE(f.n
 	       f.evidence, f.worker, f.asset_ids, COALESCE(f.status, 'pending'), f.created_at,
 	       COALESCE(t.description, '') AS task_description, f.evidence_version, f.report_evidence_version,
  (SELECT count(*) FROM finding_traffic_bindings b WHERE b.finding_id=f.id),
-	       COALESCE(f.confidence, ''), COALESCE(f.counterevidence, ''), COALESCE(f.proof_gap, '')`
+	       COALESCE(f.confidence, ''), COALESCE(f.counterevidence, ''), COALESCE(f.proof_gap, ''),
+	       COALESCE(f.cwe, ''), COALESCE(f.cvss_vector, ''), COALESCE(f.impact_scope, ''),
+	       COALESCE(f.repro_env, ''), COALESCE(f.test_accounts, '')`
 
 // scanFindings materializes rows selected via findingSelectCols.
 func scanFindings(rows interface {
@@ -169,7 +177,8 @@ func scanFindings(rows interface {
 		var aidsJSON string
 		if err := rows.Scan(&f.ID, &f.TaskID, &f.NodeID, &f.VulnClass, &f.Name, &f.Severity,
 			&f.Summary, &f.Evidence, &f.Worker, &aidsJSON, &f.Status, &f.CreatedAt, &f.TaskDescription, &f.EvidenceVersion, &f.ReportEvidenceVersion, &f.TrafficCount,
-			&f.Confidence, &f.Counterevidence, &f.ProofGap); err != nil {
+			&f.Confidence, &f.Counterevidence, &f.ProofGap,
+			&f.CWE, &f.CVSSVector, &f.ImpactScope, &f.ReproEnv, &f.TestAccounts); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(aidsJSON), &f.AssetIDs)
@@ -563,7 +572,8 @@ func (d *DB) ListFindingsForExport(f FindingFilter, ids []int64) ([]*DBFinding, 
 		if err := rows.Scan(&f.ID, &f.TaskID, &f.NodeID, &f.VulnClass, &f.Name, &f.Severity,
 			&f.Summary, &f.Evidence, &f.Worker, &aidsJSON, &f.Status, &f.CreatedAt,
 			&f.TaskDescription, &f.EvidenceVersion, &f.ReportEvidenceVersion, &f.TrafficCount,
-			&f.Confidence, &f.Counterevidence, &f.ProofGap, &f.Report); err != nil {
+			&f.Confidence, &f.Counterevidence, &f.ProofGap,
+			&f.CWE, &f.CVSSVector, &f.ImpactScope, &f.ReproEnv, &f.TestAccounts, &f.Report); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(aidsJSON), &f.AssetIDs)
@@ -692,7 +702,8 @@ func (d *DB) GetFinding(id int64) (*DBFinding, error) {
 		&f.ID, &f.TaskID, &f.NodeID, &f.VulnClass, &f.Name, &f.Severity,
 		&f.Summary, &f.Evidence, &f.Worker, &aidsJSON, &f.Status, &f.CreatedAt,
 		&f.TaskDescription, &f.EvidenceVersion, &f.ReportEvidenceVersion, &f.TrafficCount,
-		&f.Confidence, &f.Counterevidence, &f.ProofGap, &f.Report)
+		&f.Confidence, &f.Counterevidence, &f.ProofGap,
+		&f.CWE, &f.CVSSVector, &f.ImpactScope, &f.ReproEnv, &f.TestAccounts, &f.Report)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

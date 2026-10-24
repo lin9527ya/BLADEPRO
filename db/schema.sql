@@ -1253,6 +1253,12 @@ CREATE TABLE IF NOT EXISTS findings (
     report      TEXT NOT NULL DEFAULT '',
     -- 撤回原因(status='retracted' 时必填语义):复测推翻后写入,随报告「已撤回」段展示。
     retract_reason TEXT NOT NULL DEFAULT '',
+    -- 影响面/定级建议（P1）：结构化字段由 agent 填写，机器只做一致性校验，不替人裁决。
+    cwe           TEXT NOT NULL DEFAULT '',
+    cvss_vector   TEXT NOT NULL DEFAULT '',
+    impact_scope  TEXT NOT NULL DEFAULT '',
+    repro_env     TEXT NOT NULL DEFAULT '',
+    test_accounts TEXT NOT NULL DEFAULT '',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE findings ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';
@@ -1264,6 +1270,12 @@ ALTER TABLE findings ADD COLUMN IF NOT EXISTS retract_reason TEXT NOT NULL DEFAU
 ALTER TABLE findings ADD COLUMN IF NOT EXISTS confidence      TEXT NOT NULL DEFAULT '';
 ALTER TABLE findings ADD COLUMN IF NOT EXISTS counterevidence TEXT NOT NULL DEFAULT '';
 ALTER TABLE findings ADD COLUMN IF NOT EXISTS proof_gap       TEXT NOT NULL DEFAULT '';
+-- 影响面/定级建议：结构化字段（旧库幂等补列）。
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS cwe           TEXT NOT NULL DEFAULT '';
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS cvss_vector   TEXT NOT NULL DEFAULT '';
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS impact_scope  TEXT NOT NULL DEFAULT '';
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS repro_env     TEXT NOT NULL DEFAULT '';
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS test_accounts TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_findings_task ON findings(task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_findings_time ON findings(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_findings_status ON findings(status, created_at DESC);

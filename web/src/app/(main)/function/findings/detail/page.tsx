@@ -342,6 +342,49 @@ function FindingDetailInner() {
                   </span>
                 </FieldRow>
 
+                {/* 影响面/定级建议（P1） */}
+                {finding.cwe ? (
+                  <FieldRow label="CWE">
+                    <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{finding.cwe}</code>
+                  </FieldRow>
+                ) : null}
+                {finding.cvss_vector ? (
+                  <FieldRow label="CVSS">
+                    <div className="flex flex-col items-end gap-0.5">
+                      <code className="max-w-[22rem] truncate rounded bg-muted px-1.5 py-0.5 font-mono text-xs" title={finding.cvss_vector}>
+                        {finding.cvss_vector}
+                      </code>
+                      {finding.cvss_score !== undefined ? (
+                        <span
+                          className={`text-xs ${
+                            finding.severity_agrees === false
+                              ? "text-amber-600 dark:text-amber-400"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          {finding.cvss_score.toFixed(1)}（{finding.cvss_band}）
+                          {finding.severity_agrees === false ? " · 与当前等级不一致，请复核" : ""}
+                        </span>
+                      ) : null}
+                    </div>
+                  </FieldRow>
+                ) : null}
+                {finding.impact_scope ? (
+                  <FieldRow label="影响面">
+                    <span className="text-xs whitespace-pre-wrap">{finding.impact_scope}</span>
+                  </FieldRow>
+                ) : null}
+                {finding.repro_env ? (
+                  <FieldRow label="复现环境">
+                    <span className="text-xs whitespace-pre-wrap">{finding.repro_env}</span>
+                  </FieldRow>
+                ) : null}
+                {finding.test_accounts ? (
+                  <FieldRow label="测试账号">
+                    <span className="text-xs whitespace-pre-wrap">{finding.test_accounts}</span>
+                  </FieldRow>
+                ) : null}
+
                 {/* 漏洞类型 */}
                 <FieldRow label="漏洞类型">
                   {finding.vulnclass ? (

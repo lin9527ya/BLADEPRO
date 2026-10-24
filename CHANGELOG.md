@@ -58,6 +58,17 @@
 - 回归：clear 证据/allow 开关、platform_exempt 豁免依据、static_page 按面白名单、
   Program→mode_doc 编译；集成测试夹具显式打开 allow 以聚焦各自断言。
 
+### 新增：影响面/定级建议（P1）
+
+- `findings` 新增 `cwe`、`cvss_vector`、`impact_scope`、`repro_env`、`test_accounts`；
+  `report_finding` 接收并校验（CWE 格式、CVSS 3.0/3.1 向量、字段长度），非法直接拒绝。
+- 服务端按 CVSS 3.1 规范计算 base score（只算 base metrics），与自报 `severity`
+  比对：不一致时在返回里给 `warnings` 与 `cvss_score/band/severity_agrees`，
+  **不阻断、不改等级**。
+- 发现详情页展示 CWE / CVSS 分数与一致性提示 / 影响面 / 复现环境 / 测试账号；
+  SRC md 与 docx 报告头部同步输出这些字段（空值不占位）。
+- 仍不自动定级：机器只搬运、校验、提示，severity 最终由人和平台裁决。
+
 ### 新增：平台结果回流（P1）
 
 - 台账新增 `verdict_reason`（封闭词表：无法复现 / 已重复 / 信息不全 / 非漏洞 /

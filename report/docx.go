@@ -97,6 +97,25 @@ func docxDocument(in SrcInput) string {
 	b.WriteString(docxPara("SrcTitle", nz(in.Title, "（待补：谁的站、做成了啥）")))
 	b.WriteString(docxMeta("目标网站URL：" + nz(in.TargetURL, "（待补）")))
 	b.WriteString(docxSeverity(SrcSeverityLabel(in.Severity)))
+	if v := strings.TrimSpace(in.CWE); v != "" {
+		b.WriteString(docxMeta("CWE：" + v))
+	}
+	if v := strings.TrimSpace(in.CVSSVector); v != "" {
+		line := "CVSS：" + v
+		if score, ok := ParseCVSSScoreOrZero(v); ok {
+			line += "（" + CVSSScoreLabel(score) + "）"
+		}
+		b.WriteString(docxMeta(line))
+	}
+	if v := strings.TrimSpace(in.ImpactScope); v != "" {
+		b.WriteString(docxMeta("影响面：" + oneLineText(v)))
+	}
+	if v := strings.TrimSpace(in.ReproEnv); v != "" {
+		b.WriteString(docxMeta("复现环境：" + oneLineText(v)))
+	}
+	if v := strings.TrimSpace(in.TestAccounts); v != "" {
+		b.WriteString(docxMeta("测试账号：" + oneLineText(v)))
+	}
 	b.WriteString(docxRule())
 
 	b.WriteString(docxPara("SrcHeading", "漏洞描述"))

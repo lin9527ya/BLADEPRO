@@ -26,15 +26,21 @@ type SrcStep struct {
 
 // SrcInput is everything the SRC export renders, already resolved by the caller.
 type SrcInput struct {
-	Title       string
-	TargetURL   string
-	Severity    string // 内部取值 critical|high|medium|low
-	VulnClass   string
-	Description string // 空 → 规范占位
-	Impact      string // 空 → 规范占位
-	Endpoints   []SrcEndpoint
-	Steps       []SrcStep
-	Fix         string // 空 → 规范占位
+	Title     string
+	TargetURL string
+	Severity  string // 内部取值 critical|high|medium|low
+	VulnClass string
+	// 影响面/定级建议（P1）：结构化字段；空则不输出对应行。
+	CWE          string
+	CVSSVector   string
+	ImpactScope  string
+	ReproEnv     string
+	TestAccounts string
+	Description  string // 空 → 规范占位
+	Impact       string // 空 → 规范占位
+	Endpoints    []SrcEndpoint
+	Steps        []SrcStep
+	Fix          string // 空 → 规范占位
 	// SubmitBlock 是【提交信息】块（平台表单直填），渲染在正文之前；空 = 不绑定平台项目。
 	SubmitBlock string
 	// Notes 走文件末尾备注区（发现 id / 证据版本 / 生成时间 / 撤回警告），不进 8 块正文。
@@ -57,6 +63,11 @@ func SrcSeverityLabel(sev string) string {
 	return nz(sev, "中危")
 }
 
+// oneLineText 把多行结构化字段压成一行（报告头部不适合展开大段换行）。
+func oneLineText(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
 // SrcMarkdown renders the 8-block SRC submission layout. 排版纪律：标题/URL/等级各占一
 // 行不分隔；「漏洞描述：」「漏洞危害：」冒号后换行再写正文；大块之间单独一行全角＃
 // （禁止半角 #）；复现步骤每条一步、步间一行＃；不出现多余空行。
@@ -73,6 +84,25 @@ func SrcMarkdown(in SrcInput) string {
 	fmt.Fprintf(&b, "漏洞标题：%s\n", nz(in.Title, "（待补：谁的站、做成了啥）"))
 	fmt.Fprintf(&b, "目标网站URL：%s\n", nz(in.TargetURL, "（待补）"))
 	fmt.Fprintf(&b, "漏洞等级：%s\n", SrcSeverityLabel(in.Severity))
+	if v := strings.TrimSpace(in.CWE); v != "" {
+		fmt.Fprintf(&b, "CWE：%s\n", v)
+	}
+	if v := strings.TrimSpace(in.CVSSVector); v != "" {
+		line := "CVSS：" + v
+		if score, ok := ParseCVSSScoreOrZero(v); ok {
+			line += "（" + CVSSScoreLabel(score) + "）"
+		}
+		b.WriteString(line + "\n")
+	}
+	if v := strings.TrimSpace(in.ImpactScope); v != "" {
+		fmt.Fprintf(&b, "影响面：%s\n", oneLineText(v))
+	}
+	if v := strings.TrimSpace(in.ReproEnv); v != "" {
+		fmt.Fprintf(&b, "复现环境：%s\n", oneLineText(v))
+	}
+	if v := strings.TrimSpace(in.TestAccounts); v != "" {
+		fmt.Fprintf(&b, "测试账号：%s\n", oneLineText(v))
+	}
 	b.WriteString("＃\n")
 	b.WriteString("漏洞描述：\n")
 	b.WriteString(nz(in.Description, "（待补：第一人称大白话写做成了什么；没登录态用「我没登录」，有会话用「我拿自己的会话」）"))

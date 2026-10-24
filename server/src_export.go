@@ -60,6 +60,9 @@ func (s *Server) buildSrcInput(ctx context.Context, f *db.DBFinding) (report.Src
 		Title:     report.FindingTitle(f),
 		Severity:  f.Severity,
 		VulnClass: f.VulnClass,
+		// 影响面/定级建议：结构化字段直接进报告头部；没有就留空，不硬塞占位符。
+		CWE: f.CWE, CVSSVector: f.CVSSVector, ImpactScope: f.ImpactScope,
+		ReproEnv: f.ReproEnv, TestAccounts: f.TestAccounts,
 	}
 	if d := strings.TrimSpace(f.Summary); d != "" {
 		in.Description = d

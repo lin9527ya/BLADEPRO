@@ -8,6 +8,7 @@ import (
 
 	"github.com/lin9527ya/bladepro/db"
 	"github.com/lin9527ya/bladepro/policy"
+	"github.com/lin9527ya/bladepro/report"
 	"github.com/lin9527ya/bladepro/traffic"
 )
 
@@ -395,6 +396,17 @@ type FindingDTO struct {
 	Evidence  string `json:"evidence"`
 	Report    string `json:"report,omitempty"` // 详细报告(Markdown);仅详情接口返回,列表为空
 
+	// 影响面/定级建议（P1）：cwe/cvss 是结构化字段；cvss_score/band 与
+	// severity_agrees 由服务端算，仅作一致性提示，不自动改等级。
+	CWE            string   `json:"cwe,omitempty"`
+	CVSSVector     string   `json:"cvss_vector,omitempty"`
+	CVSSScore      *float64 `json:"cvss_score,omitempty"`
+	CVSSBand       string   `json:"cvss_band,omitempty"`
+	SeverityAgrees *bool    `json:"severity_agrees,omitempty"`
+	ImpactScope    string   `json:"impact_scope,omitempty"`
+	ReproEnv       string   `json:"repro_env,omitempty"`
+	TestAccounts   string   `json:"test_accounts,omitempty"`
+
 	IntentID        string            `json:"intent_id,omitempty"`
 	ParamID         string            `json:"param_id,omitempty"`
 	TaskID          string            `json:"task_id,omitempty"`
@@ -524,14 +536,25 @@ func findingFromDB(f *db.DBFinding, assets map[int64]*db.Asset) FindingDTO {
 		FindingID:    i64s(f.ID),
 		TrafficCount: f.TrafficCount, EvidenceVersion: f.EvidenceVersion, ReportEvidenceVersion: f.ReportEvidenceVersion,
 		ReportStale: f.Report != "" && f.EvidenceVersion != f.ReportEvidenceVersion, TrafficBindings: f.TrafficBindings,
-		VulnClass: f.VulnClass,
-		Name:      f.Name,
-		Severity:  f.Severity,
-		Status:    status,
-		Summary:   f.Summary,
-		Evidence:  f.Evidence,
-		Report:    f.Report,
-		TS:        rfc3339(f.CreatedAt),
+		VulnClass:    f.VulnClass,
+		Name:         f.Name,
+		Severity:     f.Severity,
+		Status:       status,
+		Summary:      f.Summary,
+		Evidence:     f.Evidence,
+		Report:       f.Report,
+		TS:           rfc3339(f.CreatedAt),
+		CWE:          f.CWE,
+		CVSSVector:   f.CVSSVector,
+		ImpactScope:  f.ImpactScope,
+		ReproEnv:     f.ReproEnv,
+		TestAccounts: f.TestAccounts,
+	}
+	if score, ok := report.ParseCVSSScoreOrZero(f.CVSSVector); ok {
+		d.CVSSScore = &score
+		d.CVSSBand = report.CVSSSeverity(score)
+		agrees := report.CVSSSeverityAgrees(f.Severity, score)
+		d.SeverityAgrees = &agrees
 	}
 	d.Assets = findingAssetDTOs(f.AssetIDs, assets)
 	if f.TaskID != nil {

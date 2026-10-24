@@ -153,6 +153,10 @@ type Traffic struct {
 	// separate from the global/host governor so a task rate works even when the
 	// global/host limits are off.
 	taskBuckets sync.Map // int64 -> *tokenBucket
+	// scopeGuard is the host-level RoE backstop for task-attributed egress. It is
+	// installed by the server; a nil guard leaves the proxy unchanged.
+	scopeGuard atomic.Value // func(taskID int64, host string) error
+	blocked    atomic.Int64
 	// fts reports whether the full-text index is available. False on a driver
 	// build without FTS5: recording and metadata search still work, body search
 	// degrades to unsupported rather than erroring.
@@ -504,7 +508,22 @@ func (s *sink) Request(f *mproxy.Flow) {
 			taskID, _ = v.(int64)
 		}
 	}
-	s.t.waitEgress(f.Request.URL.Hostname(), taskID)
+	host := f.Request.URL.Hostname()
+	if taskID > 0 {
+		if guard, _ := s.t.scopeGuard.Load().(func(int64, string) error); guard != nil {
+			if err := guard(taskID, host); err != nil {
+				s.t.blocked.Add(1)
+				f.Response = &mproxy.Response{
+					StatusCode: http.StatusForbidden,
+					Header:     http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
+					Body:       []byte(`{"error":"out of scope"}`),
+				}
+				log.Printf("[traffic] 拦截越界请求 task=%d host=%s: %v", taskID, host, err)
+				return
+			}
+		}
+	}
+	s.t.waitEgress(host, taskID)
 }
 
 func (s *sink) Response(f *mproxy.Flow) {

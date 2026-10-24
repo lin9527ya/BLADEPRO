@@ -147,6 +147,27 @@ func (t *Traffic) SetEgressLimits(l EgressLimits) {
 	t.rate.Store(newEgressGovernor(l))
 }
 
+// SetScopeGuard installs the task-scope backstop. It must be fast (it runs on
+// every proxied request); the server implementation caches decisions.
+func (t *Traffic) SetScopeGuard(fn func(taskID int64, host string) error) {
+	if t == nil {
+		return
+	}
+	if fn == nil {
+		t.scopeGuard.Store(func(int64, string) error { return nil })
+		return
+	}
+	t.scopeGuard.Store(fn)
+}
+
+// BlockedCount is the number of requests rejected by the scope guard.
+func (t *Traffic) BlockedCount() int64 {
+	if t == nil {
+		return 0
+	}
+	return t.blocked.Load()
+}
+
 // SetTaskQPS installs (or clears, qps<=0) a per-task token bucket. The task rate
 // is applied in addition to the global/host limits, so a noisy task cannot
 // consume a shared host's budget faster than the operator allows.

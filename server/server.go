@@ -47,6 +47,8 @@ type Server struct {
 	triggers  triggerState
 	agents    agentState
 	archive   archiveState
+	// proxyScope 缓存任务目标的范围判定（代理每个请求都会查）。
+	proxyScope proxyScopeCache
 }
 
 // corsState 是 CORS 白名单缓存（P42）：中间件在每个 API 请求上跑，设置不能每请求读一次。
@@ -171,6 +173,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	}
 	s.auth.signKey.set(key)
 	s.auth.jwtKeyPath = filepath.Join(keyDir, jwtKeyFilename)
+	s.installTrafficScopeGuard()
 	s.initSideQuestions()
 	// 熔断阈值/冷却是失败路径上的热参数，启动时把全局重试策略推给 Registry 一次；
 	// 之后每次保存策略再推一次（saveLLMRetryPolicy）。

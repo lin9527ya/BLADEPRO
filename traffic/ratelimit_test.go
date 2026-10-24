@@ -1,8 +1,13 @@
 package traffic
 
 import (
+	"fmt"
+	"net/http"
+	"net/url"
 	"testing"
 	"time"
+
+	mproxy "github.com/lqqyt2423/go-mitmproxy/proxy"
 )
 
 func TestTokenBucketTakeTimes(t *testing.T) {
@@ -91,5 +96,35 @@ func TestTaskQPSBucketLifecycle(t *testing.T) {
 	tr.ClearTaskQPS(42)
 	if _, ok := tr.taskBuckets.Load(int64(42)); ok {
 		t.Fatal("task bucket not cleared")
+	}
+}
+
+// TestScopeGuardBlocksProxyRequest pins the proxy-level backstop: a task-owned
+// connection to a host rejected by the guard gets a synthetic 403 and is never
+// forwarded. This is the layer that catches encoded/indirect commands the regex
+// gate cannot read.
+func TestScopeGuardBlocksProxyRequest(t *testing.T) {
+	tr, err := Open(t.TempDir(), "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+	tr.SetScopeGuard(func(taskID int64, host string) error {
+		if taskID == 1 && host == "evil.example" {
+			return fmt.Errorf("out of scope")
+		}
+		return nil
+	})
+	f := &mproxy.Flow{
+		Request:     &mproxy.Request{URL: &url.URL{Scheme: "http", Host: "evil.example", Path: "/"}, Header: http.Header{}},
+		ConnContext: &mproxy.ConnContext{ClientConn: &mproxy.ClientConn{}},
+	}
+	tr.connTask.Store(f.ConnContext.Id(), int64(1))
+	(&sink{t: tr}).Request(f)
+	if f.Response == nil || f.Response.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected synthetic 403, got %+v", f.Response)
+	}
+	if tr.BlockedCount() != 1 {
+		t.Fatalf("blocked=%d want 1", tr.BlockedCount())
 	}
 }

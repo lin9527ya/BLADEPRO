@@ -52,13 +52,16 @@ type SrcCell struct {
 	State     string `json:"state"`
 	Reason    string `json:"reason,omitempty"`
 	// NACode 是 na 的理由码（srcmode 的白名单）：把"没这个面"和"没测"分开。
-	NACode         string    `json:"na_code,omitempty"`
-	EvidenceNodeID int64     `json:"evidence_node_id,omitempty"`
-	FindingID      int64     `json:"finding_id,omitempty"`
-	Attempts       int       `json:"attempts"`
-	UpdatedBy      string    `json:"updated_by,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	NACode         string `json:"na_code,omitempty"`
+	EvidenceNodeID int64  `json:"evidence_node_id,omitempty"`
+	FindingID      int64  `json:"finding_id,omitempty"`
+	Attempts       int    `json:"attempts"`
+	UpdatedBy      string `json:"updated_by,omitempty"`
+	// InheritedFromTaskID >0 表示这一格是从该任务继承的 tested_clear（证据在源任务），
+	// 本轮没重测。重测并覆盖后归零。
+	InheritedFromTaskID int64     `json:"inherited_from_task_id,omitempty"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 // SrcAsset is one in-scope asset that the SRC gate must account for.
@@ -108,14 +111,14 @@ const srcCellCols = `c.id, c.task_id, c.asset_id,
 COALESCE(a.url, a.domain, a.ip, a.app_name, a.root_domain, ''), COALESCE(a.type,''),
 c.area, c.item, c.state, c.reason, c.na_code,
 COALESCE(c.evidence_node_id,0), COALESCE(c.finding_id,0),
-c.attempts, c.updated_by, c.created_at, c.updated_at`
+c.attempts, c.updated_by, COALESCE(c.inherited_from_task_id,0), c.created_at, c.updated_at`
 
 func scanSrcCell(sc interface{ Scan(...any) error }) (*SrcCell, error) {
 	var c SrcCell
 	if err := sc.Scan(&c.ID, &c.TaskID, &c.AssetID, &c.Asset, &c.AssetType,
 		&c.Area, &c.Item, &c.State, &c.Reason, &c.NACode,
 		&c.EvidenceNodeID, &c.FindingID,
-		&c.Attempts, &c.UpdatedBy, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		&c.Attempts, &c.UpdatedBy, &c.InheritedFromTaskID, &c.CreatedAt, &c.UpdatedAt); err != nil {
 		return nil, err
 	}
 	return &c, nil
@@ -144,8 +147,8 @@ func (s *SrcStore) UpsertSrcCell(ctx context.Context, c *SrcCell) (*SrcCell, err
 		find = c.FindingID
 	}
 	row := s.db.QueryRowContext(ctx, `
-INSERT INTO src_cells(task_id, asset_id, area, item, state, reason, na_code, evidence_node_id, finding_id, attempts, updated_by)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,1,$10)
+INSERT INTO src_cells(task_id, asset_id, area, item, state, reason, na_code, evidence_node_id, finding_id, attempts, updated_by, inherited_from_task_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,1,$10,$11)
 ON CONFLICT (task_id, asset_id, area, item) DO UPDATE SET
     state            = EXCLUDED.state,
     reason           = EXCLUDED.reason,
@@ -153,8 +156,10 @@ ON CONFLICT (task_id, asset_id, area, item) DO UPDATE SET
     evidence_node_id = COALESCE(EXCLUDED.evidence_node_id, src_cells.evidence_node_id),
     finding_id       = COALESCE(EXCLUDED.finding_id, src_cells.finding_id),
     attempts         = src_cells.attempts + 1,
-    updated_by       = EXCLUDED.updated_by
-RETURNING id`, c.TaskID, c.AssetID, c.Area, item, c.State, c.Reason, c.NACode, ev, find, c.UpdatedBy)
+    updated_by       = EXCLUDED.updated_by,
+    -- 正常点格/agent 重测一律清零继承标记：这条结论从现在起是本轮新鲜结论。
+    inherited_from_task_id = EXCLUDED.inherited_from_task_id
+RETURNING id`, c.TaskID, c.AssetID, c.Area, item, c.State, c.Reason, c.NACode, ev, find, c.UpdatedBy, c.InheritedFromTaskID)
 	var id int64
 	if err := row.Scan(&id); err != nil {
 		return nil, err
@@ -300,4 +305,141 @@ func (s *SrcStore) FindingBelongsToTask(ctx context.Context, taskID, findingID i
 	err := s.db.QueryRowContext(ctx, `
 SELECT EXISTS (SELECT 1 FROM findings WHERE id=$2 AND task_id=$1)`, taskID, findingID).Scan(&ok)
 	return ok, err
+}
+
+// SrcInheritResult 是一次覆盖继承实际复制了多少行。
+type SrcInheritResult struct {
+	Cells  int `json:"cells"`
+	Checks int `json:"checks"`
+}
+
+// LatestInheritSource 选出可作为覆盖继承来源的任务：SRC 模式、未被删除、在时间窗内，
+// 且在新任务范围内至少有一格 tested_clear 或一项 done 收尾项（否则继承没有意义）。
+// 优先显式来源任务（preferredIDs），其次同平台项目，最后同企业；同类按最近活动排序。
+func (s *SrcStore) LatestInheritSource(ctx context.Context, taskID int64, programID int64, companyIDs []int64, preferredIDs []int64, since time.Time) (int64, error) {
+	// 没有平台项目/企业/显式来源时也允许按资产重叠选源：共同资产本身就说明两条任务
+	// 测的是同一个目标。
+	if s == nil || s.db == nil || taskID <= 0 {
+		return 0, nil
+	}
+	if companyIDs == nil {
+		companyIDs = []int64{}
+	}
+	if preferredIDs == nil {
+		preferredIDs = []int64{}
+	}
+	var id int64
+	err := s.db.QueryRowContext(ctx, `
+WITH target AS (`+scopeTargetSelect+`)
+SELECT t.id
+FROM tasks t
+WHERE t.mode='src' AND t.deleted_at IS NULL AND t.id <> $1
+  AND COALESCE(t.completed_at, t.created_at) >= $5
+  AND (
+      t.id = ANY($4::bigint[])
+      OR ($2 > 0 AND t.src_program_id = $2)
+      OR EXISTS (
+          SELECT 1 FROM task_scope ts
+          WHERE ts.task_id=t.id AND ts.kind='company' AND ts.company_id = ANY($3::bigint[])
+      )
+      -- 三者都没有时按"共同资产"兜底（target 子查询已经限定了新任务范围）。
+      OR ($2 <= 0 AND cardinality($3::bigint[]) = 0 AND cardinality($4::bigint[]) = 0)
+  )
+  AND (
+      EXISTS (SELECT 1 FROM src_cells c JOIN target tg ON tg.id=c.asset_id
+              WHERE c.task_id=t.id AND c.state='tested_clear')
+      OR EXISTS (SELECT 1 FROM src_checks k JOIN target tg ON tg.id=k.asset_id
+                 WHERE k.task_id=t.id AND k.state='done')
+  )
+ORDER BY CASE
+             WHEN t.id = ANY($4::bigint[]) THEN 0
+             WHEN $2 > 0 AND t.src_program_id = $2 THEN 1
+             ELSE 2
+         END,
+         COALESCE(t.completed_at, t.created_at) DESC,
+         t.id DESC
+LIMIT 1`, taskID, programID, companyIDs, preferredIDs, since).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// InheritSrcCoverage copies the source task's fresh-negative coverage into the
+// target task, restricted to assets in the target's scope:
+//
+//   - tested_clear cells → also tested_clear, with inherited_from_task_id set and
+//     the source task named in the reason (evidence stays in the source task, so the
+//     new task has no evidence node of its own);
+//   - done checks → copied with their metrics, so the收尾闸 numbers are inherited too.
+//
+// It never copies findings, na, or budget_stop: those are task-specific conclusions
+// (a finding belongs to the old task's evidence chain; na plausibility can change).
+// ON CONFLICT DO NOTHING means an existing fresh cell always wins.
+func (s *SrcStore) InheritSrcCoverage(ctx context.Context, fromTaskID, toTaskID int64) (SrcInheritResult, error) {
+	var out SrcInheritResult
+	if s == nil || s.db == nil {
+		return out, fmt.Errorf("src store unavailable")
+	}
+	if fromTaskID <= 0 || toTaskID <= 0 || fromTaskID == toTaskID {
+		return out, fmt.Errorf("invalid inherit source/target")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return out, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	res, err := tx.ExecContext(ctx, `
+WITH target AS (`+scopeTargetSelect+`)
+INSERT INTO src_cells(task_id, asset_id, area, item, state, reason, na_code, evidence_node_id, finding_id, attempts, updated_by, inherited_from_task_id)
+SELECT $1, c.asset_id, c.area, c.item, c.state,
+       CASE
+           WHEN btrim(COALESCE(c.reason,'')) = ''
+               THEN '继承自任务 #' || COALESCE(NULLIF(c.inherited_from_task_id,0), c.task_id)
+           WHEN COALESCE(c.inherited_from_task_id,0) > 0 THEN c.reason
+           ELSE c.reason || '（继承自任务 #' || c.task_id || '）'
+       END,
+       c.na_code, NULL, NULL, 0, 'inherit',
+       CASE WHEN COALESCE(c.inherited_from_task_id,0) > 0 THEN c.inherited_from_task_id ELSE c.task_id END
+FROM src_cells c
+JOIN target t ON t.id = c.asset_id
+WHERE c.task_id = $2 AND c.state = 'tested_clear'
+ON CONFLICT (task_id, asset_id, area, item) DO NOTHING`, toTaskID, fromTaskID)
+	if err != nil {
+		return out, err
+	}
+	if n, err := res.RowsAffected(); err == nil {
+		out.Cells = int(n)
+	}
+
+	res, err = tx.ExecContext(ctx, `
+WITH target AS (`+scopeTargetSelect+`)
+INSERT INTO src_checks(task_id, asset_id, check_key, state, na_code, reason, evidence_node_id, metrics, updated_by, inherited_from_task_id)
+SELECT $1, c.asset_id, c.check_key, c.state, c.na_code,
+       CASE
+           WHEN btrim(COALESCE(c.reason,'')) = ''
+               THEN '继承自任务 #' || COALESCE(NULLIF(c.inherited_from_task_id,0), c.task_id)
+           WHEN COALESCE(c.inherited_from_task_id,0) > 0 THEN c.reason
+           ELSE c.reason || '（继承自任务 #' || c.task_id || '）'
+       END,
+       NULL, c.metrics, 'inherit',
+       CASE WHEN COALESCE(c.inherited_from_task_id,0) > 0 THEN c.inherited_from_task_id ELSE c.task_id END
+FROM src_checks c
+JOIN target t ON t.id = c.asset_id
+WHERE c.task_id = $2 AND c.state = 'done'
+ON CONFLICT (task_id, asset_id, check_key) DO NOTHING`, toTaskID, fromTaskID)
+	if err != nil {
+		return out, err
+	}
+	if n, err := res.RowsAffected(); err == nil {
+		out.Checks = int(n)
+	}
+	if err := tx.Commit(); err != nil {
+		return SrcInheritResult{}, err
+	}
+	return out, nil
 }

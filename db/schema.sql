@@ -1740,6 +1740,9 @@ CREATE TABLE IF NOT EXISTS src_cells (
     finding_id       BIGINT REFERENCES findings(id) ON DELETE SET NULL,
     attempts         INT NOT NULL DEFAULT 0,
     updated_by       TEXT NOT NULL DEFAULT '',
+    -- 跨任务覆盖继承：>0 表示这一格是从该任务继承来的 tested_clear（证据在源任务里）。
+    -- 重测并覆盖后清零，重新算本轮新鲜结论。
+    inherited_from_task_id BIGINT NOT NULL DEFAULT 0,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (task_id, asset_id, area, item)
@@ -1858,6 +1861,8 @@ CREATE INDEX IF NOT EXISTS idx_src_submissions_program ON src_submissions(progra
 -- 空格靠计算；两者都进收尾门（缺一项 = 没测）。
 -- =====================================================================
 ALTER TABLE src_cells ADD COLUMN IF NOT EXISTS na_code TEXT NOT NULL DEFAULT '';
+-- 跨任务覆盖继承；补旧库。0 = 本轮实测，>0 = 继承自该任务。
+ALTER TABLE src_cells ADD COLUMN IF NOT EXISTS inherited_from_task_id BIGINT NOT NULL DEFAULT 0;
 
 -- SRC 单元格租约（P2）：同一 (资产 × 风险面) 同时只允许一个意图在测，防止
 -- planner 换措辞重派导致重复发包。owner_intent_id=0 表示"已占位、意图尚未落库"。
@@ -1886,11 +1891,15 @@ CREATE TABLE IF NOT EXISTS src_checks (
     -- metrics 是"数字"不是形容词：{js_external:3,paths:214,non404:6,retested:6,...}
     metrics          JSONB NOT NULL DEFAULT '{}'::jsonb,
     updated_by       TEXT NOT NULL DEFAULT '',
+    -- 跨任务覆盖继承：>0 表示这项 done 数字继承自该任务；重做后清零。
+    inherited_from_task_id BIGINT NOT NULL DEFAULT 0,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (task_id, asset_id, check_key)
 );
 CREATE INDEX IF NOT EXISTS idx_src_checks_task ON src_checks(task_id, asset_id);
+-- 跨任务覆盖继承；补旧库。0 = 本轮实测，>0 = 继承自该任务。
+ALTER TABLE src_checks ADD COLUMN IF NOT EXISTS inherited_from_task_id BIGINT NOT NULL DEFAULT 0;
 DROP TRIGGER IF EXISTS trg_src_checks_upd ON src_checks;
 CREATE TRIGGER trg_src_checks_upd BEFORE UPDATE ON src_checks
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();

@@ -310,6 +310,10 @@ export const api = {
     modeDoc?: unknown;
     /** P3：绑定的 SRC 平台项目；省略 = 不绑定。 */
     srcProgramID?: number;
+    /** P2：跨任务覆盖继承（同项目/同企业的近期 tested_clear 与收尾数字）。 */
+    inheritCoverage?: boolean;
+    /** 指定继承来源任务；优先于自动选源。 */
+    inheritCoverageFrom?: number;
     interceptRules?: AssetInterceptRuleInput[];
     // P20：任务级探索策略覆盖层；省略 = 完全继承当时的全局默认（服务端解析成快照落库）。
     explorationPolicy?: ExplorationPolicyOverride;
@@ -329,6 +333,8 @@ export const api = {
       mode: input.mode || undefined, // 只发 "src"；普通渗透不带该键，老行为不变
       mode_doc: input.modeDoc, // 省略时后端按 SRC 默认快照解析
       src_program_id: input.srcProgramID || undefined, // 只发绑定的项目；不绑定不带该键
+      inherit_coverage: input.inheritCoverage ?? false,
+      inherit_coverage_from: input.inheritCoverageFrom || undefined,
       intercept_rules: input.interceptRules ?? [], // 任务级资产拦截规则
       exploration_policy: input.explorationPolicy ?? null, // P20 探索策略覆盖层(null=继承全局默认)
     }),

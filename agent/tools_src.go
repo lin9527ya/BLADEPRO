@@ -74,6 +74,9 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 					if cell.FindingID > 0 {
 						entry["finding_id"] = cell.FindingID
 					}
+					if cell.InheritedFromTaskID > 0 {
+						entry["inherited_from_task_id"] = cell.InheritedFromTaskID
+					}
 				}
 				row = append(row, entry)
 			}
@@ -119,7 +122,11 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 				if c.EvidenceNodeID > 0 {
 					entry["evidence_node_id"] = c.EvidenceNodeID
 				}
-				if c.State == db.SrcCheckDone && t.srcVerifier != nil {
+				if c.InheritedFromTaskID > 0 {
+					entry["inherited_from_task_id"] = c.InheritedFromTaskID
+				}
+				// 继承项只核对数字与流量，不重跑写入校验（证据在源任务）。
+				if c.State == db.SrcCheckDone && c.InheritedFromTaskID == 0 && t.srcVerifier != nil {
 					warns, obs := t.srcVerifier(ctx, t.taskID, a.ID, def.Key, c.Metrics)
 					if len(obs) > 0 {
 						entry["observed_metrics"] = obs

@@ -40,21 +40,23 @@ type SrcCheck struct {
 	EvidenceNodeID int64          `json:"evidence_node_id,omitempty"`
 	Metrics        map[string]int `json:"metrics,omitempty"`
 	UpdatedBy      string         `json:"updated_by,omitempty"`
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
+	// InheritedFromTaskID >0 表示这项 done 数字继承自该任务；重做并覆盖后归零。
+	InheritedFromTaskID int64     `json:"inherited_from_task_id,omitempty"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 const srcCheckCols = `c.id, c.task_id, c.asset_id,
 COALESCE(a.url, a.domain, a.ip, a.app_name, a.root_domain, ''), COALESCE(a.type,''),
 c.check_key, c.state, c.na_code, c.reason,
-COALESCE(c.evidence_node_id,0), c.metrics, c.updated_by, c.created_at, c.updated_at`
+COALESCE(c.evidence_node_id,0), c.metrics, c.updated_by, COALESCE(c.inherited_from_task_id,0), c.created_at, c.updated_at`
 
 func scanSrcCheck(sc interface{ Scan(...any) error }) (*SrcCheck, error) {
 	var c SrcCheck
 	var metrics []byte
 	if err := sc.Scan(&c.ID, &c.TaskID, &c.AssetID, &c.Asset, &c.AssetType,
 		&c.CheckKey, &c.State, &c.NACode, &c.Reason,
-		&c.EvidenceNodeID, &metrics, &c.UpdatedBy, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		&c.EvidenceNodeID, &metrics, &c.UpdatedBy, &c.InheritedFromTaskID, &c.CreatedAt, &c.UpdatedAt); err != nil {
 		return nil, err
 	}
 	if len(metrics) > 0 {
@@ -85,17 +87,19 @@ func (s *SrcStore) UpsertSrcCheck(ctx context.Context, c *SrcCheck) (*SrcCheck, 
 	}
 	var id int64
 	err = s.db.QueryRowContext(ctx, `
-INSERT INTO src_checks(task_id, asset_id, check_key, state, na_code, reason, evidence_node_id, metrics, updated_by)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+INSERT INTO src_checks(task_id, asset_id, check_key, state, na_code, reason, evidence_node_id, metrics, updated_by, inherited_from_task_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 ON CONFLICT (task_id, asset_id, check_key) DO UPDATE SET
     state            = EXCLUDED.state,
     na_code          = EXCLUDED.na_code,
     reason           = EXCLUDED.reason,
     evidence_node_id = COALESCE(EXCLUDED.evidence_node_id, src_checks.evidence_node_id),
     metrics          = EXCLUDED.metrics,
-    updated_by       = EXCLUDED.updated_by
+    updated_by       = EXCLUDED.updated_by,
+    -- 重做收尾项即本轮新结论，继承标记清零。
+    inherited_from_task_id = EXCLUDED.inherited_from_task_id
 RETURNING id`,
-		c.TaskID, c.AssetID, c.CheckKey, c.State, c.NACode, c.Reason, ev, string(raw), c.UpdatedBy).Scan(&id)
+		c.TaskID, c.AssetID, c.CheckKey, c.State, c.NACode, c.Reason, ev, string(raw), c.UpdatedBy, c.InheritedFromTaskID).Scan(&id)
 	if err != nil {
 		return nil, err
 	}

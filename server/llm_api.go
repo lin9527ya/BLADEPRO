@@ -652,4 +652,9 @@ type createTaskReq struct {
 	ModeDoc json.RawMessage `json:"mode_doc,omitempty"`
 	// SrcProgramID 绑定一个 SRC 平台项目（P3）：规则会被编译进本任务的模式与策略快照。
 	SrcProgramID *int64 `json:"src_program_id,omitempty"`
+	// InheritCoverage 开启跨任务覆盖继承：把近期同项目/同企业 SRC 任务的
+	// tested_clear 格与 done 收尾数字复制进本任务（仅对本任务范围内的资产）。
+	// 默认关；显式 InheritCoverageFrom 优先于自动选源。
+	InheritCoverage     *bool  `json:"inherit_coverage,omitempty"`
+	InheritCoverageFrom *int64 `json:"inherit_coverage_from,omitempty"`
 }

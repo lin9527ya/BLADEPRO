@@ -58,6 +58,10 @@ type Report struct {
 	// 交付面：medium+ 发现数 / 其中报告已齐备的条数（SkipReportGate 时不统计）。
 	FindingsMediumPlus int `json:"findings_medium_plus"`
 	ReportsReady       int `json:"reports_ready"`
+	// InheritedCells / InheritedChecks 是终态里来自历史任务的部分（创建任务时可选
+	// 继承），用于 UI/提示区分"本轮实测"与"继承结论"。
+	InheritedCells  int `json:"inherited_cells,omitempty"`
+	InheritedChecks int `json:"inherited_checks,omitempty"`
 	// 收尾闸（技能的 site-close-checklist）：应有项 / 已终态项 / 按项统计。
 	ChecksTotal int            `json:"checks_total"`
 	ChecksDone  int            `json:"checks_done"`
@@ -196,6 +200,9 @@ func CheckFinish(ctx context.Context, store *db.SrcStore, taskID int64, doc Mode
 					continue
 				}
 				rep.CellsTerminal++
+				if cell.InheritedFromTaskID > 0 {
+					rep.InheritedCells++
+				}
 				if cell.State == db.SrcStateFound || cell.State == db.SrcStateClear {
 					rep.CellsMeasured++
 				}
@@ -230,6 +237,9 @@ func CheckFinish(ctx context.Context, store *db.SrcStore, taskID int64, doc Mode
 					continue
 				}
 				rep.ChecksDone++
+				if chk.InheritedFromTaskID > 0 {
+					rep.InheritedChecks++
+				}
 				switch chk.State {
 				case db.SrcCheckDone:
 					if ok, why := checkSatisfied(def, doc, chk.Metrics); !ok {
@@ -338,6 +348,11 @@ func cellGap(asset db.SrcAsset, area string, cell db.SrcCell, doc ModeDoc, asset
 		}
 	case db.SrcStateClear:
 		if cell.EvidenceNodeID == 0 {
+			// 继承格：证据留在源任务，本任务没有自己的 evidence_node 是正常的。只要
+			// 继承来源与说明都在，就不算缺证据；重测会覆盖并清掉 inherited 标记。
+			if cell.InheritedFromTaskID > 0 && strings.TrimSpace(cell.Reason) != "" {
+				break
+			}
 			if !doc.AllowReasonOnlyClear {
 				base.Kind = GapMissingEvidence
 				base.Reason = "tested_clear 缺证据节点（项目未允许只写说明）"

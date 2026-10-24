@@ -1015,6 +1015,8 @@ export interface SrcCell {
   finding_id?: number;
   attempts?: number;
   updated_by?: string;
+  /** >0 = 从该任务继承的 tested_clear（证据在源任务）。重测后归零。 */
+  inherited_from_task_id?: number;
   created_at?: string;
   updated_at?: string;
 }
@@ -1030,6 +1032,8 @@ export interface SrcMatrixCell {
   attempts?: number;
   evidence_node_id?: number;
   finding_id?: number;
+  /** >0 = 从该任务继承的结论（证据在源任务）。 */
+  inherited_from_task_id?: number;
 }
 
 export interface SrcMatrixAsset {
@@ -1061,6 +1065,8 @@ export interface SrcCheckItem {
   reason?: string;
   metrics?: Record<string, number>;
   evidence_node_id?: number;
+  /** >0 = 这项 done 数字继承自该任务。 */
+  inherited_from_task_id?: number;
   /** 从录制流量推导出的实测值（P0-7）；仅在可核验的收尾项上出现。 */
   observed_metrics?: Record<string, number>;
   /** 自报数字与实测对不上的告警（不阻断，只提示）。 */
@@ -1087,6 +1093,9 @@ export interface SrcSummary {
   /** 交付面（P2）：中危及以上发现数 / 其中报告已齐备的条数。 */
   findings_medium_plus?: number;
   reports_ready?: number;
+  /** 终态里来自历史任务的部分（创建时继承）。 */
+  inherited_cells?: number;
+  inherited_checks?: number;
   /** 收尾闸（F1）：应有项 / 已终态项 / 按项统计的缺口数。 */
   checks_total?: number;
   checks_done?: number;

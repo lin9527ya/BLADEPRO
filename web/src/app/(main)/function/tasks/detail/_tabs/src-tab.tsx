@@ -441,6 +441,11 @@ export function SrcTab({ taskId }: { taskId: string }) {
               {finishable ? "可收尾" : "缺口未清零"}
             </Badge>
           ) : null}
+          {enabled && ((summary?.inherited_cells ?? 0) > 0 || (summary?.inherited_checks ?? 0) > 0) ? (
+            <Badge variant="outline" title="继承自历史任务；重测会覆盖并清除继承标记">
+              继承 {summary?.inherited_cells ?? 0} 格 / {summary?.inherited_checks ?? 0} 项
+            </Badge>
+          ) : null}
           {enabled && !finishable && summary?.blocked_reason ? (
             <span className="text-muted-foreground min-w-0 text-xs">{summary.blocked_reason}</span>
           ) : null}
@@ -586,6 +591,14 @@ export function SrcTab({ taskId }: { taskId: string }) {
                           <span>{cell.area}</span>
                           {cell.item !== "*" ? <span className="opacity-70">/{cell.item}</span> : null}
                           <span className="font-medium">{cellLabel(cell.state)}</span>
+                          {cell.inherited_from_task_id ? (
+                            <span
+                              className="rounded bg-background/60 px-1 text-[10px]"
+                              title={`继承自任务 #${cell.inherited_from_task_id}`}
+                            >
+                              继承
+                            </span>
+                          ) : null}
                         </button>
                       ))}
                       {(asset.cells ?? []).length === 0 ? (
@@ -649,6 +662,14 @@ export function SrcTab({ taskId }: { taskId: string }) {
                           <span className="font-medium">
                             {item.state === "done" ? "已做" : item.state === "na" ? "N/A" : item.state === "budget_stop" ? "预算停" : "未做"}
                           </span>
+                          {item.inherited_from_task_id ? (
+                            <span
+                              className="rounded bg-background/60 px-1 text-[10px]"
+                              title={`继承自任务 #${item.inherited_from_task_id}`}
+                            >
+                              继承
+                            </span>
+                          ) : null}
                         </button>
                       ))}
                     </div>

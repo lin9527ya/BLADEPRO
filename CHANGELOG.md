@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+### 新增：跨任务覆盖继承（P2）
+
+- 建任务时可勾选「继承近期覆盖」：经 `POST /api/tasks` 的 `inherit_coverage`（或
+  `inherit_coverage_from` 指定来源任务）把历史 SRC 任务的结论带进新任务。
+- 只继承本任务范围内资产的 **tested_clear 格**与 **done 收尾数字**；
+  不继承发现、N/A、budget_stop（发现属于旧任务证据链，N/A 依据可能已变化）。
+- `src_cells` / `src_checks` 新增 `inherited_from_task_id`：继承行的 evidence 留在
+  源任务，收尾门对带继承来源且有说明的 clear 不再要求本任务证据节点；重测并覆盖后
+  继承标记自动清零，attempts 从 0 重新计（继承不消耗本轮尝试预算）。
+- 来源选择：显式 `inherit_coverage_from` → 同平台项目 → 同企业 → 新任务范围内有共同
+  资产；只取 30 天内、且有重叠结论的 SRC 任务，按最近活动排序。
+- `src_state` / 覆盖矩阵快照与 UI 增加继承徽章与 `inherited_cells/checks` 统计；
+  planner/worker 提示词说明"继承格默认视为已测，站点变化时可复测覆盖"。
+- 回归：继承只复制 clear/done、范围过滤、来源排序、重测清除继承标记。
+
 ### 新增：模型分层与成本归因（P2）
 
 - `llm_profiles` 增加 `tier`（cheap / standard / strong）与四个单价

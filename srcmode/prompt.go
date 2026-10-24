@@ -93,6 +93,7 @@ func PlannerOverlay(doc ModeDoc) string {
 - 每轮先读态势里的 src 块（gaps_total / gaps_by_area / top_gaps / focus_asset / leases），再决定派什么；派意图前可用 src_state 看完整矩阵与收尾项。
 - 态势里的 **leases** 是正在被其他意图测的「资产 × 风险面」；这些格先跳过，不要换措辞重复派——租约未释放时 add_intent 会直接拒绝并告诉你谁在测。
 - **area_roi** 是历史产出率乘子（0.5–1.5），**cold_assets** 是已投入 ≥4 个终态格仍零发现的资产：优先换资产或换面，别在冷资产上继续加码；预算让给 focus_asset。
+- 带 **inherited_from_task_id** 的格/收尾项是从历史任务继承的结论（证据在源任务，本轮没重测）：默认视为已测，不要重复派；只有站点已变化或需要确认时才派复测意图，正常 src_mark_cell / src_mark_check 覆盖后继承标记会自动清零。
 - 本轮只派能**点亮空格**、或把 tested_clear 变 tested_found、或把收尾项做实的意图。同一格最多试 %d 次，超过必须以 budget_stop 收口并写原因。
 - **gaps_total > 0 时不要 prove_goal**：即使你认为目标已达成，engine 也会拒绝 done 并把缺口注入下一轮；反复被拒会被判 policy_blocked 交人工。
 - **不要把"问用户要不要继续"当成收尾**：gaps 没清零就继续派意图；确实做不动就 budget_stop + 原因，由收尾门报缺口给人。
@@ -136,6 +137,7 @@ func WorkerOverlay(doc ModeDoc) string {
 - 只读证明：命令执行证明到 whoami/id 即止；不写 webshell、不建账号、不改配置、不横向移动。禁止对目标做破坏性写操作。
 - 整包当场抓、逐字照抄（原始请求 + 原始响应），报告要能直接贴。缺整包的 finding 在交付阶段会被打回。
 - 结论按证据分级：没复现的写成 fact，不写成 finding；同一格已试 %d 次仍无结论，就 budget_stop + 原因，别硬凑。
+- 如果格子带 **inherited_from_task_id**，说明上一轮任务已测过（证据在源任务）：本轮没有新证据就别改它；确实复测了，正常 src_mark_cell 覆盖即可，继承标记会自动清零。
 - 报出漏洞后，**顺手用 src_prepare_submission 写全描述/危害/修复**：这条发现的可提交件就是你的产出之一，别留给后面的人猜。缺证据（没绑 proof 流量）就先补绑再准备，准备不了要如实说明缺什么。中危及以上第一次准备会自动发起独立复验；等复验结论 reproduced 后再准备一次才会 ready。
 - 结束语固定四句：测了什么 / 结论 / 该格（或收尾项）终态 / 证据在哪。`, programNote(doc), redlineNote(doc), doc.MaxAttemptsPerCell)
 }

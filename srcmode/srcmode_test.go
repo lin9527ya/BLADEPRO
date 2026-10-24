@@ -217,6 +217,9 @@ func TestCellGapShapes(t *testing.T) {
 		{db.SrcCell{Area: "authz", Item: "*", State: db.SrcStateClear}, GapMissingEvidence, true},
 		{db.SrcCell{Area: "authz", Item: "*", State: db.SrcStateClear, Reason: "发过请求，无异常"}, GapMissingEvidence, true},
 		{db.SrcCell{Area: "authz", Item: "*", State: db.SrcStateClear, EvidenceNodeID: 9}, "", false},
+		// 继承格：证据在源任务里，带继承来源 + 说明即可通过；没有说明仍然缺证据。
+		{db.SrcCell{Area: "authz", Item: "*", State: db.SrcStateClear, Reason: "继承自任务 #3", InheritedFromTaskID: 3}, "", false},
+		{db.SrcCell{Area: "authz", Item: "*", State: db.SrcStateClear, InheritedFromTaskID: 3}, GapMissingEvidence, true},
 		{db.SrcCell{Area: "authz", Item: "*", State: db.SrcStateFound}, GapMissingFinding, true},
 		{db.SrcCell{Area: "authz", Item: "*", State: db.SrcStateFound, FindingID: 3}, "", false},
 	}

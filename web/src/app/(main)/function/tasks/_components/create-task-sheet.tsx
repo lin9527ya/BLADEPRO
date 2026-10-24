@@ -151,6 +151,8 @@ export function CreateTaskSheet({
   // P3 平台项目:仅 SRC 模式下可选,绑定的项目规则(禁用手段/写操作/限速/必做面)编译进本任务。
   const [srcPrograms, setSrcPrograms] = React.useState<SrcProgram[]>([]);
   const [srcProgramID, setSrcProgramID] = React.useState<number | undefined>(undefined);
+  // P2 跨任务覆盖继承：把近期同项目/同企业的 tested_clear 与收尾数字带进新任务。
+  const [inheritCoverage, setInheritCoverage] = React.useState(false);
   const [description, setDescription] = React.useState("");
   const [goal, setGoal] = React.useState("");
   const [selectedTemplateID, setSelectedTemplateID] = React.useState<number | null>(null);
@@ -273,6 +275,7 @@ export function CreateTaskSheet({
         coverageEnabled,
         mode,
         srcProgramID,
+        inheritCoverage: mode === "src" ? inheritCoverage : false,
         interceptRules: interceptRules
           .map((r) => ({ ...r, pattern: r.pattern.trim() }))
           .filter((r) => r.pattern !== ""),
@@ -293,6 +296,7 @@ export function CreateTaskSheet({
       setGoal("");
       setMode("");
       setSrcProgramID(undefined);
+      setInheritCoverage(false);
       setSelectedTemplateID(null);
       setSourceTaskIDs([]);
       setCompanyIDs([]);
@@ -385,7 +389,10 @@ export function CreateTaskSheet({
                     onClick={() => {
                       setMode(opt.value);
                       // 切回普通渗透时清掉项目绑定(普通渗透不吃项目规则,留着会误发)。
-                      if (opt.value !== "src") setSrcProgramID(undefined);
+                      if (opt.value !== "src") {
+                        setSrcProgramID(undefined);
+                        setInheritCoverage(false);
+                      }
                     }}
                     className={`rounded px-2.5 py-1 text-xs transition-colors ${
                       mode === opt.value
@@ -426,6 +433,22 @@ export function CreateTaskSheet({
                 </Select>
                 <FieldDescription>
                   绑定项目后，项目的禁用手段/写操作、限速与必做面会编译进本任务；项目规则改动不影响已建任务。
+                </FieldDescription>
+              </Field>
+            )}
+            {mode === "src" && (
+              <Field>
+                <label htmlFor="inherit-coverage" className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    id="inherit-coverage"
+                    checked={inheritCoverage}
+                    onCheckedChange={(v) => setInheritCoverage(!!v)}
+                  />
+                  继承近期覆盖（同项目 / 同企业的已测格与收尾数字）
+                </label>
+                <FieldDescription>
+                  只继承本任务范围内资产的 tested_clear 与已完成的收尾数字（标「继承」，证据留在源任务）；
+                  不继承发现、N/A 与预算停。重测会覆盖并清除继承标记。默认关闭。
                 </FieldDescription>
               </Field>
             )}

@@ -1233,13 +1233,50 @@ func (t *Traffic) DeleteHost(host string) (int64, error) {
 // 同一个 host 的流量是连续写入的，它的目录里很可能既有过期文件也有新文件；
 // 只有当某个 host 在删完之后一条 exchange 都不剩时，它的遗留目录才跟着走。
 func (t *Traffic) DeleteOlderThan(cutoff time.Time) (int64, error) {
+	return t.deleteOlderThanWhere(cutoff, "", nil)
+}
+
+// DeleteOlderThanTasks deletes exchanges older than cutoff that belong to the
+// given task ids. exclude=true flips it to "old, but NOT owned by these tasks",
+// which is how a longer per-program retention protects its traffic from the
+// global sweep. Exchanges with task_id=0 (browser/legacy) are never matched by
+// the IN form and are always subject to the global sweep.
+func (t *Traffic) DeleteOlderThanTasks(cutoff time.Time, taskIDs []int64, exclude bool) (int64, error) {
+	if len(taskIDs) == 0 {
+		if exclude {
+			return t.DeleteOlderThan(cutoff)
+		}
+		return 0, nil
+	}
+	ph := make([]string, 0, len(taskIDs))
+	args := make([]any, 0, len(taskIDs))
+	for _, id := range taskIDs {
+		ph = append(ph, "?")
+		args = append(args, id)
+	}
+	op := "IN"
+	if exclude {
+		op = "NOT IN"
+	}
+	return t.deleteOlderThanWhere(cutoff, `task_id `+op+` (`+strings.Join(ph, ",")+`)`, args)
+}
+
+// deleteOlderThanWhere is the shared implementation; taskCond is empty for the
+// whole-archive sweep.
+func (t *Traffic) deleteOlderThanWhere(cutoff time.Time, taskCond string, taskArgs []any) (int64, error) {
 	ts := cutoff.Unix()
 	t.wmu.Lock()
 	defer t.wmu.Unlock()
 
+	where := `ts < ?`
+	args := []any{ts}
+	if taskCond != "" {
+		where += " AND " + taskCond
+		args = append(args, taskArgs...)
+	}
 	// 候选 host 必须在删行**之前**取：删完索引就不再是"哪些 host 被这次过滤命中"
 	// 的记录了（与 DeleteHost 里 hostTrees 的道理相同）。
-	hosts, err := t.hostsMatching(`ts < ?`, ts)
+	hosts, err := t.hostsMatching(where, args...)
 	if err != nil {
 		return 0, err
 	}
@@ -1248,7 +1285,7 @@ func (t *Traffic) DeleteOlderThan(cutoff time.Time) (int64, error) {
 		return 0, err
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op once committed
-	n, err := t.deleteWhere(tx, `ts < ?`, ts)
+	n, err := t.deleteWhere(tx, where, args...)
 	if err != nil {
 		return 0, err
 	}

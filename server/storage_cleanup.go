@@ -234,10 +234,6 @@ func storageCategorySpecByKey(key string) (storageCategorySpec, bool) {
 // 免得将来有人从别的路径调进来绕过了设置判定。
 func (s *Server) purgeRetentionCategory(ctx context.Context, spec storageCategorySpec, days int) (int64, error) {
 	if spec.TrafficIndex {
-		if days <= 0 {
-			return 0, nil
-		}
-		cutoff := time.Now().AddDate(0, 0, -days)
 		// 走 traffic 包的 API：索引行、正文行、blob 引用与磁盘 blob/遗留目录要一起
 		// 处理，且目录去留取决于"该 host 还有没有新流量"。绕开这个包直接删文件会把
 		// 索引打烂。
@@ -245,7 +241,45 @@ func (s *Server) purgeRetentionCategory(ctx context.Context, spec storageCategor
 		if tr == nil {
 			return 0, nil
 		}
-		return tr.DeleteOlderThan(cutoff)
+		now := time.Now()
+		groups, err := s.m.pg.ProgramRetentionGroups(ctx)
+		if err != nil {
+			return 0, err
+		}
+		var total int64
+		for _, g := range groups {
+			if g.Days <= 0 {
+				continue
+			}
+			ids := taskIDStringsToInts(g.TaskIDs)
+			if len(ids) == 0 {
+				continue
+			}
+			n, derr := tr.DeleteOlderThanTasks(now.AddDate(0, 0, -g.Days), ids, false)
+			if derr != nil {
+				return total, fmt.Errorf("program #%d 流量保留：%w", g.ProgramID, derr)
+			}
+			total += n
+		}
+		if days <= 0 {
+			return total, nil
+		}
+		var exclude []int64
+		for _, g := range groups {
+			if g.Days > days {
+				exclude = append(exclude, taskIDStringsToInts(g.TaskIDs)...)
+			}
+		}
+		var n int64
+		if len(exclude) > 0 {
+			n, err = tr.DeleteOlderThanTasks(now.AddDate(0, 0, -days), exclude, true)
+		} else {
+			n, err = tr.DeleteOlderThan(now.AddDate(0, 0, -days))
+		}
+		if err != nil {
+			return total, err
+		}
+		return total + n, nil
 	}
 	tasks, explorations, err := s.retentionProtection()
 	if err != nil {
@@ -326,6 +360,18 @@ func (s *Server) purgeRetentionCategory(ctx context.Context, spec storageCategor
 		return total, err
 	}
 	return total + n, nil
+}
+
+// taskIDStringsToInts converts the task-id strings from ProgramRetentionGroups
+// into the int64 form the traffic recorder stores. Invalid entries are dropped.
+func taskIDStringsToInts(ids []string) []int64 {
+	out := make([]int64, 0, len(ids))
+	for _, raw := range ids {
+		if id, err := strconv.ParseInt(raw, 10, 64); err == nil && id > 0 {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // purgeTableBefore applies one cutoff to the category's table. Kept separate so

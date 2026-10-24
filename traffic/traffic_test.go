@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	mproxy "github.com/lqqyt2423/go-mitmproxy/proxy"
 )
@@ -406,5 +407,47 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
 	}
 	if _, err := os.Stat(blobC); !os.IsNotExist(err) {
 		t.Fatalf("blobC still exists after last reference removed: %v", err)
+	}
+}
+
+// TestDeleteOlderThanTasks pins task-scoped traffic retention: only the listed
+// tasks' old exchanges are removed, and exclude=true protects them from the
+// global sweep (used by longer per-program retention).
+func TestDeleteOlderThanTasks(t *testing.T) {
+	tr, err := Open(t.TempDir(), "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+	seed := func(id, host string, ts int64, taskID int64) {
+		if _, err := tr.DB().Exec(`INSERT INTO exchanges(id,ts,host,method,url_template,url,status,content_type,req_len,resp_len,path,task_id)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, id, ts, host, "GET", "/", "http://"+host+"/", 200, "text/html", 0, 0, "", taskID); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	old := int64(1000)
+	seed("a", "a.example", old, 1)
+	seed("b", "b.example", old, 2)
+	seed("c", "c.example", old, 0)
+	seed("d", "d.example", 2000, 1)
+
+	n, err := tr.DeleteOlderThanTasks(time.Unix(1500, 0), []int64{1}, false)
+	if err != nil || n != 1 {
+		t.Fatalf("scoped delete n=%d err=%v", n, err)
+	}
+	var left int
+	_ = tr.DB().QueryRow(`SELECT count(*) FROM exchanges WHERE task_id=1`).Scan(&left)
+	if left != 1 {
+		t.Fatalf("task 1 rows=%d want 1 (new row kept)", left)
+	}
+
+	// exclude=1 from a global sweep must keep the remaining task-1 row but delete
+	// the other old rows (task 2 and unattributed 0).
+	n, err = tr.DeleteOlderThanTasks(time.Unix(1500, 0), []int64{1}, true)
+	if err != nil || n != 2 {
+		t.Fatalf("exclude delete n=%d err=%v", n, err)
+	}
+	if err := tr.DB().QueryRow(`SELECT count(*) FROM exchanges`).Scan(&left); err != nil || left != 1 {
+		t.Fatalf("rows left=%d err=%v want 1", left, err)
 	}
 }

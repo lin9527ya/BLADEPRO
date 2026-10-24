@@ -96,7 +96,7 @@ report_finding → 绑 proof/verification 流量 → src_prepare_submission（�
 
 > 没有绑定流量的中危发现会一直卡在交付门。这是刻意的：没证据的发现不叫可提交件。要么补绑证据，要么把它推翻（误报/已撤回），要么人工放行收尾。
 
-交付包（`GET /api/tasks/{id}/src-report.zip`）里除每条发现的 md/docx，还带 `提交说明.md`（清单 + 证据门 + 疑似重复 + 台账摘要）与 `submissions.json`（台账快照）。
+交付包（`GET /api/tasks/{id}/src-report.zip`）里除每条发现的 md/docx，还带 `提交说明.md`（清单 + 证据门 + 疑似重复 + 台账摘要）与 `submissions.json`（台账快照）。每条进包发现另有 `attachments/<id>-<slug>/`：`poc.sh`（curl 复现）、`request.http`、`step-N.body` 与 `README.txt`；同一份脚本也会交给独立复验，保证报告里的 PoC 与复验实际执行的请求同源。
 
 ### 平台项目与看板（P3）
 

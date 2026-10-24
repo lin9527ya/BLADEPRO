@@ -58,6 +58,19 @@
 - 回归：clear 证据/allow 开关、platform_exempt 豁免依据、static_page 按面白名单、
   Program→mode_doc 编译；集成测试夹具显式打开 allow 以聚焦各自断言。
 
+### 新增：PoC 可执行化（P1）
+
+- 交付包为每条进包发现增加 `attachments/<发现id>-<slug>/`：
+  - `poc.sh`：curl 复现脚本（小正文内联 base64，大正文引用同目录 `step-N.body`）；
+  - `request.http`：原始请求的 .http 形式；
+  - `step-N.body`：原始请求正文字节；`README.txt`：执行边界与步骤清单。
+- 只从 `proof` / `verification` 绑定生成；超过 2MB 的正文截断并在脚本/README 里告警。
+- 同一份脚本放进 retester 的 `get_finding_retest_context`（`poc.curl` / `poc.http`），
+  独立复验"执行的就是报告里那份 PoC"；脚本超过 96KB 时提示从交付包获取。
+- 安全边界：脚本只发请求、不修改目标状态；README 明确只在授权范围执行、遵守限速，
+  签名/时间戳可能过期；curl 不默认 `-k`（自签名环境自行加）。
+- 回归：请求头解析（跳过 Content-Length 等）、脚本/HTTP/README 渲染、单引号 shell 转义。
+
 ### 新增：影响面/定级建议（P1）
 
 - `findings` 新增 `cwe`、`cvss_vector`、`impact_scope`、`repro_env`、`test_accounts`；

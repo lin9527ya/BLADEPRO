@@ -297,6 +297,21 @@ func (s *Server) buildSrcZip(ctx context.Context, t *Task, plan *srcBatchPlan) (
 		if err := add(base+".docx", docx); err != nil {
 			return nil, err
 		}
+		// P1 PoC：从 proof/verification 绑定生成可执行复现件（attachments/…）。
+		if poc, err := s.buildSrcPoc(ctx, f); err == nil && poc != nil {
+			for name, data := range poc.Bodies {
+				if err := add(poc.Dir+"/"+name, data); err != nil {
+					return nil, err
+				}
+			}
+			for name, data := range map[string]string{
+				"poc.sh": poc.Script, "request.http": poc.HTTP, "README.txt": poc.Readme,
+			} {
+				if err := add(poc.Dir+"/"+name, []byte(data)); err != nil {
+					return nil, err
+				}
+			}
+		}
 	}
 	if err := zw.Close(); err != nil {
 		return nil, err
@@ -372,6 +387,9 @@ func srcBatchReadme(t *Task, plan *srcBatchPlan) string {
 		fmt.Fprintf(&b, "   - 等级：%s；类型：%s；目标：%s\n", e.SeverityCN, firstNonEmpty(e.VulnClass, "—"), firstNonEmpty(e.Target, "—"))
 		fmt.Fprintf(&b, "   - 证据：%s\n", evidence)
 		fmt.Fprintf(&b, "   - 附件：findings/%d-%s.md（规范简报）、.docx（可提交件）\n", e.ID, srcFileSlug(e.Title, e.VulnClass))
+		if e.Steps > 0 {
+			fmt.Fprintf(&b, "   - PoC：attachments/%d-%s/（poc.sh / request.http / step-N.body / README.txt）\n", e.ID, srcFileSlug(e.Title, e.VulnClass))
+		}
 	}
 	b.WriteString("\n")
 

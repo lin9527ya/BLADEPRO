@@ -143,7 +143,7 @@ func (s *Server) startFindingRetestCore(ctx context.Context, findingID int64, no
 // arguments cannot redirect a result into a different finding or conversation.
 func (s *Server) findingRetestTools() []actool.CoreTool {
 	return []actool.CoreTool{
-		roTool("get_finding_retest_context", "读取当前复测会话关联的漏洞证据快照、复测状态、补充说明与当前任务约束。无参数，只能读取本会话。",
+		roTool("get_finding_retest_context", "读取当前复测会话关联的漏洞证据快照、复测状态、补充说明与当前任务约束。返回的 poc.curl/poc.http 是由原始绑定证据生成的可执行复现脚本（签名/时间戳可能已过期；执行前确认 scope 与限速）。无参数，只能读取本会话。",
 			objSchema(map[string]any{}), func(ctx context.Context, _ json.RawMessage) (actool.Result, error) {
 				r, err := s.m.pg.FindingRetestForConversation(ctx, intercept.ConvIDFromContext(ctx))
 				if err != nil {
@@ -165,7 +165,27 @@ func (s *Server) findingRetestTools() []actool.CoreTool {
 						}
 					}
 				}
-				return jsonResult(map[string]any{"retest": r, "current_constraints": constraints})
+				out := map[string]any{"retest": r, "current_constraints": constraints}
+				// P1 PoC 可执行化：把同一份生成脚本交给复验，避免"报告里的 PoC"与
+				// "复验实际执行的请求"各写一套。脚本里的签名可能已过期，只作起点。
+				if f != nil {
+					if poc, perr := s.buildSrcPoc(ctx, f); perr == nil && poc != nil {
+						entry := map[string]any{
+							"note": "由原始绑定证据生成；签名/时间戳可能已过期。执行前确认 scope 与限速，只在授权范围内运行。",
+						}
+						if len(poc.Script) <= srcPocMaxScript {
+							entry["curl"] = poc.Script
+							entry["http"] = poc.HTTP
+						} else {
+							entry["omitted"] = "PoC 脚本超过 96KB（正文过大），完整版见交付包 attachments/；请按原始证据最小重放。"
+						}
+						if len(poc.Omitted) > 0 {
+							entry["warnings"] = poc.Omitted
+						}
+						out["poc"] = entry
+					}
+				}
+				return jsonResult(out)
 			}),
 		wrTool("record_finding_retest_result", "为当前复测会话保存唯一结论；原漏洞证据与报告保持不变。会话成功结束且结论为 fixed 时，系统自动将漏洞状态改为已修复；其他结论保留原状态。必须提供本次实际检查的证据，无法确认时写明阻塞原因。",
 			objSchema(map[string]any{

@@ -243,6 +243,9 @@ func (p *Program) ApplyToModeDoc(doc ModeDoc) ModeDoc {
 	if p.Rules.RequireRetest != nil {
 		out.RequireRetest = *p.Rules.RequireRetest
 	}
+	if p.RateLimit > 0 {
+		out.RateLimit = p.RateLimit
+	}
 	if len(p.Rules.ExemptAreas) > 0 {
 		seen := map[string]bool{}
 		for _, a := range out.PlatformExemptAreas {

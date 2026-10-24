@@ -324,3 +324,14 @@ func TestProgramRequireRetest(t *testing.T) {
 		t.Fatal("program 显式关闭后 mode_doc 仍要求复验")
 	}
 }
+
+// TestProgramRateLimitCompiled 钉住程序限速进 mode_doc：确定性探针按它限速。
+func TestProgramRateLimitCompiled(t *testing.T) {
+	p := &Program{Name: "rate", RateLimit: 7}
+	if err := p.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if doc := p.ApplyToModeDoc(DefaultDoc()); doc.RateLimit != 7 {
+		t.Fatalf("rate_limit 未编译进 mode_doc：%d", doc.RateLimit)
+	}
+}

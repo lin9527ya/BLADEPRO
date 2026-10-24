@@ -538,6 +538,7 @@ func (t *ToolSet) srcMarkCheck() actool.CoreTool {
 			"  check = 测够没有（JS 抽全 / 路径枚举 / 非 404 复测 / 方法矩阵 / 参数变体 / 防护对照 / 判死三条件 / 截图）。\n"+
 			"收尾门两层都要清零。check_key 只能是："+strings.Join(srcmode.CheckKeys(), " / ")+"。\n"+
 			"done 必须有达标的数字（metrics）与 evidence_node_id（先 record_fact 记下命令与结果）；\n"+
+			"paths/js/methods/non404 优先用 src_probe 跑确定性探针，它返回的 metrics 可直接填这里；\n"+
 			"done 提交后系统会用录制流量核对数字：返回的 verify_warnings 非空时说明自报与实测对不上，先解释差异（可能只是录制没走代理），不要无视；\n"+
 			"na 必须写 reason + na_code（只在 src_state 给出的该 check 的 na_codes 里选）；\n"+
 			"budget_stop 必须写 reason。数字不达标会被拒绝并告诉你还差多少。",

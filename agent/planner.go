@@ -29,7 +29,9 @@ type Planner struct {
 	// srcPreparer 是宿主注入的 SRC 交付准备实现（nil = src_prepare_submission 报未接线）。
 	srcPreparer SrcPreparer
 	// srcVerifier 由宿主注入：从流量核验收尾项指标（nil = 不核验）。
-	srcVerifier       SrcVerifier
+	srcVerifier SrcVerifier
+	// srcProber 由宿主注入：确定性只读探针（nil = src_probe 报未接线）。
+	srcProber         SrcProber
 	prov              llm.Provider
 	model             string
 	tx                *transcript.Store                      // raw LLM conversation persistence (nil = off)
@@ -476,6 +478,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 				tsx.SetSrcMode(srcmode.Parse(raw), src)
 				tsx.SetSrcPreparer(p.srcPreparer)
 				tsx.SetSrcVerifier(p.srcVerifier)
+				tsx.SetSrcProber(p.srcProber)
 			}
 		}
 	}

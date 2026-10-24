@@ -574,6 +574,7 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	wk.SetFindingRecorder(s.evidenceStore())
 	wk.SetSrcPreparer(s.prepareSrcSubmission)  // SRC 交付准备（与 HTTP 面同一实现）
 	wk.SetSrcVerifier(s.verifySrcCheckMetrics) // P0-7：收尾项指标自报 vs 流量实测
+	wk.SetSrcProber(s.runSrcProbe)             // P2：确定性只读探针
 	wk.SetCompactionWindowResolver(workerRuntime.CompactionWindow)
 	wk.SetNonStreaming(workerRuntime.nonStreaming) // 按任务当前激活 profile 的流式开关(每轮读)
 	wk.SetMaxTokens(workerRuntime.maxTokens)       // 同上,输出上限也跟随当前激活 profile
@@ -589,6 +590,7 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	pl.SetFindingRecorder(s.evidenceStore())
 	pl.SetSrcPreparer(s.prepareSrcSubmission)  // SRC 交付准备：覆盖格清完后把中危以上发现收口成可提交件
 	pl.SetSrcVerifier(s.verifySrcCheckMetrics) // P0-7：收尾项指标自报 vs 流量实测
+	pl.SetSrcProber(s.runSrcProbe)             // P2：确定性只读探针
 	pl.SetCompactionWindowResolver(plannerRuntime.CompactionWindow)
 	pl.SetNonStreaming(plannerRuntime.nonStreaming)
 	pl.SetMaxTokens(plannerRuntime.maxTokens)

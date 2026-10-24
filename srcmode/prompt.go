@@ -99,7 +99,7 @@ func PlannerOverlay(doc ModeDoc) string {
 - 矩阵外的新面可以打，但先派一条能建格的意图（src_mark_cell 支持矩阵外的面），别做"打了但没落格"的活。
 - 单个资产最多吃 %d 条意图预算；还剩大面没测的站点优先，别在同一个站上反复换措辞重试。
 - 覆盖优先于深度：先把"每个站点 × 必做面 + 收尾项"铺平，再回到高价值面往下钻。禁止为拉平覆盖去追据点/凭据/持久化（策略已禁，提示词再强调：只读证明，到 whoami/id 即止）。
-- 缺口分五类，处理方式不同：blank=没测（派人去测）；missing_check=收尾项没做/数字不够（派人补工具动作，用 src_mark_check 记数字与证据）；missing_reason/missing_evidence/missing_finding=测了但没留证据（派一条补齐的意图，或让 src_mark_cell 补写）；budget_stop=没测完（要么再给一次机会，要么接受缺口由人放行）。
+- 缺口分五类，处理方式不同：blank=没测（派人去测）；missing_check=收尾项没做/数字不够（优先让 worker 用 src_probe 跑确定性探针，再用 src_mark_check 记数字与证据）；missing_reason/missing_evidence/missing_finding=测了但没留证据（派一条补齐的意图，或让 src_mark_cell 补写）；budget_stop=没测完（要么再给一次机会，要么接受缺口由人放行）。
 - **交付面还有一道门**：每条中危及以上的发现都要有齐备的可提交件（正文 + 合规证据 + 独立复验 reproduced）。缺口里出现 delivery/report 时，派意图补绑证据，或自己用 src_prepare_submission 把描述/危害/修复写全并过合规；首次准备会自动发起复验，等结论回来再准备一次；复验结论不是 reproduced 的不要反复重试，交给人工。查重命中（delivery/duplicate）必须在 src_dedupe 里定案：是同一个洞就把台账标 duplicate，不是就 clear。
 - 没有绑定流量的中危发现会一直卡在交付门：要么补绑证据重新准备，要么把它推翻（误报/已撤回），别放着不管。`,
 		programNote(doc), redlineNote(doc), doc.MaxAttemptsPerCell, doc.MaxIntentsPerAsset)
@@ -129,7 +129,7 @@ func WorkerOverlay(doc ModeDoc) string {
 %s
 %s
 - 结束前**必须**调用 src_mark_cell：tested_found 带 finding_id / tested_clear 带 evidence_node_id（一条 fact；项目显式允许时才可只写说明）/ na 写 reason + na_code（理由码只能选自该面允许的码；platform_exempt 还需要 program 声明）/ budget_stop 写 reason。
-- 如果这条意图做的是收尾动作（抽 JS、枚举路径、复测非 404、方法矩阵、参数变体、防护对照），做完要调 **src_mark_check** 并把数字填进 metrics（例如 paths=214 / retested=6 / methods=7），同时给 evidence_node_id——收尾门只认数字，不认"做过了"。
+- 如果这条意图做的是收尾动作（抽 JS、枚举路径、复测非 404、方法矩阵、参数变体、防护对照），优先用 **src_probe**（paths/js/methods/non404）跑确定性探针——它走录制代理、按程序 QPS 限速，返回的 metrics 直接可用于 src_mark_check；不要再用 ffuf/curl 重复跑一遍。做完要调 **src_mark_check** 并把数字填进 metrics（例如 paths=214 / retested=6 / methods=7），同时给 evidence_node_id——收尾门只认数字，不认"做过了"。
 - 什么算测过：真的发过请求、看过响应。只读代码、只凭指纹猜、只"看起来像"，都只能写 fact（confidence 标 inferred），不能标 tested_clear。
 - 只读证明：命令执行证明到 whoami/id 即止；不写 webshell、不建账号、不改配置、不横向移动。禁止对目标做破坏性写操作。
 - 整包当场抓、逐字照抄（原始请求 + 原始响应），报告要能直接贴。缺整包的 finding 在交付阶段会被打回。

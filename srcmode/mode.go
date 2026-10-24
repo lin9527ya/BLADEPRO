@@ -74,6 +74,8 @@ type ModeDoc struct {
 	// RequireRetest 要求 medium+ 发现在准备交付件前必须有一次独立复验
 	// （finding_retests.verdict=reproduced）。默认 true；program 可显式关闭。
 	RequireRetest bool `json:"require_retest"`
+	// RateLimit 是确定性探针的出站 QPS 上限（0 = 用内建保守值 5）。
+	RateLimit int `json:"rate_limit,omitempty"`
 	// PlatformExemptAreas 是 program 显式声明的平台豁免面：只有列在这里的面才允许
 	// na_code=platform_exempt，避免把"平台不测"当成万能 N/A。
 	PlatformExemptAreas []string `json:"platform_exempt_areas,omitempty"`

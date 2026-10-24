@@ -58,6 +58,20 @@
 - 回归：clear 证据/allow 开关、platform_exempt 豁免依据、static_page 按面白名单、
   Program→mode_doc 编译；集成测试夹具显式打开 allow 以聚焦各自断言。
 
+### 新增：确定性只读探针（P2）
+
+- 新增 `src_probe` 工具（planner/worker）：把重复的收尾动作从 LLM 回合里拿掉。
+  - `paths`：内置 API 路径字典枚举（默认 200 条，可调），返回 paths/non404；
+  - `js`：抽内联脚本、同 host 外链 JS、chunk 与 sourcemap；
+  - `methods`：对端点测 GET/HEAD/OPTIONS 并记录 `Allow`；
+  - `non404`：从该 host 的录制流量里取非 404 GET 路由，慢速复测 2 次。
+- 结果 `metrics` 与 `src_mark_check` 同名，可直接登记收尾项；探针不自动点格。
+- 只读：只发 GET/HEAD/OPTIONS；状态变更方法仍需 agent 在 guard 下显式执行。
+- 执行层：走录制代理（请求进入证据链）、按 `mode_doc.rate_limit` 串行限速
+  （默认 5 qps）、校验任务范围与作业时间窗；程序项目限速自动编译进快照。
+- 新增 `srcprobe` 包与单测（路径/JS/方法/非 404、坏目标拒绝）；提示词引导
+  planner/worker 优先用 `src_probe` 而不是重复跑 ffuf/curl。
+
 ### 新增：SRC 金标靶场（P1 评测基建）
 
 - `srcbench/target/`：本地故意有漏洞的靶场（IDOR / 未授权 / 反射 XSS / SSRF /

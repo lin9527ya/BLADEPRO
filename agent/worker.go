@@ -67,6 +67,8 @@ type Worker struct {
 	srcPreparer SrcPreparer
 	// srcVerifier 由宿主注入：从流量核验收尾项指标（nil = 不核验）。
 	srcVerifier SrcVerifier
+	// srcProber 由宿主注入：确定性只读探针（nil = src_probe 报未接线）。
+	srcProber   SrcProber
 	prov        llm.Provider
 	model       string
 	workDir     string
@@ -456,6 +458,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 				tsx.SetSrcMode(srcmode.Parse(raw), src)
 				tsx.SetSrcPreparer(w.srcPreparer)
 				tsx.SetSrcVerifier(w.srcVerifier)
+				tsx.SetSrcProber(w.srcProber)
 			}
 		}
 	}

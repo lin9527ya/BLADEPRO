@@ -64,6 +64,7 @@
 | `src_finish_check` | planner | 收尾门只读预检（`finishable`） |
 | `src_prepare_submission` | planner / worker / main | 把一条发现准备成可提交件：正文校验 + 证据合规 + 指纹查重 + 落台账 |
 | `src_dedupe` | planner / worker / main | 按指纹跨任务查重；`mark`/`clear` 给重复定案 |
+| `src_probe` | planner / worker | 确定性只读探针：路径枚举 / JS 收集 / 方法矩阵 / 非 404 复测；走录制代理、按程序 QPS 限速，metrics 可直接登记收尾项 |
 
 它们**不进 tools 表**：`wireTools` 会把 DB 里绑定的工具重新注入，一旦 seed 就会泄漏到非 SRC 任务。
 

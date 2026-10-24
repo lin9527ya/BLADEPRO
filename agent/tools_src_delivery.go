@@ -78,6 +78,10 @@ func (p *Planner) SetSrcVerifier(fn SrcVerifier)   { p.srcVerifier = fn }
 func (w *Worker) SetSrcVerifier(fn SrcVerifier)    { w.srcVerifier = fn }
 func (m *MainAgent) SetSrcVerifier(fn SrcVerifier) { m.srcVerifier = fn }
 
+// SetSrcProber 注入确定性只读探针（P2）；planner/worker 每次 run 重新挂。
+func (p *Planner) SetSrcProber(fn SrcProber) { p.srcProber = fn }
+func (w *Worker) SetSrcProber(fn SrcProber)  { w.srcProber = fn }
+
 // srcPrepareSubmission 把一条发现准备成台账行：校验正文、跑证据合规、算指纹、查重、
 // 渲染八段正文并落库。它**不是**"导出下载"——导出由 HTTP 面负责（含整包原文）。
 func (t *ToolSet) srcPrepareSubmission() actool.CoreTool {

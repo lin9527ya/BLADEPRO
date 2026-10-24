@@ -186,3 +186,23 @@ func TestSummaryViewKeepsVerifyWarnings(t *testing.T) {
 		t.Fatalf("摘要丢了 verify_warnings：%+v", rows[0])
 	}
 }
+
+// TestAppendSrcToolsExposesProbe 钉住 src_probe 的可见范围：planner/worker 有，
+// main 没有（主 agent 只读 + 交付，不发探测请求）。
+func TestAppendSrcToolsExposesProbe(t *testing.T) {
+	ts := &ToolSet{srcMode: true}
+	has := func(role string) bool {
+		for _, tool := range ts.AppendSrcTools(nil, role) {
+			if tool.Name() == "src_probe" {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("planner") || !has("worker") {
+		t.Fatal("planner/worker 应挂 src_probe")
+	}
+	if has("main") {
+		t.Fatal("main 不该挂 src_probe（会发请求）")
+	}
+}

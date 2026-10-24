@@ -65,6 +65,8 @@ type Worker struct {
 	findingRecorder FindingRecorder
 	// srcPreparer 是宿主注入的 SRC 交付准备实现（nil = src_prepare_submission 报未接线）。
 	srcPreparer SrcPreparer
+	// srcVerifier 由宿主注入：从流量核验收尾项指标（nil = 不核验）。
+	srcVerifier SrcVerifier
 	prov        llm.Provider
 	model       string
 	workDir     string
@@ -453,6 +455,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 			if mode, raw, err := src.TaskMode(ctx, taskID); err == nil && mode == srcmode.ModeSrc {
 				tsx.SetSrcMode(srcmode.Parse(raw), src)
 				tsx.SetSrcPreparer(w.srcPreparer)
+				tsx.SetSrcVerifier(w.srcVerifier)
 			}
 		}
 	}

@@ -70,6 +70,11 @@ func (p *Planner) SetSrcPreparer(fn SrcPreparer)   { p.srcPreparer = fn }
 func (w *Worker) SetSrcPreparer(fn SrcPreparer)    { w.srcPreparer = fn }
 func (m *MainAgent) SetSrcPreparer(fn SrcPreparer) { m.srcPreparer = fn }
 
+// SetSrcVerifier 同上：流量核验实现也要在每个 run 新建的 ToolSet 上重新挂。
+func (p *Planner) SetSrcVerifier(fn SrcVerifier)   { p.srcVerifier = fn }
+func (w *Worker) SetSrcVerifier(fn SrcVerifier)    { w.srcVerifier = fn }
+func (m *MainAgent) SetSrcVerifier(fn SrcVerifier) { m.srcVerifier = fn }
+
 // srcPrepareSubmission 把一条发现准备成台账行：校验正文、跑证据合规、算指纹、查重、
 // 渲染八段正文并落库。它**不是**"导出下载"——导出由 HTTP 面负责（含整包原文）。
 func (t *ToolSet) srcPrepareSubmission() actool.CoreTool {

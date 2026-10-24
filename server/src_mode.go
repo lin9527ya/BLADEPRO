@@ -44,6 +44,7 @@ func (s *Server) taskSrcSnapshot(r *http.Request, t *Task, doc srcmode.ModeDoc, 
 	tsx := agent.NewToolSet(t.Store, "server")
 	tsx.SetTaskID(taskID)
 	tsx.SetSrcMode(doc, s.m.PG().Src())
+	tsx.SetSrcVerifier(s.verifySrcCheckMetrics)
 	return tsx.SrcSnapshot(r.Context())
 }
 

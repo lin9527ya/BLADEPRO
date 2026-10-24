@@ -5,6 +5,7 @@ package agent
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/lin9527ya/bladepro/db"
@@ -159,4 +160,29 @@ func cellStateFor(i int) any {
 		return db.SrcStateClear
 	}
 	return nil
+}
+
+// TestSummaryViewKeepsVerifyWarnings 钉住 P0-7：默认摘要视图也要带出
+// "自报 vs 流量实测"的告警，否则 agent 只看摘要就永远看不到差异。
+func TestSummaryViewKeepsVerifyWarnings(t *testing.T) {
+	snap := map[string]any{
+		"checks": []map[string]any{
+			{
+				"asset_id": int64(1), "asset": "a.example", "asset_type": "app",
+				"items": []map[string]any{
+					{"key": "paths_enum", "title": "路径枚举", "state": "done",
+						"verify_warnings": []string{"自报 paths=214，但流量里只有 3 个不同路径"}},
+				},
+			},
+		},
+	}
+	out := summaryView(snap)
+	rows, ok := out["checks"].([]map[string]any)
+	if !ok || len(rows) != 1 {
+		t.Fatalf("checks 摘要形状不对：%+v", out["checks"])
+	}
+	warns, ok := rows[0]["verify_warnings"].([]string)
+	if !ok || len(warns) != 1 || !strings.Contains(warns[0], "214") {
+		t.Fatalf("摘要丢了 verify_warnings：%+v", rows[0])
+	}
 }

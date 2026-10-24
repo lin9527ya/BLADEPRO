@@ -58,6 +58,17 @@
 - 回归：clear 证据/allow 开关、platform_exempt 豁免依据、static_page 按面白名单、
   Program→mode_doc 编译；集成测试夹具显式打开 allow 以聚焦各自断言。
 
+### 新增：收尾项指标的流量核验（P0-7）
+
+- 新增只读核验器：从录制流量推导 `paths / methods / js / sourcemap / non404 /
+  retested`，与 `src_checks.metrics` 的自报值比对；**只在自报 > 实测时告警，不阻断**。
+- `src_mark_check` / `src_state` 的收尾项会带 `observed_metrics` 与
+  `verify_warnings`；任务 SRC 页签在收尾闸卡片下方展示告警。
+- 告警措辞明确说明录制关闭/MITM 透传会让实测偏低，避免把"没录到"误判成"没测"。
+- 流量侧新增 `Traffic.Since(host, since, limit)`；核验结果按 (task, host) 做 30s
+  短缓存，避免同一快照内重复扫描。
+- 回归：纯判定核、资产 host 解析、流量指标推导、摘要视图保留告警。
+
 ### 优化：src_state 摘要视图、收尾进度上列表、docx 提交块
 
 - `src_state` 默认返回摘要（计数 + top20 缺口 + 每资产进度），`detail=true` 才给逐格矩阵；

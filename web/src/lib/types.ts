@@ -1061,6 +1061,10 @@ export interface SrcCheckItem {
   reason?: string;
   metrics?: Record<string, number>;
   evidence_node_id?: number;
+  /** 从录制流量推导出的实测值（P0-7）；仅在可核验的收尾项上出现。 */
+  observed_metrics?: Record<string, number>;
+  /** 自报数字与实测对不上的告警（不阻断，只提示）。 */
+  verify_warnings?: string[];
 }
 
 export interface SrcCheckAsset {

@@ -119,6 +119,15 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 				if c.EvidenceNodeID > 0 {
 					entry["evidence_node_id"] = c.EvidenceNodeID
 				}
+				if c.State == db.SrcCheckDone && t.srcVerifier != nil {
+					warns, obs := t.srcVerifier(ctx, t.taskID, a.ID, def.Key, c.Metrics)
+					if len(obs) > 0 {
+						entry["observed_metrics"] = obs
+					}
+					if len(warns) > 0 {
+						entry["verify_warnings"] = warns
+					}
+				}
 			}
 			items = append(items, entry)
 		}
@@ -290,7 +299,14 @@ func summaryView(snap map[string]any) map[string]any {
 			items, _ := row["items"].([]map[string]any)
 			done := 0
 			missing := make([]string, 0, 4)
+			warns := make([]string, 0, 2)
 			for _, it := range items {
+				if ws, ok := it["verify_warnings"].([]string); ok {
+					title, _ := it["title"].(string)
+					for _, w := range ws {
+						warns = append(warns, title+"："+w)
+					}
+				}
 				if it["state"] != nil && it["state"] != "" {
 					done++
 					continue
@@ -299,10 +315,14 @@ func summaryView(snap map[string]any) map[string]any {
 					missing = append(missing, key)
 				}
 			}
-			brief = append(brief, map[string]any{
+			rowOut := map[string]any{
 				"asset_id": row["asset_id"], "asset": row["asset"],
 				"checks_total": len(items), "checks_done": done, "missing": missing,
-			})
+			}
+			if len(warns) > 0 {
+				rowOut["verify_warnings"] = warns
+			}
+			brief = append(brief, rowOut)
 		}
 		out["checks"] = brief
 	}
@@ -517,6 +537,7 @@ func (t *ToolSet) srcMarkCheck() actool.CoreTool {
 			"  check = 测够没有（JS 抽全 / 路径枚举 / 非 404 复测 / 方法矩阵 / 参数变体 / 防护对照 / 判死三条件 / 截图）。\n"+
 			"收尾门两层都要清零。check_key 只能是："+strings.Join(srcmode.CheckKeys(), " / ")+"。\n"+
 			"done 必须有达标的数字（metrics）与 evidence_node_id（先 record_fact 记下命令与结果）；\n"+
+			"done 提交后系统会用录制流量核对数字：返回的 verify_warnings 非空时说明自报与实测对不上，先解释差异（可能只是录制没走代理），不要无视；\n"+
 			"na 必须写 reason + na_code（只在 src_state 给出的该 check 的 na_codes 里选）；\n"+
 			"budget_stop 必须写 reason。数字不达标会被拒绝并告诉你还差多少。",
 		obj(map[string]any{
@@ -561,7 +582,7 @@ func (t *ToolSet) srcMarkCheck() actool.CoreTool {
 			if err != nil {
 				return jsonResult(map[string]any{"check": saved})
 			}
-			return jsonResult(map[string]any{
+			out := map[string]any{
 				"check":         saved,
 				"gaps_total":    rep.GapsTotal,
 				"gaps_by_area":  rep.GapsByArea,
@@ -569,6 +590,17 @@ func (t *ToolSet) srcMarkCheck() actool.CoreTool {
 				"checks_done":   rep.ChecksDone,
 				"checks_by_key": rep.ChecksByKey,
 				"finishable":    rep.Finishable,
-			})
+			}
+			// P0-7：自报数字与录制流量对不上时当场告警（不阻断，只让人/模型看见）。
+			if t.srcVerifier != nil && saved.State == db.SrcCheckDone {
+				warns, obs := t.srcVerifier(ctx, t.taskID, saved.AssetID, saved.CheckKey, saved.Metrics)
+				if len(obs) > 0 {
+					out["observed_metrics"] = obs
+				}
+				if len(warns) > 0 {
+					out["verify_warnings"] = warns
+				}
+			}
+			return jsonResult(out)
 		})
 }

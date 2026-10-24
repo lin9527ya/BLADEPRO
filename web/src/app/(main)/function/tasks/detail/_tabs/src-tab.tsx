@@ -635,6 +635,20 @@ export function SrcTab({ taskId }: { taskId: string }) {
                         </button>
                       ))}
                     </div>
+                    {(row.items ?? []).some((it) => (it.verify_warnings?.length ?? 0) > 0) ? (
+                      <div className="mt-2 grid gap-1">
+                        {(row.items ?? [])
+                          .filter((it) => (it.verify_warnings?.length ?? 0) > 0)
+                          .map((it) => (
+                            <p
+                              key={`verify-${it.key}`}
+                              className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-400"
+                            >
+                              ⚠ {it.title}：{it.verify_warnings?.join("；")}
+                            </p>
+                          ))}
+                      </div>
+                    ) : null}
                   </div>
                 ))
               )}

@@ -791,6 +791,45 @@ func (t *Traffic) Search(host string, page, size int) ([]ExchangeMeta, error) {
 	return out, rows.Err()
 }
 
+// Since returns exchange metadata for one host at/after since (unix seconds),
+// newest first, capped at limit (max 20000). SRC 收尾项核验用：一次取回该 host
+// 在一个任务时间窗内的流量，再在内存里推导 paths/js/methods/non404 等指标。
+func (t *Traffic) Since(host string, since int64, limit int) ([]ExchangeMeta, error) {
+	if t == nil || t.db == nil {
+		return nil, nil
+	}
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return nil, nil
+	}
+	if limit <= 0 || limit > 20000 {
+		limit = 20000
+	}
+	q := `SELECT id,ts,host,method,url_template,url,status,content_type,resp_len,path
+FROM exchanges WHERE host=?`
+	args := []any{host}
+	if since > 0 {
+		q += ` AND ts>=?`
+		args = append(args, since)
+	}
+	q += ` ORDER BY ts DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := t.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ExchangeMeta
+	for rows.Next() {
+		var m ExchangeMeta
+		if err := rows.Scan(&m.ID, &m.TS, &m.Host, &m.Method, &m.URLTemplate, &m.URL, &m.Status, &m.ContentType, &m.RespLen, &m.Path); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // ftsFilter builds the SQL condition restricting rows to those whose indexed
 // text matches term. ok is false when full-text search cannot serve the term —
 // no FTS index on this build, or fewer than three characters, which the trigram

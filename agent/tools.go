@@ -79,6 +79,9 @@ type ToolSet struct {
 	srcStore *db.SrcStore
 	// srcPreparer 由宿主注入（server）：交付准备要读证据原文与任务范围，判定逻辑在那一侧。
 	srcPreparer SrcPreparer
+	// srcVerifier 由宿主注入（server）：从录制流量推导收尾项的可核对数字，用于
+	// "自报 vs 实测"告警（P0-7）。nil = 不核验。
+	srcVerifier SrcVerifier
 	// intentsRound 计本 ToolSet 生命周期内成功创建的意图数 —— planner 每轮新建一个
 	// ToolSet，所以它天然是"本轮已用额度"。
 	intentsRound int
@@ -212,6 +215,13 @@ func (t *ToolSet) CoverageDisabled() bool { return t.coverageDisabled }
 // it adds the src_* coverage tools, injects the src situation block into
 // graph_overview, and makes the收尾门 answerable from inside the task. Zero doc
 // (or a non-src doc) is a no-op, so普通渗透 tasks keep the exact same tool face.
+// SrcVerifier derives observable metrics from recorded traffic for one check.
+// Returns warnings (empty = no discrepancy) and the observed counts.
+type SrcVerifier func(ctx context.Context, taskID, assetID int64, checkKey string, reported map[string]int) (warnings []string, observed map[string]int)
+
+// SetSrcVerifier wires the host-side traffic verifier (nil = none).
+func (t *ToolSet) SetSrcVerifier(fn SrcVerifier) { t.srcVerifier = fn }
+
 func (t *ToolSet) SetSrcMode(doc srcmode.ModeDoc, store *db.SrcStore) {
 	t.srcDoc = doc
 	t.srcStore = store

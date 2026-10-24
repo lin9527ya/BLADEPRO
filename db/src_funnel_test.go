@@ -77,6 +77,10 @@ VALUES ($1,$2,'test','accepted','漏斗发现','high')`, task.ID, findingID); er
 	}
 	t.Cleanup(func() { _, _ = d.Exec(`DELETE FROM llm_usage WHERE task_id=$1`, fmt.Sprint(task.ID)) })
 
+	if _, err := d.Exec(`UPDATE tasks SET first_run_at=created_at+interval '5 minutes',
+completed_at=created_at+interval '35 minutes' WHERE id=$1`, task.ID); err != nil {
+		t.Fatalf("stamp task times: %v", err)
+	}
 	f, err := d.SrcFunnel(ctx, SrcFunnelQuery{Days: 30})
 	if err != nil {
 		t.Fatalf("funnel: %v", err)
@@ -123,6 +127,15 @@ VALUES ($1,$2,'test','accepted','漏斗发现','high')`, task.ID, findingID); er
 	}
 	if !foundSeverity {
 		t.Fatalf("by_severity=%+v", f.BySeverity)
+	}
+	if f.SLO.QueueWaitP50Minutes < 4.9 || f.SLO.QueueWaitP95Minutes < 4.9 {
+		t.Fatalf("queue wait SLO=%+v", f.SLO)
+	}
+	if f.SLO.TaskDurationP50Minutes < 29.9 || f.SLO.TaskDurationP95Minutes < 29.9 {
+		t.Fatalf("task duration SLO=%+v", f.SLO)
+	}
+	if f.SLO.EvidenceCoveragePct != 0 {
+		t.Fatalf("finding has no traffic binding, coverage=%v", f.SLO.EvidenceCoveragePct)
 	}
 	if len(f.Daily) == 0 {
 		t.Fatal("daily series empty")

@@ -29,6 +29,8 @@ const (
 	settingAssetTokenBudget = "src_asset_token_budget"
 	settingAssetTimeBudget  = "src_asset_time_budget_minutes"
 	settingSrcAreaTiers     = "src_area_tiers"
+	settingSrcRequireIso    = "src_require_isolation"
+	settingAssetCostBudget  = "src_asset_cost_budget_usd"
 	// 资产预算扫描节流：llm_usage 是热表，每 15s 一次足够及时且不增加明显负担。
 	assetBudgetSweepInterval = 15 * time.Second
 	maxAssetTokenBudgetValue = int64(1_000_000_000_000)
@@ -253,4 +255,77 @@ func (e *Engine) assetBudgetNotice(t *Task, usage db.AssetTokenUsage, doc srcmod
 	t.trigMu.Unlock()
 	t.Notify()
 	log.Printf("[budget] task %s 资产 #%d 预算耗尽 (%d/%d)，已收口 %d 格", t.ID, usage.AssetID, usage.Tokens, doc.AssetTokenBudget, marked)
+}
+
+// srcRequireIsolation reports whether SRC task creation requires an actually
+// enabled agent sandbox (BLADEPRO_AGENT_USER accepted at startup).
+func (s *Server) srcRequireIsolation() bool {
+	return s != nil && s.m != nil && s.m.pg != nil && s.m.pg.GetBool(settingSrcRequireIso, false)
+}
+
+// srcAssetCostBudgetUSD resolves the global per-asset dollar budget (0 = off).
+func (s *Server) srcAssetCostBudgetUSD() float64 {
+	pg := s.m.pg
+	if pg == nil {
+		return 0
+	}
+	v, ok, err := pg.GetSetting(settingAssetCostBudget)
+	if err != nil || !ok {
+		return 0
+	}
+	f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+	if err != nil || f <= 0 {
+		return 0
+	}
+	if f > 1_000_000 {
+		f = 1_000_000
+	}
+	return f
+}
+
+// checkAssetCostBudgets is the dollar sibling of the token/time budgets. It uses
+// llm_usage.cost_usd, which is priced at call time, so changing profile prices
+// later does not rewrite history.
+func (e *Engine) checkAssetCostBudgets(ctx context.Context, t *Task) {
+	if e == nil || e.m == nil || e.m.pg == nil || t == nil || strings.TrimSpace(t.Mode) != srcmode.ModeSrc {
+		return
+	}
+	doc := srcmode.Parse(t.ModeDoc)
+	if doc.AssetCostBudgetUSD <= 0 {
+		return
+	}
+	taskID := tidOfTask(t)
+	if taskID <= 0 {
+		return
+	}
+	exhausted, err := e.m.pg.Src().AssetsOverCostBudget(ctx, taskID, doc.AssetCostBudgetUSD)
+	if err != nil {
+		log.Printf("[budget] task %s 读取资产成本预算失败: %v", t.ID, err)
+		return
+	}
+	for _, usage := range exhausted {
+		key := "cost|" + t.ID + "|" + strconv.FormatInt(usage.AssetID, 10)
+		if _, loaded := e.assetCostDone.LoadOrStore(key, true); loaded {
+			continue
+		}
+		reason := fmt.Sprintf("资产成本预算耗尽（$%.4f / $%.4f），未完成项自动收口为 budget_stop",
+			usage.CostUSD, doc.AssetCostBudgetUSD)
+		marked, err := markAssetStop(ctx, e.m.pg.Src(), taskID, doc, usage.AssetID, reason)
+		if err != nil {
+			e.assetCostDone.Delete(key)
+			log.Printf("[budget] task %s 资产 #%d 成本预算收口失败: %v", t.ID, usage.AssetID, err)
+			continue
+		}
+		text := fmt.Sprintf("💵【资产成本预算耗尽】资产 #%d 已花费 $%.4f（上限 $%.4f）：系统已把该资产 %d 个未完成格标为 budget_stop。把预算让给其他资产。",
+			usage.AssetID, usage.CostUSD, doc.AssetCostBudgetUSD, marked)
+		e.emitActivity(t, db.Activity{Worker: "system", Kind: "system",
+			Summary: fmt.Sprintf("资产 #%d 成本预算耗尽（$%.4f/$%.4f），已收口 %d 格",
+				usage.AssetID, usage.CostUSD, doc.AssetCostBudgetUSD, marked),
+			Detail: text})
+		e.notifyTaskAlert(t, notify.EventSrcBudget, fmt.Sprintf("资产 #%d 成本预算耗尽", usage.AssetID), text, "medium")
+		t.trigMu.Lock()
+		t.pendingTriggers = append(t.pendingTriggers, agent.TriggerEvent{Kind: "hint", Hints: []string{text}})
+		t.trigMu.Unlock()
+		t.Notify()
+	}
 }

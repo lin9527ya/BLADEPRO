@@ -1,0 +1,46 @@
+[
+  {
+    "name": "juice-shop",
+    "base_url": "http://127.0.0.1:3000",
+    "mode": "src",
+    "budget": {
+      "timeout_seconds": 1800,
+      "max_intents_total": 80,
+      "max_intents_per_asset": 12
+    },
+    "notes": "OWASP Juice Shop（Docker，仅本机）。金标只保留稳定、可自动核对的入口；版本升级后请先手工复验再改金标。",
+    "golden": [
+      {
+        "vulnclass": "sql_injection",
+        "endpoint": "GET /rest/products/search?q",
+        "severity": "high",
+        "notes": "产品搜索 q 参数 SQL 注入（经典 Juice Shop 金标）"
+      }
+    ]
+  },
+  {
+    "name": "dvwa",
+    "base_url": "http://127.0.0.1:8080",
+    "mode": "src",
+    "budget": {
+      "timeout_seconds": 1800,
+      "max_intents_total": 80,
+      "max_intents_per_asset": 12
+    },
+    "notes": "DVWA（Docker，仅本机）。需先 /setup.php 建库、admin/password 登录并把 Security 设为 low；金标按 low 难度。",
+    "golden": [
+      {
+        "vulnclass": "sql_injection",
+        "endpoint": "GET /vulnerabilities/sqli/?id",
+        "severity": "high",
+        "notes": "SQL Injection 页 id 参数（low）"
+      },
+      {
+        "vulnclass": "xss",
+        "endpoint": "GET /vulnerabilities/xss_r/?name",
+        "severity": "medium",
+        "notes": "Reflected XSS 页 name 参数（low）"
+      }
+    ]
+  }
+]

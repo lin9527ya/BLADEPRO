@@ -82,6 +82,10 @@ export function useSettingsState() {
   // 风险面模型分层（JSON 文本，0 项 = 内建默认）。
   const [areaTiers, setAreaTiers] = React.useState("{}");
   const [savingAreaTiers, setSavingAreaTiers] = React.useState(false);
+  const [assetCostBudget, setAssetCostBudget] = React.useState("0");
+  const [savingAssetCostBudget, setSavingAssetCostBudget] = React.useState(false);
+  const [requireIsolation, setRequireIsolation] = React.useState(false);
+  const [savingIsolation, setSavingIsolation] = React.useState(false);
   // 出站速率治理（录制代理层）：0 = 关闭。
   const [egressGlobalQPS, setEgressGlobalQPS] = React.useState("0");
   const [egressHostQPS, setEgressHostQPS] = React.useState("0");
@@ -158,7 +162,9 @@ export function useSettingsState() {
     setTokenBudget(String(s.task_token_budget ?? 0));
     setAssetTokenBudget(String(s.src_asset_token_budget ?? 0));
     setAssetTimeBudget(String(s.src_asset_time_budget_minutes ?? 0));
+    setAssetCostBudget(String(s.src_asset_cost_budget_usd ?? 0));
     setAreaTiers(JSON.stringify(s.src_area_tiers ?? {}));
+    setRequireIsolation(!!s.src_require_isolation);
     setEgressGlobalQPS(String(s.egress_global_qps ?? 0));
     setEgressHostQPS(String(s.egress_host_qps ?? 0));
     setEgressWaitMS(String(s.egress_max_wait_ms ?? 0));
@@ -417,6 +423,35 @@ export function useSettingsState() {
       })
       .catch((e) => toast.error("保存失败：" + (e as Error).message))
       .finally(() => setSavingAreaTiers(false));
+  };
+
+  const saveAssetCostBudget = () => {
+    const n = Number(assetCostBudget.trim() === "" ? "0" : assetCostBudget);
+    if (!Number.isFinite(n) || n < 0 || n > 1_000_000) {
+      toast.error("资产成本预算必须是 0–1000000 美元（0 = 关闭）");
+      return;
+    }
+    setSavingAssetCostBudget(true);
+    api
+      .setSettings({ src_asset_cost_budget_usd: n })
+      .then((s) => {
+        apply(s);
+        toast.success(n > 0 ? `已保存资产成本预算（$${n}）` : "已关闭资产成本预算");
+      })
+      .catch((e) => toast.error("保存失败：" + (e as Error).message))
+      .finally(() => setSavingAssetCostBudget(false));
+  };
+
+  const saveRequireIsolation = () => {
+    setSavingIsolation(true);
+    api
+      .setSettings({ src_require_isolation: requireIsolation })
+      .then((s) => {
+        apply(s);
+        toast.success(requireIsolation ? "已要求 SRC 任务降权运行" : "已关闭 SRC 隔离要求");
+      })
+      .catch((e) => toast.error("保存失败：" + (e as Error).message))
+      .finally(() => setSavingIsolation(false));
   };
 
   const saveEgress = () => {
@@ -803,10 +838,18 @@ export function useSettingsState() {
     savingAssetTimeBudget,
     setSavingAssetTimeBudget,
     saveAssetTimeBudget,
+    assetCostBudget,
+    setAssetCostBudget,
+    savingAssetCostBudget,
+    saveAssetCostBudget,
     areaTiers,
     setAreaTiers,
     savingAreaTiers,
     saveAreaTiers,
+    requireIsolation,
+    setRequireIsolation,
+    savingIsolation,
+    saveRequireIsolation,
     egressGlobalQPS,
     setEgressGlobalQPS,
     egressHostQPS,

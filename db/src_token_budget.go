@@ -126,3 +126,44 @@ func (s *SrcStore) AssetStartedAt(ctx context.Context, taskID, assetID int64) (t
 	}
 	return started.Time, nil
 }
+
+// AssetCostUsage is one asset's dollar spend inside a task.
+type AssetCostUsage struct {
+	AssetID int64   `json:"asset_id"`
+	CostUSD float64 `json:"cost_usd"`
+}
+
+// AssetsOverCostBudget returns assets whose attributed cost reached the budget.
+func (s *SrcStore) AssetsOverCostBudget(ctx context.Context, taskID int64, budget float64) ([]AssetCostUsage, error) {
+	if s == nil || s.db == nil || taskID <= 0 || budget <= 0 {
+		return []AssetCostUsage{}, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT asset_id, COALESCE(SUM(cost_usd),0)
+FROM llm_usage WHERE task_id=$1 AND asset_id > 0
+GROUP BY asset_id HAVING COALESCE(SUM(cost_usd),0) >= $2
+ORDER BY 2 DESC, asset_id`, strconv.FormatInt(taskID, 10), budget)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AssetCostUsage{}
+	for rows.Next() {
+		var u AssetCostUsage
+		if err := rows.Scan(&u.AssetID, &u.CostUSD); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// AssetCostUsed returns one asset's attributed cost in the task.
+func (s *SrcStore) AssetCostUsed(ctx context.Context, taskID, assetID int64) (float64, error) {
+	if s == nil || s.db == nil || taskID <= 0 || assetID <= 0 {
+		return 0, nil
+	}
+	var cost float64
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(cost_usd),0)
+FROM llm_usage WHERE task_id=$1 AND asset_id=$2`, strconv.FormatInt(taskID, 10), assetID).Scan(&cost)
+	return cost, err
+}

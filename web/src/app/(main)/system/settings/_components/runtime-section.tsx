@@ -7,6 +7,7 @@ import { CpuIcon, GaugeIcon } from "lucide-react";
 import { Field, Section, SubBlock } from "@/components/page-sections";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 
 import type { useSettingsState } from "./use-settings-state";
@@ -48,10 +49,18 @@ export function RuntimeSection({ s }: { s: ReturnType<typeof useSettingsState> }
     setAssetTimeBudget,
     savingAssetTimeBudget,
     saveAssetTimeBudget,
+    assetCostBudget,
+    setAssetCostBudget,
+    savingAssetCostBudget,
+    saveAssetCostBudget,
     areaTiers,
     setAreaTiers,
     savingAreaTiers,
     saveAreaTiers,
+    requireIsolation,
+    setRequireIsolation,
+    savingIsolation,
+    saveRequireIsolation,
     egressGlobalQPS,
     setEgressGlobalQPS,
     egressHostQPS,
@@ -192,6 +201,60 @@ export function RuntimeSection({ s }: { s: ReturnType<typeof useSettingsState> }
                 onClick={saveAreaTiers}
                 disabled={!loaded || savingAreaTiers}
               >
+                保存
+              </Button>
+            </div>
+          </Field>
+        </SubBlock>
+
+        <SubBlock title="资产成本预算（SRC）" icon={<GaugeIcon className="text-muted-foreground size-4" />}>
+          <Field
+            label="单资产美元成本上限"
+            htmlFor="asset-cost-budget"
+            hint={
+              <>
+                按 <code>llm_usage.cost_usd</code>（调用时 profile 单价折算）累计；达到上限后新意图被拒绝、
+                未完成格转 budget_stop，预算转向其他资产。建任务时快照；<b>0 = 关闭</b>。
+              </>
+            }
+          >
+            <div className="flex items-center gap-2">
+              <Input
+                id="asset-cost-budget"
+                inputMode="decimal"
+                autoComplete="off"
+                className="max-w-xl"
+                placeholder="例如 2.5（0 = 关闭）"
+                value={assetCostBudget}
+                disabled={!loaded || savingAssetCostBudget}
+                onChange={(e) => setAssetCostBudget(e.target.value)}
+              />
+              <Button type="button" onClick={saveAssetCostBudget} disabled={!loaded || savingAssetCostBudget}>
+                保存
+              </Button>
+            </div>
+          </Field>
+        </SubBlock>
+
+        <SubBlock title="SRC 运行隔离" icon={<GaugeIcon className="text-muted-foreground size-4" />}>
+          <Field
+            label="要求 SRC 任务在降权沙箱中运行"
+            hint={
+              <>
+                开启后，若服务端未真正启用 agent 降权（启动时未设置并成功应用{" "}
+                <code>BLADEPRO_AGENT_USER</code>），创建 SRC 任务会被拒绝。它防的是“以为隔离了、
+                实际与服务端同权”——目标内容里的提示注入就等于控制台全权。
+              </>
+            }
+          >
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={requireIsolation}
+                onCheckedChange={setRequireIsolation}
+                disabled={!loaded || savingIsolation}
+                aria-label="要求 SRC 任务降权运行"
+              />
+              <Button type="button" onClick={saveRequireIsolation} disabled={!loaded || savingIsolation}>
                 保存
               </Button>
             </div>

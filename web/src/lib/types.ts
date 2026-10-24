@@ -1985,8 +1985,12 @@ export interface Settings {
   // 资产级墙钟预算（SRC，分钟，默认 0=关）：从资产首次产生 LLM 用量起算，到点后与
   // token 预算同样收口并转向其他资产；建任务时快照进 mode_doc。
   src_asset_time_budget_minutes?: number;
+  /** 资产级美元成本预算（0=关）。 */
+  src_asset_cost_budget_usd?: number;
   /** 风险面 → 模型分层（cheap/standard/strong）；空 = 内建默认。 */
   src_area_tiers?: Record<string, string>;
+  /** 要求 SRC 任务在 agent 降权沙箱中运行（BLADEPRO_AGENT_USER 生效）。 */
+  src_require_isolation?: boolean;
   // 任务并发上限:同时「运行中」的任务数上限。关闭=不限;开启后新建任务超限则排队,有空位自动启动。
   task_concurrency_enabled?: boolean; // 默认 false
   task_concurrency_limit?: number; // 开启后默认 5
@@ -2988,6 +2992,15 @@ export interface SrcFunnelDay {
   cost_usd: number;
 }
 
+export interface SrcSLO {
+  queue_wait_p50_minutes: number;
+  queue_wait_p95_minutes: number;
+  task_duration_p50_minutes: number;
+  task_duration_p95_minutes: number;
+  pre_submit_dwell_p50_hours: number;
+  evidence_coverage_pct: number;
+}
+
 export interface SrcFunnel {
   days: number;
   program_id?: number;
@@ -3002,6 +3015,7 @@ export interface SrcFunnel {
   by_campaign?: SrcFunnelCampaign[];
   by_severity: SrcFunnelSeverity[];
   daily: SrcFunnelDay[];
+  slo?: SrcSLO;
 }
 
 /** 台账状态历史的一行（GET /api/src/submissions/{id}/events）。 */

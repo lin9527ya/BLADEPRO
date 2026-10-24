@@ -234,3 +234,8 @@ func agentAllowedRoots(dataDir, skillDir, extra string) ([]string, error) {
 	}
 	return roots, nil
 }
+
+// AgentIsolationEnabled reports whether BLADEPRO_AGENT_USER was accepted and the
+// execution surface is actually restricted. Used by SRC task creation when the
+// operator requires sandboxed runs.
+func AgentIsolationEnabled() bool { return agentIso.enabled }

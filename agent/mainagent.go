@@ -209,7 +209,12 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 	mainDir := ensureRunDir(m.workDir, taskID, 0)
 	ctx = intercept.WithReviewWorkingDirectory(ctx, mainDir)
 	m.summaryOnce.Do(func() { m.assetSummary = assetSummaryForTask(as, taskID) })
-	system, boundary := deferredSystem(mainAgentSystem(goal, m.workDir, mainDir, m.assetSummary), def)
+	sysBody := mainAgentSystem(goal, m.workDir, mainDir, m.assetSummary)
+	if tsx.SrcMode() {
+		// 主 agent 也会替人执行动作：同样要先裁决通用渗透文案与 SRC 纪律的冲突。
+		sysBody = srcmode.SrcPrecedenceNote() + sysBody
+	}
+	system, boundary := deferredSystem(sysBody, def)
 	opts := agentcore.Options{
 		Provider:        m.prov,
 		SystemPrompt:    system,
@@ -219,7 +224,7 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 		UnlockSet:       def.Unlock,
 		PermissionMode:  permission.ModeBypass,
 		EnableWebFetch:  true, // 走记录代理留痕；载入代理 CA 验证 MITM 重签的 HTTPS 证书
-		WebFetchProxy:   m.proxyAddr,
+		WebFetchProxy:   ProxyURLForTask(m.proxyAddr, taskID),
 		WebFetchCACert:  m.proxyCACert,
 		// 联网搜索(可选)。ddgs 无需 key；brave-free 需 BraveKey；tavily 需 TavilyKey。
 		// WebSearchProxy 是独立出口代理(http/https/socks5)，与记录流量的 MITM 代理无关；空则直连。
@@ -231,8 +236,8 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 		DeepSeekSearchAPIKey: m.webSearch.DeepSeekAPIKey,
 		DeepSeekSearchModel:  m.webSearch.DeepSeekModel,
 		WebSearchProxy:       m.webSearch.Proxy,
-		BashEnv:              proxyEnv(m.proxyAddr, m.proxyCACert), // Bash 子命令默认走代理+信任 CA
-		WorkingDir:           mainDir,                              // 本任务工作目录 <workDir>/tasks/<taskID>
+		BashEnv:              ProxyEnvForTask(m.proxyAddr, m.proxyCACert, taskID), // Bash 子命令默认走代理+信任 CA
+		WorkingDir:           mainDir,                                             // 本任务工作目录 <workDir>/tasks/<taskID>
 		ToolOutputDir:        cmdOutDir(mainDir),
 		TaskOutputDir:        taskOutDir(mainDir),
 		MaxTurns:             m.maxTurns,            // 0 = unlimited (configurable in agent management)

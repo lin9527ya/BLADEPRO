@@ -1528,6 +1528,24 @@ func (t *ToolSet) checkAssetTimeBudget(ctx context.Context, anchors []int64) err
 	return nil
 }
 
+// checkAssetCostBudget 落实 mode_doc.asset_cost_budget_usd：资产累计美元成本达到
+// 上限后不再接受新意图。与 token/时间预算同样 fail-open，引擎侧负责收口。
+func (t *ToolSet) checkAssetCostBudget(ctx context.Context, anchors []int64) error {
+	if !t.srcMode || t.srcStore == nil || t.taskID <= 0 || t.srcDoc.AssetCostBudgetUSD <= 0 {
+		return nil
+	}
+	for _, aid := range anchors {
+		used, err := t.srcStore.AssetCostUsed(ctx, t.taskID, aid)
+		if err != nil || used < t.srcDoc.AssetCostBudgetUSD {
+			continue
+		}
+		return fmt.Errorf("资产 %d 的成本预算已用尽（$%.4f / $%.4f，asset_cost_budget_usd）：不要再向该资产派意图；"+
+			"把未完成的格用 src_mark_cell 标 budget_stop，预算让给其他资产；确需继续请提高预算或人工放行",
+			aid, used, t.srcDoc.AssetCostBudgetUSD)
+	}
+	return nil
+}
+
 func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, error) {
 	if strings.TrimSpace(it.Summary) == "" {
 		return 0, "", fmt.Errorf("summary 不能为空")
@@ -1616,6 +1634,9 @@ func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, er
 			return 0, "", err
 		}
 		if err := t.checkAssetTimeBudget(context.Background(), anchors); err != nil {
+			return 0, "", err
+		}
+		if err := t.checkAssetCostBudget(context.Background(), anchors); err != nil {
 			return 0, "", err
 		}
 	}

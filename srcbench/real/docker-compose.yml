@@ -1,0 +1,18 @@
+# 真实靶场（可选）：只监听本机，用于 srcbench 的授权基准测试。
+#
+#   docker compose -f srcbench/real/docker-compose.yml up -d
+#   srcbench/run-real.sh          # 等待就绪并打印下一步
+#
+# 不要把这些端口暴露到公网；所有目标都是故意有漏洞的镜像。
+services:
+  juice-shop:
+    image: bkimminich/juice-shop:v17.1.1
+    ports:
+      - "127.0.0.1:3000:3000"
+    restart: "no"
+
+  dvwa:
+    image: vulnerables/web-dvwa:latest
+    ports:
+      - "127.0.0.1:8080:80"
+    restart: "no"

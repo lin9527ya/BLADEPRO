@@ -41,6 +41,18 @@ function fmtCost(usd: number): string {
 
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "unknown"];
 
+function fmtMinutes(minutes: number): string {
+  if (!minutes || !Number.isFinite(minutes)) return "—";
+  if (minutes < 60) return `${Math.round(minutes)}m`;
+  return `${(minutes / 60).toFixed(1)}h`;
+}
+
+function fmtHours(hours: number): string {
+  if (!hours || !Number.isFinite(hours)) return "—";
+  if (hours < 48) return `${hours.toFixed(1)}h`;
+  return `${(hours / 24).toFixed(1)}d`;
+}
+
 export function RowSrcFunnel() {
   const [days, setDays] = React.useState(30);
   const [data, setData] = React.useState<SrcFunnel | null>(null);
@@ -164,6 +176,31 @@ export function RowSrcFunnel() {
                 <div className="font-semibold tabular-nums">{fmtCost(data?.cost_per_effective ?? 0)}</div>
               </div>
             </div>
+
+            {data?.slo ? (
+              <div className="grid grid-cols-2 gap-2 border-t pt-3 text-xs sm:grid-cols-4">
+                <div>
+                  <div className="text-muted-foreground">排队 P50 / P95</div>
+                  <div className="font-semibold tabular-nums">
+                    {fmtMinutes(data.slo.queue_wait_p50_minutes)} / {fmtMinutes(data.slo.queue_wait_p95_minutes)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground">任务时长 P50 / P95</div>
+                  <div className="font-semibold tabular-nums">
+                    {fmtMinutes(data.slo.task_duration_p50_minutes)} / {fmtMinutes(data.slo.task_duration_p95_minutes)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground">提交前停留 P50</div>
+                  <div className="font-semibold tabular-nums">{fmtHours(data.slo.pre_submit_dwell_p50_hours)}</div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground">中危+证据绑定率</div>
+                  <div className="font-semibold tabular-nums">{Math.round(data.slo.evidence_coverage_pct)}%</div>
+                </div>
+              </div>
+            ) : null}
 
             {severityRows.length > 0 ? (
               <div className="flex flex-wrap gap-1.5">

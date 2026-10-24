@@ -156,6 +156,7 @@ export function CreateTaskSheet({
   // P2 资产级 token 预算（0 = 跟随系统全局默认）。
   const [assetTokenBudget, setAssetTokenBudget] = React.useState("0");
   const [assetTimeBudget, setAssetTimeBudget] = React.useState("0");
+  const [assetCostBudget, setAssetCostBudget] = React.useState("0");
   // 提交块模板（空 = 按平台名自动识别；项目规则可覆盖）。
   const [platformTemplate, setPlatformTemplate] = React.useState("");
   // P2 批量扇出：按 host / 根域 / 数量分片，每片建一个任务并归入同一 campaign。
@@ -290,6 +291,7 @@ export function CreateTaskSheet({
           ? {
               asset_token_budget: Math.max(0, Number(assetTokenBudget) || 0),
               asset_time_budget_minutes: Math.max(0, Number(assetTimeBudget) || 0),
+              asset_cost_budget_usd: Math.max(0, Number(assetCostBudget) || 0),
               platform_template: platformTemplate || undefined,
             }
           : undefined,
@@ -386,6 +388,7 @@ export function CreateTaskSheet({
       setInheritCoverage(false);
       setAssetTokenBudget("0");
       setAssetTimeBudget("0");
+      setAssetCostBudget("0");
       setPlatformTemplate("");
       setBatchFanout(false);
       setShardBy("host");
@@ -590,6 +593,24 @@ export function CreateTaskSheet({
                 <FieldDescription>
                   单个资产累计输入+输出 token 的上限（0 = 跟随系统设置的全局默认）。达到上限后不再向该资产派意图，
                   未完成的格自动转 budget_stop，预算转向其他资产。运行中修改全局设置不影响已建任务。
+                </FieldDescription>
+              </Field>
+            )}
+            {mode === "src" && (
+              <Field>
+                <FieldLabel htmlFor="asset-cost-budget">资产成本预算（美元，可选）</FieldLabel>
+                <Input
+                  id="asset-cost-budget"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  className="max-w-xs"
+                  placeholder="0 = 跟随系统默认"
+                  value={assetCostBudget}
+                  onChange={(e) => setAssetCostBudget(e.target.value)}
+                />
+                <FieldDescription>
+                  单个资产的 LLM 成本上限（0 = 跟随系统设置的全局默认）。到点后新意图被拒绝、
+                  未完成格转 budget_stop，预算转向其他资产。
                 </FieldDescription>
               </Field>
             )}

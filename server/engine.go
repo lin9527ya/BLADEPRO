@@ -159,6 +159,7 @@ type Engine struct {
 	assetBudgetDone    sync.Map // "taskID|assetID" -> bool, 资产 token 预算耗尽收口已执行(每资产一次)
 	assetTimeDone      sync.Map // "time|taskID|assetID" -> bool, 资产时间预算耗尽收口已执行(每资产一次)
 	campaignBudgetDone sync.Map // campaignID -> bool, 战役预算告警已投递(每战役一次)
+	assetCostDone      sync.Map // "cost|taskID|assetID" -> bool, 资产成本预算收口已执行
 	execWatch          sync.Map // intentID -> bool, P13 执行观察者已注册(去重;执行终态→意图退回 open)
 
 	// resolve returns a task's dedicated planner/worker (wired by the server as the

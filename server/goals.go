@@ -10,6 +10,7 @@ import (
 
 	"github.com/lin9527ya/bladepro/agent"
 	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/srcmode"
 )
 
 type goalSpec struct {
@@ -44,6 +45,12 @@ func (s *Server) launchTask(t *Task, seedText string, seedFirstIntent bool) {
 				log.Printf("[policy] task %s 已按探索策略重建 %d 条命令门规则", t.ID, applied)
 			}
 		}
+	}
+	// SRC 任务的交付证据依赖录制代理：关闭捕获时在时间线上留一条显眼告警，
+	// 让人在“报告里没有原始整包”之前就知道原因。
+	if strings.TrimSpace(t.Mode) == srcmode.ModeSrc && !s.m.TrafficEnabled() {
+		s.engine.emitActivity(t, db.Activity{Worker: "system", Kind: "system", IsError: true,
+			Summary: "SRC 任务在流量捕获关闭状态下启动：worker/探针流量不会进入录制代理，交付时可能缺原始整包"})
 	}
 	s.engine.decInflight(t.ID)
 	if _, err := s.admitTask(t, "bootstrap"); err != nil {

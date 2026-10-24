@@ -59,6 +59,9 @@ type ModeDoc struct {
 	// 新意图被拒，预算转向其他资产。时间预算不因暂停/等待人工而暂停——它约束的是
 	// 「这个资产占用了任务多久」，不是模型实际思考时长。
 	AssetTimeBudgetMinutes int `json:"asset_time_budget_minutes,omitempty"`
+	// AssetCostBudgetUSD 是单个资产的美元成本上限（0 = 不限），按 llm_usage.cost_usd
+	// 累计（调用时 profile 单价折算）。与 token/时间预算同样收口并转向其他资产。
+	AssetCostBudgetUSD float64 `json:"asset_cost_budget_usd,omitempty"`
 	// HardItems 是"必须逐个点亮"的细分项（如 paths/enum-200）；不写则每个面只需 '*'。
 	HardItems []string `json:"hard_items,omitempty"`
 	// SkipReportGate 关掉"medium+ 发现必须齐备可提交件"这条收尾门（默认**要求**）。
@@ -160,6 +163,12 @@ func Resolve(mode string, raw json.RawMessage) (json.RawMessage, ModeDoc, error)
 	}
 	if doc.AssetTimeBudgetMinutes > maxAssetTimeBudgetMinutes {
 		return nil, ModeDoc{}, fmt.Errorf("asset_time_budget_minutes 不能超过 %d（30 天）", maxAssetTimeBudgetMinutes)
+	}
+	if doc.AssetCostBudgetUSD < 0 {
+		return nil, ModeDoc{}, fmt.Errorf("asset_cost_budget_usd 不能为负数（0 = 不限）")
+	}
+	if doc.AssetCostBudgetUSD > 1_000_000 {
+		return nil, ModeDoc{}, fmt.Errorf("asset_cost_budget_usd 不能超过 1000000")
 	}
 	for assetType, areas := range doc.RequiredAreas {
 		if !IsAssetType(assetType) {

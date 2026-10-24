@@ -215,6 +215,7 @@ func (e *Engine) deadlineCoordinator(ctx context.Context, t *Task) {
 			lastAssetBudgetCheck = time.Now()
 			e.checkAssetTokenBudgets(ctx, t)
 			e.checkAssetTimeBudgets(ctx, t)
+			e.checkAssetCostBudgets(ctx, t)
 		}
 		// 战役级 token 预算：跨分片累计，达到后本任务进入收尾时序。
 		if time.Since(lastCampaignCheck) >= 30*time.Second && !e.isSettling(t.ID) {

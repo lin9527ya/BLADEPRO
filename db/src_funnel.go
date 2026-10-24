@@ -67,6 +67,18 @@ type SrcFunnelDay struct {
 	CostUSD  float64 `json:"cost_usd"`
 }
 
+// SrcSLO is the operational latency/coverage view of the same window.
+// Percentiles are computed by Postgres (percentile_cont) over the same src_tasks
+// set, so the numbers match the funnel denominators.
+type SrcSLO struct {
+	QueueWaitP50Minutes    float64 `json:"queue_wait_p50_minutes"`
+	QueueWaitP95Minutes    float64 `json:"queue_wait_p95_minutes"`
+	TaskDurationP50Minutes float64 `json:"task_duration_p50_minutes"`
+	TaskDurationP95Minutes float64 `json:"task_duration_p95_minutes"`
+	PreSubmitDwellP50Hours float64 `json:"pre_submit_dwell_p50_hours"`
+	EvidenceCoveragePct    float64 `json:"evidence_coverage_pct"`
+}
+
 type SrcFunnel struct {
 	Days             int                 `json:"days"`
 	ProgramID        int64               `json:"program_id,omitempty"`
@@ -81,11 +93,12 @@ type SrcFunnel struct {
 	ByCampaign       []SrcFunnelCampaign `json:"by_campaign"`
 	BySeverity       []SrcFunnelSeverity `json:"by_severity"`
 	Daily            []SrcFunnelDay      `json:"daily"`
+	SLO              SrcSLO              `json:"slo"`
 }
 
 func srcTasksCTE() string {
 	return `src_tasks AS (
-    SELECT id, src_program_id, campaign_id, created_at
+    SELECT id, src_program_id, campaign_id, created_at, first_run_at, completed_at
     FROM tasks
     WHERE mode='src' AND deleted_at IS NULL
       AND created_at >= now() - ($1::int * interval '1 day')
@@ -297,7 +310,49 @@ GROUP BY 1 ORDER BY 1`, days, q.ProgramID)
 		}
 		out.Daily = append(out.Daily, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+
+	// SLO：排队等待、任务时长、提交前停留、证据绑定覆盖率。
+	// 百分位用 percentile_cont，样本为空时 COALESCE 到 0，UI 不显示 NaN。
+	err = d.QueryRowContext(ctx, `WITH `+srcTasksCTE()+`
+SELECT
+  COALESCE(percentile_cont(0.5) WITHIN GROUP (
+    ORDER BY EXTRACT(EPOCH FROM (first_run_at - created_at))/60.0) FILTER (WHERE first_run_at IS NOT NULL), 0),
+  COALESCE(percentile_cont(0.95) WITHIN GROUP (
+    ORDER BY EXTRACT(EPOCH FROM (first_run_at - created_at))/60.0) FILTER (WHERE first_run_at IS NOT NULL), 0),
+  COALESCE(percentile_cont(0.5) WITHIN GROUP (
+    ORDER BY EXTRACT(EPOCH FROM (completed_at - first_run_at))/60.0) FILTER (WHERE completed_at IS NOT NULL AND first_run_at IS NOT NULL), 0),
+  COALESCE(percentile_cont(0.95) WITHIN GROUP (
+    ORDER BY EXTRACT(EPOCH FROM (completed_at - first_run_at))/60.0) FILTER (WHERE completed_at IS NOT NULL AND first_run_at IS NOT NULL), 0)
+FROM src_tasks`, days, q.ProgramID).Scan(
+		&out.SLO.QueueWaitP50Minutes, &out.SLO.QueueWaitP95Minutes,
+		&out.SLO.TaskDurationP50Minutes, &out.SLO.TaskDurationP95Minutes)
+	if err != nil {
+		return nil, err
+	}
+	if err := d.QueryRowContext(ctx, `WITH `+srcTasksCTE()+`
+SELECT COALESCE(percentile_cont(0.5) WITHIN GROUP (
+  ORDER BY EXTRACT(EPOCH FROM (s.submitted_at - f.created_at))/3600.0), 0)
+FROM src_submissions s
+JOIN findings f ON f.id=s.finding_id
+JOIN src_tasks t ON t.id=s.task_id
+WHERE s.submitted_at IS NOT NULL`, days, q.ProgramID).Scan(&out.SLO.PreSubmitDwellP50Hours); err != nil {
+		return nil, err
+	}
+	if err := d.QueryRowContext(ctx, `WITH `+srcTasksCTE()+`
+SELECT CASE WHEN count(*)=0 THEN 0
+  ELSE 100.0 * count(*) FILTER (WHERE EXISTS (
+    SELECT 1 FROM finding_traffic_bindings b WHERE b.finding_id=f.id
+  )) / count(*)
+END
+FROM findings f JOIN src_tasks t ON t.id=f.task_id
+WHERE lower(f.severity) IN ('critical','high','medium')`, days, q.ProgramID).Scan(&out.SLO.EvidenceCoveragePct); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // funnelAssetsTotal is the denominator's top: global asset library, or the

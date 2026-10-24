@@ -215,9 +215,14 @@ func (s *Server) prepareTaskCreate(ctx context.Context, req createTaskReq) (*pre
 			}
 		}
 	}
+	// 运行隔离：勾选“SRC 必须降权运行”时，没有真正启用 agent 沙箱的实例拒绝创建
+	// SRC 任务——宁可创建失败，也不要给出一个“看起来隔离、实际同权”的任务。
+	if srcDoc.IsSrc() && s.srcRequireIsolation() && !AgentIsolationEnabled() {
+		return nil, taskErr(400, "当前实例未启用 agent 降权运行（BLADEPRO_AGENT_USER），但设置要求 SRC 任务必须隔离：先按 deploy/README.md 配置并重启，或关闭该要求")
+	}
 	// 资产级 token 预算（P2）：mode_doc 显式给了就用自己的；没给（0）则继承全局
 	// setting `src_asset_token_budget`，创建时快照进 mode_doc，运行中改全局不影响。
-	if srcDoc.IsSrc() && (srcDoc.AssetTokenBudget <= 0 || srcDoc.AssetTimeBudgetMinutes <= 0) {
+	if srcDoc.IsSrc() && (srcDoc.AssetTokenBudget <= 0 || srcDoc.AssetTimeBudgetMinutes <= 0 || srcDoc.AssetCostBudgetUSD <= 0) {
 		changed := false
 		if srcDoc.AssetTokenBudget <= 0 {
 			if v := s.srcAssetTokenBudget(); v > 0 {
@@ -228,6 +233,12 @@ func (s *Server) prepareTaskCreate(ctx context.Context, req createTaskReq) (*pre
 		if srcDoc.AssetTimeBudgetMinutes <= 0 {
 			if v := s.srcAssetTimeBudgetMinutes(); v > 0 {
 				srcDoc.AssetTimeBudgetMinutes = v
+				changed = true
+			}
+		}
+		if srcDoc.AssetCostBudgetUSD <= 0 {
+			if v := s.srcAssetCostBudgetUSD(); v > 0 {
+				srcDoc.AssetCostBudgetUSD = v
 				changed = true
 			}
 		}

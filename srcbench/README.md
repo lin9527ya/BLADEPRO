@@ -63,6 +63,25 @@ precision / recall / 等级一致 / 覆盖率 / token 成本。
 - **覆盖格完成率 / 收尾闸完成率**：来自 `/api/tasks/{id}/src` 的 `summary`。
 - **Token / 每条命中**：任务 token 总量 ÷ TP；SRC 是广度换深度，关注这个数的趋势。
 
+## 真实靶场（可选）
+
+`srcbench/real/docker-compose.yml` 提供两个只监听 127.0.0.1 的已知漏洞镜像：
+
+```bash
+docker compose -f srcbench/real/docker-compose.yml up -d
+srcbench/run-real.sh          # 等待就绪 + 打印 DVWA 初始化步骤
+```
+
+金标清单在 `srcbench/targets.real.json`，打分方式与本地靶场一致：
+
+```bash
+go run ./srcbench/score --target juice-shop --golden srcbench/targets.real.json \
+  --findings /tmp/findings.json --src /tmp/src.json
+```
+
+DVWA 必须先 `/setup.php` 建库、登录后把 Security 设为 low，否则金标端点返回的是登录页/空页。
+Vulhub 场景可按同样方式单独起容器，再把 base_url 与金标端点加进 `targets.real.json`。
+
 ## 扩展
 
 - 新增靶标：在 `targets.json` 里加一个 target（`base_url` + `golden`），并在

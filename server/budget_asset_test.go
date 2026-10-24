@@ -183,3 +183,51 @@ VALUES ($1,'subdomain',$2,'manual','asset time budget test')`, taskID, domain); 
 		t.Fatalf("second sweep touched the cell again: %+v %v", again, err)
 	}
 }
+
+// TestCheckAssetCostBudgetsStopsAsset pins the dollar budget: attributed
+// cost_usd (not tokens) drives the stop, and the reason names the currency.
+func TestCheckAssetCostBudgetsStopsAsset(t *testing.T) {
+	m, err := NewManager(t.TempDir(), "")
+	if err != nil {
+		t.Skipf("postgres unavailable (%v) — skipping", err)
+	}
+	defer m.Close()
+	doc := srcmode.DefaultDoc()
+	doc.AssetCostBudgetUSD = 1
+	doc.AllowBudgetStop = true
+	raw, _ := json.Marshal(doc)
+	task, err := m.CreateTaskWithOptions("asset-cost-budget", "资产成本预算",
+		db.TaskCreateOptions{Mode: srcmode.ModeSrc, ModeDoc: raw})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	taskID, _ := strconv.ParseInt(task.ID, 10, 64)
+	t.Cleanup(func() { _ = m.pg.DeleteTask(taskID) })
+	domain := "asset-cost-" + strconv.FormatInt(time.Now().UnixNano(), 10) + ".example"
+	assetID, err := m.pg.Assets().UpsertSubdomain(db.UpsertSubdomainReq{Domain: domain, TaskID: taskID})
+	if err != nil {
+		t.Fatalf("asset: %v", err)
+	}
+	t.Cleanup(func() { _, _ = m.pg.Exec(`DELETE FROM assets WHERE id=$1`, assetID) })
+	if _, err := m.pg.Exec(`INSERT INTO task_scope(task_id, kind, domain, source, reason)
+VALUES ($1,'subdomain',$2,'manual','asset cost test')`, taskID, domain); err != nil {
+		t.Fatalf("scope: %v", err)
+	}
+	if err := m.pg.InsertLLMUsage(&db.LLMUsage{
+		TaskID: task.ID, AssetID: assetID, Worker: "worker", InputTokens: 10, OutputTokens: 10,
+		CostUSD: 1.5, Status: "ok",
+	}); err != nil {
+		t.Fatalf("usage: %v", err)
+	}
+	tk, ok := m.Task(task.ID)
+	if !ok {
+		t.Fatal("task not in manager")
+	}
+	e := NewEngine(m)
+	e.checkAssetCostBudgets(context.Background(), tk)
+	areas := doc.RequiredFor("subdomain")
+	cell, err := m.pg.Src().GetSrcCell(context.Background(), taskID, assetID, areas[0], srcmode.AreaAll)
+	if err != nil || cell == nil || cell.State != db.SrcStateBudgetStop || !strings.Contains(cell.Reason, "成本预算") {
+		t.Fatalf("cell=%+v err=%v", cell, err)
+	}
+}

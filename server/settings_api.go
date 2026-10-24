@@ -87,15 +87,18 @@ func (s *Server) settingsPayload() map[string]any {
 		// 资产级墙钟预算（分钟，默认 0=关）：从资产首次产生 LLM 用量起算，
 		// 到点后与 token 预算同样收口并转向其他资产。
 		"src_asset_time_budget_minutes": s.srcAssetTimeBudgetMinutes(),
+		"src_asset_cost_budget_usd":     s.srcAssetCostBudgetUSD(),
 		// 风险面模型分层：{"authz":"strong","paths":"cheap"}；空 = 用内建默认。
-		"src_area_tiers":     s.srcAreaTiers(),
-		"llm_record":         s.m.LLMRecordEnabled(),
-		"web_search_enabled": on,
-		"web_search_backend": backend,
-		"brave_key_set":      strings.TrimSpace(braveKey) != "",
-		"tavily_key_set":     strings.TrimSpace(tavilyKey) != "",
-		"web_search_proxy":   proxy,             // 独立出口代理(http/https/socks5)，空=直连
-		"global_proxy":       s.m.GlobalProxy(), // 全局出口代理(http/https/socks5)，所有目标流量走它，空=直连
+		"src_area_tiers": s.srcAreaTiers(),
+		// SRC 任务要求 agent 降权运行（BLADEPRO_AGENT_USER 实际生效）。
+		"src_require_isolation": s.srcRequireIsolation(),
+		"llm_record":            s.m.LLMRecordEnabled(),
+		"web_search_enabled":    on,
+		"web_search_backend":    backend,
+		"brave_key_set":         strings.TrimSpace(braveKey) != "",
+		"tavily_key_set":        strings.TrimSpace(tavilyKey) != "",
+		"web_search_proxy":      proxy,             // 独立出口代理(http/https/socks5)，空=直连
+		"global_proxy":          s.m.GlobalProxy(), // 全局出口代理(http/https/socks5)，所有目标流量走它，空=直连
 		// 出站速率治理（录制代理层）：0 = 关闭。host 桶与全局桶同时生效。
 		"egress_global_qps":        egressGlobal,
 		"egress_host_qps":          egressHost,
@@ -212,7 +215,9 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		TaskTokenBudget     *int64             `json:"task_token_budget"`
 		SrcAssetTokenBudget *int64             `json:"src_asset_token_budget"`
 		SrcAssetTimeBudget  *int               `json:"src_asset_time_budget_minutes"` // 分钟；0=关
+		SrcAssetCostBudget  *float64           `json:"src_asset_cost_budget_usd"`     // 美元；0=关
 		SrcAreaTiers        *map[string]string `json:"src_area_tiers"`
+		SrcRequireIsolation *bool              `json:"src_require_isolation"`
 		LLMRecord           *bool              `json:"llm_record"` // LLM 录制开关（默认关）；即时生效，无需重建 agent
 		// Web search. WebSearchEnabled/Backend toggle the tool + backend; BraveKey/TavilyKey
 		// are optional — omit (null) to leave a stored key untouched, send "" to clear.
@@ -587,6 +592,23 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.m.pg.SetSetting(settingAssetTokenBudget, strconv.FormatInt(v, 10)); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.SrcRequireIsolation != nil {
+		if err := s.m.pg.SetBool(settingSrcRequireIso, *req.SrcRequireIsolation); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.SrcAssetCostBudget != nil {
+		v := *req.SrcAssetCostBudget
+		if v < 0 || v > 1_000_000 {
+			writeErr(w, 400, "资产成本预算必须是 0–1000000 美元（0 = 关闭）")
+			return
+		}
+		if err := s.m.pg.SetSetting(settingAssetCostBudget, strconv.FormatFloat(v, 'f', -1, 64)); err != nil {
 			writeErr(w, 500, err.Error())
 			return
 		}

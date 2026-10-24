@@ -36,6 +36,20 @@ type SrcFunnelProgram struct {
 	CostUSD            float64 `json:"cost_usd"`
 }
 
+type SrcFunnelCampaign struct {
+	CampaignID         int64   `json:"campaign_id"`
+	Name               string  `json:"name"`
+	Tasks              int64   `json:"tasks"`
+	AssetsTerminal     int64   `json:"assets_terminal"`
+	FindingsMediumPlus int64   `json:"findings_medium_plus"`
+	ReportsReady       int64   `json:"reports_ready"`
+	Submitted          int64   `json:"submitted"`
+	Accepted           int64   `json:"accepted"`
+	Paid               int64   `json:"paid"`
+	Tokens             int64   `json:"tokens"`
+	CostUSD            float64 `json:"cost_usd"`
+}
+
 type SrcFunnelSeverity struct {
 	Severity     string `json:"severity"`
 	Findings     int64  `json:"findings"`
@@ -64,13 +78,14 @@ type SrcFunnel struct {
 	CostUSD          float64             `json:"cost_usd"`
 	CostPerEffective float64             `json:"cost_per_effective"`
 	ByProgram        []SrcFunnelProgram  `json:"by_program"`
+	ByCampaign       []SrcFunnelCampaign `json:"by_campaign"`
 	BySeverity       []SrcFunnelSeverity `json:"by_severity"`
 	Daily            []SrcFunnelDay      `json:"daily"`
 }
 
 func srcTasksCTE() string {
 	return `src_tasks AS (
-    SELECT id, src_program_id, created_at
+    SELECT id, src_program_id, campaign_id, created_at
     FROM tasks
     WHERE mode='src' AND deleted_at IS NULL
       AND created_at >= now() - ($1::int * interval '1 day')
@@ -89,7 +104,7 @@ func (d *DB) SrcFunnel(ctx context.Context, q SrcFunnelQuery) (*SrcFunnel, error
 	if days > 365 {
 		days = 365
 	}
-	out := &SrcFunnel{Days: days, ProgramID: q.ProgramID, Stages: []SrcFunnelStage{}, ByProgram: []SrcFunnelProgram{}, BySeverity: []SrcFunnelSeverity{}, Daily: []SrcFunnelDay{}}
+	out := &SrcFunnel{Days: days, ProgramID: q.ProgramID, Stages: []SrcFunnelStage{}, ByProgram: []SrcFunnelProgram{}, ByCampaign: []SrcFunnelCampaign{}, BySeverity: []SrcFunnelSeverity{}, Daily: []SrcFunnelDay{}}
 
 	assetsTotal, err := d.funnelAssetsTotal(ctx, q.ProgramID)
 	if err != nil {
@@ -189,6 +204,43 @@ ORDER BY 3 DESC, x.pid`, days, q.ProgramID)
 			return nil, err
 		}
 		out.ByProgram = append(out.ByProgram, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// 按 campaign 拆分：批量扇出的分片任务归入同一战役，这里给出战役级漏斗。
+	rows, err = d.QueryContext(ctx, `WITH `+srcTasksCTE()+`
+SELECT x.cid, COALESCE(c.name,'未归属战役') AS name,
+  (SELECT count(*) FROM src_tasks t WHERE COALESCE(t.campaign_id,0)=x.cid),
+  (SELECT count(DISTINCT sc.asset_id) FROM src_cells sc JOIN src_tasks t ON t.id=sc.task_id WHERE COALESCE(t.campaign_id,0)=x.cid),
+  (SELECT count(DISTINCT f.id) FROM findings f JOIN src_tasks t ON t.id=f.task_id WHERE COALESCE(t.campaign_id,0)=x.cid AND lower(f.severity) IN ('critical','high','medium')),
+  (SELECT count(DISTINCT f.id) FROM findings f JOIN src_tasks t ON t.id=f.task_id JOIN src_finding_meta m ON m.finding_id=f.id
+      WHERE COALESCE(t.campaign_id,0)=x.cid AND lower(f.severity) IN ('critical','high','medium') AND COALESCE(m.report_ready,false)),
+  (SELECT count(DISTINCT s.finding_id) FROM src_submissions s JOIN findings f ON f.id=s.finding_id JOIN src_tasks t ON t.id=f.task_id
+      WHERE COALESCE(t.campaign_id,0)=x.cid AND lower(f.severity) IN ('critical','high','medium')
+        AND s.status IN ('submitted','accepted','rejected','duplicate','paid')),
+  (SELECT count(DISTINCT s.finding_id) FROM src_submissions s JOIN findings f ON f.id=s.finding_id JOIN src_tasks t ON t.id=f.task_id
+      WHERE COALESCE(t.campaign_id,0)=x.cid AND lower(f.severity) IN ('critical','high','medium')
+        AND s.status IN ('accepted','paid')),
+  (SELECT count(DISTINCT s.finding_id) FROM src_submissions s JOIN findings f ON f.id=s.finding_id JOIN src_tasks t ON t.id=f.task_id
+      WHERE COALESCE(t.campaign_id,0)=x.cid AND lower(f.severity) IN ('critical','high','medium') AND s.status='paid'),
+  (SELECT COALESCE(SUM(u.input_tokens+u.output_tokens),0) FROM llm_usage u JOIN src_tasks t ON u.task_id=t.id::text WHERE COALESCE(t.campaign_id,0)=x.cid),
+  (SELECT COALESCE(SUM(u.cost_usd),0) FROM llm_usage u JOIN src_tasks t ON u.task_id=t.id::text WHERE COALESCE(t.campaign_id,0)=x.cid)
+FROM (SELECT DISTINCT COALESCE(campaign_id,0) AS cid FROM src_tasks) x
+LEFT JOIN campaigns c ON c.id=x.cid
+ORDER BY 3 DESC, x.cid`, days, q.ProgramID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var c SrcFunnelCampaign
+		if err := rows.Scan(&c.CampaignID, &c.Name, &c.Tasks, &c.AssetsTerminal, &c.FindingsMediumPlus,
+			&c.ReportsReady, &c.Submitted, &c.Accepted, &c.Paid, &c.Tokens, &c.CostUSD); err != nil {
+			return nil, err
+		}
+		out.ByCampaign = append(out.ByCampaign, c)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

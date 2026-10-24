@@ -41,7 +41,14 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
-import type { AssetInterceptRuleInput, SrcProgram, TaskCategory, TaskMode, TaskTemplate } from "@/lib/types";
+import type {
+  AssetInterceptRuleInput,
+  ScheduleBatchSpec,
+  SrcProgram,
+  TaskCategory,
+  TaskMode,
+  TaskTemplate,
+} from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 interface TemplateDraft {
@@ -53,12 +60,14 @@ interface TemplateDraft {
   mode: TaskMode;
   srcProgramID: number | null;
   inheritCoverage: boolean;
+  /** 批量扇出；null = 单任务。 */
+  batch: ScheduleBatchSpec | null;
 }
 
 // TemplateSeed 是「另存为模板」时从创建表单带入的初值。
 type TemplateSeed = Pick<
   TemplateDraft,
-  "description" | "goal" | "categoryID" | "interceptRules" | "mode" | "srcProgramID" | "inheritCoverage"
+  "description" | "goal" | "categoryID" | "interceptRules" | "mode" | "srcProgramID" | "inheritCoverage" | "batch"
 >;
 
 interface TaskTemplateManagerProps {
@@ -80,6 +89,7 @@ const emptyDraft = (): TemplateDraft => ({
   mode: "",
   srcProgramID: null,
   inheritCoverage: false,
+  batch: null,
 });
 
 function templateDraft(template: TaskTemplate): TemplateDraft {
@@ -92,8 +102,16 @@ function templateDraft(template: TaskTemplate): TemplateDraft {
     mode: template.mode === "src" ? "src" : "",
     srcProgramID: template.src_program_id ?? null,
     inheritCoverage: !!template.inherit_coverage,
+    batch: template.batch ?? null,
   };
 }
+
+// defaultBatchSpec 是模板里开启扇出时的初值；与计划任务的默认值保持一致。
+const defaultBatchSpec = (): ScheduleBatchSpec => ({
+  shard_by: "host",
+  assets_per_task: 20,
+  max_shards: 50,
+});
 
 function TaskTemplateManager({
   open,
@@ -138,6 +156,7 @@ function TaskTemplateManager({
           mode: seed.mode,
           srcProgramID: seed.srcProgramID,
           inheritCoverage: seed.inheritCoverage,
+          batch: seed.batch,
         });
       } else if (templates[0]) {
         setSelectedID(templates[0].id);
@@ -168,6 +187,10 @@ function TaskTemplateManager({
     setDraft((current) => ({ ...current, ...patch }));
   };
 
+  const patchBatch = (patch: Partial<ScheduleBatchSpec>) => {
+    setDraft((current) => (current.batch ? { ...current, batch: { ...current.batch, ...patch } } : current));
+  };
+
   async function save() {
     const input = {
       name: draft.name.trim(),
@@ -180,6 +203,7 @@ function TaskTemplateManager({
       mode: draft.mode,
       src_program_id: draft.mode === "src" ? draft.srcProgramID : null,
       inherit_coverage: draft.mode === "src" ? draft.inheritCoverage : false,
+      batch: draft.mode === "src" ? draft.batch : null,
     };
     if (!input.name || !input.description || !input.goal) {
       toast.error("请填写模板名称、描述和目标");
@@ -375,6 +399,99 @@ function TaskTemplateManager({
                         应用模板时默认勾选「继承同项目/同企业的 tested_clear 与收尾数字」。
                       </FieldDescription>
                     </Field>
+                    <Field>
+                      <label htmlFor="task-template-batch" className="flex items-center gap-2 text-sm">
+                        <Checkbox
+                          id="task-template-batch"
+                          checked={!!draft.batch}
+                          onCheckedChange={(v) => patchDraft({ batch: v ? defaultBatchSpec() : null })}
+                        />
+                        应用时批量扇出
+                      </label>
+                      <FieldDescription>
+                        按 host / 根域名把范围切成互不重叠的分片，每片建一个任务并归入同一 campaign。
+                        资产范围仍由应用时的企业/来源任务/项目决定。
+                      </FieldDescription>
+                      {draft.batch ? (
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <Field>
+                            <FieldLabel htmlFor="task-template-shard-by" className="text-xs">
+                              分片方式
+                            </FieldLabel>
+                            <NativeSelect
+                              id="task-template-shard-by"
+                              value={draft.batch.shard_by ?? "host"}
+                              onChange={(event) =>
+                                patchBatch({ shard_by: event.target.value as "host" | "root_domain" })
+                              }
+                            >
+                              <NativeSelectOption value="host">按 host</NativeSelectOption>
+                              <NativeSelectOption value="root_domain">按根域名</NativeSelectOption>
+                            </NativeSelect>
+                          </Field>
+                          <Field>
+                            <FieldLabel htmlFor="task-template-assets-per-task" className="text-xs">
+                              每片资产数
+                            </FieldLabel>
+                            <Input
+                              id="task-template-assets-per-task"
+                              inputMode="numeric"
+                              value={String(draft.batch.assets_per_task ?? 20)}
+                              onChange={(event) =>
+                                patchBatch({ assets_per_task: Number(event.target.value) || 0 })
+                              }
+                            />
+                          </Field>
+                          <Field>
+                            <FieldLabel htmlFor="task-template-max-shards" className="text-xs">
+                              最大分片数
+                            </FieldLabel>
+                            <Input
+                              id="task-template-max-shards"
+                              inputMode="numeric"
+                              value={String(draft.batch.max_shards ?? 50)}
+                              onChange={(event) => patchBatch({ max_shards: Number(event.target.value) || 0 })}
+                            />
+                          </Field>
+                          <Field>
+                            <FieldLabel htmlFor="task-template-asset-filter" className="text-xs">
+                              资产过滤
+                            </FieldLabel>
+                            <NativeSelect
+                              id="task-template-asset-filter"
+                              value={
+                                draft.batch.only_untested_assets
+                                  ? "untested"
+                                  : draft.batch.only_new_assets
+                                    ? "new"
+                                    : "all"
+                              }
+                              onChange={(event) =>
+                                patchBatch({
+                                  only_new_assets: event.target.value === "new",
+                                  only_untested_assets: event.target.value === "untested",
+                                })
+                              }
+                            >
+                              <NativeSelectOption value="all">全部资产</NativeSelectOption>
+                              <NativeSelectOption value="new">只跑新增资产</NativeSelectOption>
+                              <NativeSelectOption value="untested">只跑未测资产</NativeSelectOption>
+                            </NativeSelect>
+                          </Field>
+                          <Field className="sm:col-span-2">
+                            <FieldLabel htmlFor="task-template-campaign" className="text-xs">
+                              Campaign 名称（可选）
+                            </FieldLabel>
+                            <Input
+                              id="task-template-campaign"
+                              placeholder="留空 = 自动生成带时间戳的名称"
+                              value={draft.batch.campaign_name ?? ""}
+                              onChange={(event) => patchBatch({ campaign_name: event.target.value })}
+                            />
+                          </Field>
+                        </div>
+                      ) : null}
+                    </Field>
                   </>
                 ) : null}
                 <Field>
@@ -555,6 +672,7 @@ export function TaskTemplateControls({
                   mode: mode ?? "",
                   srcProgramID: srcProgramID ?? null,
                   inheritCoverage: !!inheritCoverage,
+                  batch: null,
                 })
               }
             >

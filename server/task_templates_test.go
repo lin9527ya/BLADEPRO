@@ -74,6 +74,31 @@ func TestTaskTemplateHTTPCRUD(t *testing.T) {
 	if code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversized create status=%d, want %d", code, http.StatusRequestEntityTooLarge)
 	}
+	// SRC 批量扇出规格随模板持久化：应用时由建任务抽屉还原分片参数。
+	code, withBatch := do(http.MethodPatch, fmt.Sprintf("/api/task-templates/%d", id), map[string]any{
+		"mode": "src",
+		"batch": map[string]any{
+			"shard_by": "host", "assets_per_task": 10, "max_shards": 20,
+			"only_new_assets": true, "campaign_name": "模板扇出",
+		},
+	})
+	if code != http.StatusOK {
+		t.Fatalf("batch patch status=%d body=%v", code, withBatch)
+	}
+	batch, _ := withBatch["batch"].(map[string]any)
+	if batch == nil || batch["shard_by"] != "host" || batch["assets_per_task"] != float64(10) || batch["only_new_assets"] != true {
+		t.Fatalf("batch not persisted: %v", withBatch["batch"])
+	}
+	code, _ = do(http.MethodPatch, fmt.Sprintf("/api/task-templates/%d", id), map[string]any{
+		"batch": map[string]any{"shard_by": "nope"},
+	})
+	if code != http.StatusBadRequest {
+		t.Fatalf("invalid batch patch status=%d, want 400", code)
+	}
+	code, cleared := do(http.MethodPatch, fmt.Sprintf("/api/task-templates/%d", id), map[string]any{"batch": nil})
+	if code != http.StatusOK || cleared["batch"] != nil {
+		t.Fatalf("clear batch status=%d body=%v", code, cleared)
+	}
 	code, listed := do(http.MethodGet, "/api/task-templates", nil)
 	if code != http.StatusOK || listed["templates"] == nil {
 		t.Fatalf("list status=%d body=%v", code, listed)

@@ -451,6 +451,15 @@ export function CreateTaskSheet({
                 setMode(template.mode === "src" ? "src" : "");
                 setSrcProgramID(template.mode === "src" && template.src_program_id ? template.src_program_id : undefined);
                 setInheritCoverage(template.mode === "src" && !!template.inherit_coverage);
+                const batch = template.mode === "src" ? template.batch : null;
+                setBatchFanout(!!batch);
+                setShardBy(batch?.shard_by ?? "host");
+                setAssetsPerTask(batch?.assets_per_task ? String(batch.assets_per_task) : "20");
+                setMaxShards(batch?.max_shards ? String(batch.max_shards) : "50");
+                setCampaignName(batch?.campaign_name ?? "");
+                setBatchAssetFilter(
+                  batch?.only_untested_assets ? "untested" : batch?.only_new_assets ? "new" : "all",
+                );
                 setUploadCount(0);
               }}
               portalContainer={sheetContentRef}

@@ -404,7 +404,15 @@ export const api = {
   createTaskTemplate: (
     input: Pick<
       TaskTemplate,
-      "name" | "description" | "goal" | "category_id" | "intercept_rules" | "mode" | "src_program_id" | "inherit_coverage"
+      | "name"
+      | "description"
+      | "goal"
+      | "category_id"
+      | "intercept_rules"
+      | "mode"
+      | "src_program_id"
+      | "inherit_coverage"
+      | "batch"
     >,
   ) => post<TaskTemplate>("/task-templates", input),
   updateTaskTemplate: (
@@ -412,7 +420,15 @@ export const api = {
     input: Partial<
       Pick<
         TaskTemplate,
-        "name" | "description" | "goal" | "category_id" | "intercept_rules" | "mode" | "src_program_id" | "inherit_coverage"
+        | "name"
+        | "description"
+        | "goal"
+        | "category_id"
+        | "intercept_rules"
+        | "mode"
+        | "src_program_id"
+        | "inherit_coverage"
+        | "batch"
       >
     >,
   ) => patch<TaskTemplate>(`/task-templates/${id}`, input),

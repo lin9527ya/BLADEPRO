@@ -31,6 +31,8 @@ type taskTemplateRequest struct {
 	Mode            *string `json:"mode"`
 	SrcProgramID    *int64  `json:"src_program_id"`
 	InheritCoverage *bool   `json:"inherit_coverage"`
+	// Batch 是批量扇出规格（与计划任务同形状）；null = 单任务模板。
+	Batch *scheduleBatchSpec `json:"batch"`
 }
 
 // decodeTaskTemplateRequest decodes the body into req and returns the set of
@@ -101,6 +103,19 @@ func (s *Server) validateTaskTemplateSRC(ctx context.Context, req taskTemplateRe
 	if req.InheritCoverage != nil && *req.InheritCoverage && mode != srcmode.ModeSrc {
 		return fmt.Errorf("inherit_coverage 仅适用于 SRC 模板（请同时设 mode=src）")
 	}
+	if req.Batch != nil && mode != srcmode.ModeSrc {
+		return fmt.Errorf("批量扇出仅适用于 SRC 模板（请同时设 mode=src）")
+	}
+	if req.Batch != nil {
+		switch strings.ToLower(strings.TrimSpace(req.Batch.ShardBy)) {
+		case "", "host", "root_domain":
+		default:
+			return fmt.Errorf("批量扇区分片方式只能是 host / root_domain")
+		}
+		if req.Batch.AssetsPerTask < 0 || req.Batch.MaxShards < 0 || req.Batch.MaxAssets < 0 {
+			return fmt.Errorf("批量扇出配额不能为负")
+		}
+	}
 	if req.SrcProgramID != nil && *req.SrcProgramID > 0 {
 		if mode != srcmode.ModeSrc {
 			return fmt.Errorf("绑定平台项目需要同时设 mode=src")
@@ -121,6 +136,19 @@ func (s *Server) validateTaskTemplateSRC(ctx context.Context, req taskTemplateRe
 		}
 	}
 	return nil
+}
+
+// templateBatchJSON turns the request batch spec into the JSONB payload stored on
+// the template. nil = clear (SQL NULL).
+func templateBatchJSON(b *scheduleBatchSpec) (json.RawMessage, error) {
+	if b == nil {
+		return nil, nil
+	}
+	raw, err := json.Marshal(b)
+	if err != nil {
+		return nil, err
+	}
+	return raw, nil
 }
 
 func writeTaskTemplateErr(w http.ResponseWriter, err error) {
@@ -174,6 +202,11 @@ func (s *Server) pgCreateTaskTemplate(w http.ResponseWriter, r *http.Request) {
 	if req.SrcProgramID != nil && *req.SrcProgramID <= 0 {
 		req.SrcProgramID = nil
 	}
+	batchRaw, err := templateBatchJSON(req.Batch)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	template, err := pg.CreateTaskTemplate(db.TaskTemplateInput{
 		Name:            stringValue(req.Name),
 		Description:     stringValue(req.Description),
@@ -183,6 +216,7 @@ func (s *Server) pgCreateTaskTemplate(w http.ResponseWriter, r *http.Request) {
 		Mode:            stringValue(req.Mode),
 		SrcProgramID:    req.SrcProgramID,
 		InheritCoverage: req.InheritCoverage != nil && *req.InheritCoverage,
+		Batch:           batchRaw,
 	})
 	if err != nil {
 		writeTaskTemplateErr(w, err)
@@ -214,9 +248,10 @@ func (s *Server) pgUpdateTaskTemplate(w http.ResponseWriter, r *http.Request) {
 	_, rulesPresent := present["intercept_rules"]
 	_, modePresent := present["mode"]
 	_, programPresent := present["src_program_id"]
+	_, batchPresent := present["batch"]
 	if req.Name == nil && req.Description == nil && req.Goal == nil && !catPresent && !rulesPresent &&
-		!modePresent && !programPresent && req.InheritCoverage == nil {
-		writeErr(w, http.StatusBadRequest, "至少需要提供 name、description、goal、category_id、intercept_rules、mode、src_program_id 或 inherit_coverage")
+		!modePresent && !programPresent && !batchPresent && req.InheritCoverage == nil {
+		writeErr(w, http.StatusBadRequest, "至少需要提供 name、description、goal、category_id、intercept_rules、mode、src_program_id、batch 或 inherit_coverage")
 		return
 	}
 	if err := s.validateTaskTemplateSRC(r.Context(), req); err != nil {
@@ -238,6 +273,15 @@ func (s *Server) pgUpdateTaskTemplate(w http.ResponseWriter, r *http.Request) {
 		patch.InterceptRules = rules
 	}
 	patch.Mode = req.Mode
+	if batchPresent {
+		batchRaw, err := templateBatchJSON(req.Batch)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		patch.SetBatch = true
+		patch.Batch = batchRaw
+	}
 	if req.SrcProgramID != nil && *req.SrcProgramID <= 0 {
 		req.SrcProgramID = nil
 	}

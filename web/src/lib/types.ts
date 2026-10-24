@@ -83,6 +83,8 @@ export interface TaskTemplate {
   src_program_id?: number | null;
   /** 应用模板时默认开启跨任务覆盖继承。 */
   inherit_coverage?: boolean;
+  /** 批量扇出规格；null/缺省 = 单个任务。仅 SRC 模板。 */
+  batch?: ScheduleBatchSpec | null;
   created_at: string;
   updated_at: string;
 }
@@ -2907,6 +2909,20 @@ export interface SrcFunnelProgram {
   cost_usd: number;
 }
 
+export interface SrcFunnelCampaign {
+  campaign_id: number;
+  name: string;
+  tasks: number;
+  assets_terminal: number;
+  findings_medium_plus: number;
+  reports_ready: number;
+  submitted: number;
+  accepted: number;
+  paid: number;
+  tokens: number;
+  cost_usd: number;
+}
+
 export interface SrcFunnelSeverity {
   severity: string;
   findings: number;
@@ -2935,6 +2951,7 @@ export interface SrcFunnel {
   cost_usd: number;
   cost_per_effective: number;
   by_program: SrcFunnelProgram[];
+  by_campaign?: SrcFunnelCampaign[];
   by_severity: SrcFunnelSeverity[];
   daily: SrcFunnelDay[];
 }

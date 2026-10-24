@@ -35,11 +35,13 @@ type TaskTemplate struct {
 	InterceptRules []TaskInterceptRuleInput `json:"intercept_rules"`
 	// SRC 预设：mode='' 普通渗透 / 'src'；src_program_id 绑定平台项目；
 	// inherit_coverage 在应用模板时默认勾选。
-	Mode            string    `json:"mode,omitempty"`
-	SrcProgramID    *int64    `json:"src_program_id,omitempty"`
-	InheritCoverage bool      `json:"inherit_coverage,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	Mode            string `json:"mode,omitempty"`
+	SrcProgramID    *int64 `json:"src_program_id,omitempty"`
+	InheritCoverage bool   `json:"inherit_coverage,omitempty"`
+	// Batch 是批量扇出规格（与计划任务同一个 JSON 形状）；null/空 = 单个任务。
+	Batch     json.RawMessage `json:"batch,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
 }
 
 // TaskTemplateInput is the create/update payload after normalization.
@@ -52,6 +54,7 @@ type TaskTemplateInput struct {
 	Mode            string
 	SrcProgramID    *int64
 	InheritCoverage bool
+	Batch           json.RawMessage
 }
 
 // TaskTemplatePatch changes only fields flagged as set. Name/Description/Goal use
@@ -69,16 +72,21 @@ type TaskTemplatePatch struct {
 	SrcProgramID      *int64
 	SetSrcProgramID   bool
 	InheritCoverage   *bool
+	Batch             json.RawMessage
+	SetBatch          bool
 }
 
-const taskTemplateCols = `id, name, nkey, description, goal, category_id, intercept_rules, COALESCE(mode,''), src_program_id, COALESCE(inherit_coverage,false), created_at, updated_at`
+const taskTemplateCols = `id, name, nkey, description, goal, category_id, intercept_rules, COALESCE(mode,''), src_program_id, COALESCE(inherit_coverage,false), COALESCE(batch,'null'::jsonb), created_at, updated_at`
 
 func scanTaskTemplate(row interface{ Scan(...any) error }) (TaskTemplate, error) {
 	var t TaskTemplate
-	var rulesRaw []byte
+	var rulesRaw, batchRaw []byte
 	if err := row.Scan(&t.ID, &t.Name, &t.NKey, &t.Description, &t.Goal, &t.CategoryID, &rulesRaw,
-		&t.Mode, &t.SrcProgramID, &t.InheritCoverage, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		&t.Mode, &t.SrcProgramID, &t.InheritCoverage, &batchRaw, &t.CreatedAt, &t.UpdatedAt); err != nil {
 		return t, err
+	}
+	if len(batchRaw) > 0 && string(batchRaw) != "null" {
+		t.Batch = json.RawMessage(batchRaw)
 	}
 	t.InterceptRules = []TaskInterceptRuleInput{}
 	if len(rulesRaw) > 0 {
@@ -137,7 +145,7 @@ func normalizeTaskTemplateInput(in TaskTemplateInput) (TaskTemplateInput, string
 
 func normalizeTaskTemplatePatch(patch TaskTemplatePatch) (TaskTemplatePatch, *string, error) {
 	if patch.Name == nil && patch.Description == nil && patch.Goal == nil && !patch.SetCategoryID && !patch.SetInterceptRules &&
-		patch.Mode == nil && !patch.SetSrcProgramID && patch.InheritCoverage == nil {
+		patch.Mode == nil && !patch.SetSrcProgramID && patch.InheritCoverage == nil && !patch.SetBatch {
 		return patch, nil, fmt.Errorf("%w: no fields supplied", ErrTaskTemplateInvalid)
 	}
 	if patch.Mode != nil {
@@ -183,6 +191,14 @@ func normalizeTaskTemplatePatch(patch TaskTemplatePatch) (TaskTemplatePatch, *st
 	return patch, nkey, nil
 }
 
+// nullJSON turns an absent batch spec into SQL NULL instead of an empty bytea.
+func nullJSON(raw json.RawMessage) any {
+	if len(raw) == 0 {
+		return nil
+	}
+	return raw
+}
+
 func taskTemplateUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
@@ -199,11 +215,11 @@ func (d *DB) CreateTaskTemplate(in TaskTemplateInput) (*TaskTemplate, error) {
 		return nil, err
 	}
 	t, err := scanTaskTemplate(d.QueryRow(`
-INSERT INTO task_templates(name, nkey, description, goal, category_id, intercept_rules, mode, src_program_id, inherit_coverage)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+INSERT INTO task_templates(name, nkey, description, goal, category_id, intercept_rules, mode, src_program_id, inherit_coverage, batch)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 ON CONFLICT (nkey) DO NOTHING
 RETURNING `+taskTemplateCols, in.Name, nkey, in.Description, in.Goal, in.CategoryID, rulesJSON,
-		in.Mode, in.SrcProgramID, in.InheritCoverage))
+		in.Mode, in.SrcProgramID, in.InheritCoverage, nullJSON(in.Batch)))
 	if err == sql.ErrNoRows {
 		return nil, ErrTaskTemplateNameConflict
 	}
@@ -253,6 +269,7 @@ func (d *DB) UpdateTaskTemplate(id int64, in TaskTemplateInput) (*TaskTemplate, 
 		Name: &in.Name, Description: &in.Description, Goal: &in.Goal,
 		Mode: &in.Mode, SrcProgramID: in.SrcProgramID, SetSrcProgramID: true,
 		InheritCoverage: &in.InheritCoverage,
+		Batch:           in.Batch, SetBatch: true,
 	})
 }
 
@@ -277,7 +294,8 @@ SET name=CASE WHEN $2 THEN $3::text ELSE name END,
     intercept_rules=CASE WHEN $11 THEN $12::jsonb ELSE intercept_rules END,
     mode=CASE WHEN $13::boolean THEN $14::text ELSE mode END,
     src_program_id=CASE WHEN $15::boolean THEN $16::bigint ELSE src_program_id END,
-    inherit_coverage=CASE WHEN $17::boolean THEN $18::boolean ELSE inherit_coverage END
+    inherit_coverage=CASE WHEN $17::boolean THEN $18::boolean ELSE inherit_coverage END,
+    batch=CASE WHEN $19::boolean THEN $20::jsonb ELSE batch END
 WHERE id=$1
 RETURNING `+taskTemplateCols,
 		id,
@@ -289,6 +307,7 @@ RETURNING `+taskTemplateCols,
 		patch.Mode != nil, patch.Mode,
 		patch.SetSrcProgramID, patch.SrcProgramID,
 		patch.InheritCoverage != nil, patch.InheritCoverage,
+		patch.SetBatch, nullJSON(patch.Batch),
 	))
 	if err == sql.ErrNoRows {
 		return nil, ErrTaskTemplateNotFound

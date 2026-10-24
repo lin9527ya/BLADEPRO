@@ -21,6 +21,15 @@ func TestSrcFunnelAggregates(t *testing.T) {
 	}
 	t.Cleanup(func() { _, _ = d.Exec(`DELETE FROM tasks WHERE id=$1`, task.ID) })
 
+	campaign, err := d.CreateCampaign(fmt.Sprintf("funnel-campaign-%d", time.Now().UnixNano()), "漏斗战役", nil)
+	if err != nil {
+		t.Fatalf("campaign: %v", err)
+	}
+	t.Cleanup(func() { _, _ = d.Exec(`DELETE FROM campaigns WHERE id=$1`, campaign.ID) })
+	if _, err := d.Exec(`UPDATE tasks SET campaign_id=$1 WHERE id=$2`, campaign.ID, task.ID); err != nil {
+		t.Fatalf("attach campaign: %v", err)
+	}
+
 	suffix := time.Now().UnixNano()
 	root := fmt.Sprintf("funnel-%d.example", suffix)
 	var assetA, assetB int64
@@ -96,6 +105,15 @@ VALUES ($1,$2,'test','accepted','漏斗发现','high')`, task.ID, findingID); er
 	}
 	if !foundProgram {
 		t.Fatalf("by_program=%+v", f.ByProgram)
+	}
+	foundCampaign := false
+	for _, c := range f.ByCampaign {
+		if c.CampaignID == campaign.ID && c.Tasks >= 1 && c.Accepted >= 1 {
+			foundCampaign = true
+		}
+	}
+	if !foundCampaign {
+		t.Fatalf("by_campaign=%+v", f.ByCampaign)
 	}
 	foundSeverity := false
 	for _, s := range f.BySeverity {

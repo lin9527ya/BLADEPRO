@@ -762,6 +762,8 @@ CREATE TABLE IF NOT EXISTS task_templates (
     mode             TEXT NOT NULL DEFAULT '',
     src_program_id   BIGINT,
     inherit_coverage BOOLEAN NOT NULL DEFAULT false,
+    -- 批量扇出规格（scheduleBatchSpec 同形状）；null = 单个任务。
+    batch            JSONB,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -771,6 +773,7 @@ ALTER TABLE task_templates ADD COLUMN IF NOT EXISTS intercept_rules JSONB NOT NU
 ALTER TABLE task_templates ADD COLUMN IF NOT EXISTS mode             TEXT NOT NULL DEFAULT '';
 ALTER TABLE task_templates ADD COLUMN IF NOT EXISTS src_program_id   BIGINT;
 ALTER TABLE task_templates ADD COLUMN IF NOT EXISTS inherit_coverage BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE task_templates ADD COLUMN IF NOT EXISTS batch JSONB;
 CREATE INDEX IF NOT EXISTS idx_task_templates_updated ON task_templates(updated_at DESC, id DESC);
 DROP TRIGGER IF EXISTS trg_task_templates_upd ON task_templates;
 CREATE TRIGGER trg_task_templates_upd BEFORE UPDATE ON task_templates

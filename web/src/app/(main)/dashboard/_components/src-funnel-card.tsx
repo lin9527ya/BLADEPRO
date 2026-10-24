@@ -179,6 +179,42 @@ export function RowSrcFunnel() {
               </div>
             ) : null}
 
+            {(data?.by_campaign?.length ?? 0) > 0 ? (
+              <div className="overflow-x-auto border-t pt-3">
+                <div className="text-muted-foreground mb-1 flex items-center gap-2 text-xs">
+                  <TrendingDownIcon className="size-3.5" /> 按战役
+                </div>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-muted-foreground border-b text-left">
+                      <th className="py-1 pr-3 font-medium">战役</th>
+                      <th className="py-1 pr-3 text-right font-medium">任务</th>
+                      <th className="py-1 pr-3 text-right font-medium">中危+</th>
+                      <th className="py-1 pr-3 text-right font-medium">齐备</th>
+                      <th className="py-1 pr-3 text-right font-medium">已提交</th>
+                      <th className="py-1 pr-3 text-right font-medium">受理</th>
+                      <th className="py-1 text-right font-medium">成本</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(data?.by_campaign ?? []).slice(0, 6).map((c) => (
+                      <tr key={c.campaign_id} className="border-b last:border-0">
+                        <td className="max-w-56 truncate py-1 pr-3" title={c.name}>
+                          {c.name}
+                        </td>
+                        <td className="py-1 pr-3 text-right tabular-nums">{c.tasks}</td>
+                        <td className="py-1 pr-3 text-right tabular-nums">{c.findings_medium_plus}</td>
+                        <td className="py-1 pr-3 text-right tabular-nums">{c.reports_ready}</td>
+                        <td className="py-1 pr-3 text-right tabular-nums">{c.submitted}</td>
+                        <td className="py-1 pr-3 text-right tabular-nums">{c.accepted}</td>
+                        <td className="py-1 text-right tabular-nums">{fmtCost(c.cost_usd)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+
             {(data?.by_program?.length ?? 0) > 0 ? (
               <div className="overflow-x-auto border-t pt-3">
                 <div className="text-muted-foreground mb-1 flex items-center gap-2 text-xs">

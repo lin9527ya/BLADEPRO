@@ -417,3 +417,34 @@ func TestNewRiskAreas(t *testing.T) {
 		t.Fatal("app assets should still have closure checks")
 	}
 }
+
+// TestReconMissing pins the "inventory before payload" ordering signal: only
+// app/service assets get it, and a done-but-below-threshold check still counts
+// as missing (the gate's own threshold is the source of truth).
+func TestReconMissing(t *testing.T) {
+	doc := DefaultDoc()
+	app := db.SrcAsset{ID: 1, Type: "app", Label: "api.example"}
+	if got := reconMissing(app, nil, doc); len(got) != 2 || got[0] != "js_enum" || got[1] != "paths_enum" {
+		t.Fatalf("empty checks should list both recon items in order: %v", got)
+	}
+	ok := map[string]db.SrcCheck{
+		"js_enum":    {State: db.SrcCheckDone, Metrics: map[string]int{"js_inline": 1}},
+		"paths_enum": {State: db.SrcCheckDone, Metrics: map[string]int{"paths": 200}},
+	}
+	if got := reconMissing(app, ok, doc); len(got) != 0 {
+		t.Fatalf("satisfied checks should not be pending: %v", got)
+	}
+	// 数字不达标仍是缺口（200 条是全量档门槛）。
+	ok["paths_enum"] = db.SrcCheck{State: db.SrcCheckDone, Metrics: map[string]int{"paths": 3}}
+	if got := reconMissing(app, ok, doc); len(got) != 1 || got[0] != "paths_enum" {
+		t.Fatalf("below-threshold paths should stay pending: %v", got)
+	}
+	if got := reconMissing(db.SrcAsset{ID: 2, Type: "endpoint"}, nil, doc); got != nil {
+		t.Fatalf("endpoint assets are not page surfaces: %v", got)
+	}
+	off := doc
+	off.SkipCheckGate = true
+	if got := reconMissing(app, nil, off); got != nil {
+		t.Fatalf("check gate off should not report recon: %v", got)
+	}
+}

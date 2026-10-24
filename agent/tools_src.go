@@ -260,6 +260,7 @@ func (t *ToolSet) srcOverviewBlock(ctx context.Context) (map[string]any, error) 
 		"area_roi":              t.srcDoc.AreaROI,
 		"cold_assets":           rep.ColdAssets,
 		"cold_total":            len(rep.ColdAssets),
+		"recon_pending":         rep.ReconPending,
 		"asset_yield":           rep.AssetYield,
 		"suspicious_na":         rep.SuspiciousNA,
 		"allow_budget_stop":     t.srcDoc.AllowBudgetStop,

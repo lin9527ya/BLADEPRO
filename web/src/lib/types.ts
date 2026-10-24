@@ -1139,6 +1139,8 @@ export interface SrcSummary {
   focus_asset?: string;
   /** 四件套（注入/SSRF/XSS/RCE）全是 na 的资产数：不阻塞，但要人复核。 */
   suspicious_na?: number;
+  /** 还没做完清点（js_enum/paths_enum）的站点：planner 应先补侦察再打 payload。 */
+  recon_pending?: { asset_id: number; asset: string; missing: string[] }[];
 }
 
 /** SRC 提交台账的一行（一条发现 × 一个平台）。 */

@@ -86,6 +86,17 @@ type Report struct {
 	AssetYield []AssetYield `json:"asset_yield,omitempty"`
 	// ColdAssets 是"已测若干格仍零发现"的资产：只降权/提示，不阻塞收尾。
 	ColdAssets []int64 `json:"cold_assets,omitempty"`
+	// ReconPending 是还没做完清点（js_enum / paths_enum）的 app/service 资产。
+	// 侦察不是收尾才能做的杂项：先清点再打 payload，才能知道到底有哪些路径/JS
+	// 入口。它不新增阻塞（收尾门照样会报缺口），但 planner 应优先把它清零。
+	ReconPending []ReconAsset `json:"recon_pending,omitempty"`
+}
+
+// ReconAsset 是一个待完成侦察的资产及其缺的清点项。
+type ReconAsset struct {
+	AssetID int64    `json:"asset_id"`
+	Asset   string   `json:"asset"`
+	Missing []string `json:"missing"`
 }
 
 // AssetYield 是一个资产的产出画像；Cold 表示已投入若干终态格但仍零发现。
@@ -229,6 +240,9 @@ func CheckFinish(ctx context.Context, store *db.SrcStore, taskID int64, doc Mode
 
 		// 收尾闸：面之外的第二层。缺项 = 没测，不是"测了没有"。
 		if !doc.SkipCheckGate && doc.Tier() != CheckTierOff {
+			if missing := reconMissing(asset, checksByAsset[asset.ID], doc); len(missing) > 0 {
+				rep.ReconPending = append(rep.ReconPending, ReconAsset{AssetID: asset.ID, Asset: asset.Label, Missing: missing})
+			}
 			for _, def := range ChecksFor(asset.Type) {
 				rep.ChecksTotal++
 				chk, ok := checksByAsset[asset.ID][def.Key]
@@ -405,6 +419,37 @@ func cellPriority(assetType, area string, attempts int, doc ModeDoc, assetMult f
 }
 
 // addCheckGap 记一条收尾闸缺口（统一填 Area/权重/计数）。
+// reconCheckKeys 是"先清点再打"的前置收尾项。顺序即建议执行顺序。
+var reconCheckKeys = []string{"js_enum", "paths_enum"}
+
+// reconMissing returns the reconnaissance checks that are not yet done for this
+// asset. Only app/service carry them (see CheckDefs); endpoint/IP/domain assets
+// return nil so the planner is never told to "go enumerate JS" on a bare host.
+func reconMissing(asset db.SrcAsset, checks map[string]db.SrcCheck, doc ModeDoc) []string {
+	if asset.Type != "app" && asset.Type != "service" {
+		return nil
+	}
+	if doc.SkipCheckGate || doc.Tier() == CheckTierOff {
+		return nil
+	}
+	var missing []string
+	for _, key := range reconCheckKeys {
+		chk, ok := checks[key]
+		if !ok || chk.State != db.SrcCheckDone {
+			missing = append(missing, key)
+			continue
+		}
+		def, ok := FindCheck(key)
+		if !ok {
+			continue
+		}
+		if satisfied, _ := checkSatisfied(def, doc, chk.Metrics); !satisfied {
+			missing = append(missing, key)
+		}
+	}
+	return missing
+}
+
 func addCheckGap(gaps *[]Gap, rep *Report, asset db.SrcAsset, def CheckDef, kind, state, reason string, evidence int64, assetMult float64) {
 	if rep.ChecksByKey == nil {
 		rep.ChecksByKey = map[string]int{}

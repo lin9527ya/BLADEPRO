@@ -42,6 +42,12 @@ const emptyForm = () => ({
   mode: "" as TaskMode,
   srcProgramID: undefined as number | undefined,
   inheritCoverage: false,
+  batch: false,
+  shardBy: "host" as "host" | "root_domain",
+  assetsPerTask: "20",
+  maxShards: "50",
+  campaignName: "",
+  batchFilter: "all" as "all" | "new" | "untested",
   enabled: true,
   kind: "every_hours" as ScheduleFrequency["kind"],
   everyMinutes: "30",
@@ -112,6 +118,16 @@ export function ScheduleTasksDialog({ categories, onCreated }: { categories: Tas
       mode: s.task_spec.mode === "src" ? "src" : "",
       srcProgramID: s.task_spec.src_program_id,
       inheritCoverage: !!s.task_spec.inherit_coverage,
+      batch: !!s.task_spec.batch,
+      shardBy: s.task_spec.batch?.shard_by === "root_domain" ? "root_domain" : "host",
+      assetsPerTask: String(s.task_spec.batch?.assets_per_task ?? 20),
+      maxShards: String(s.task_spec.batch?.max_shards ?? 50),
+      campaignName: s.task_spec.batch?.campaign_name ?? "",
+      batchFilter: s.task_spec.batch?.only_new_assets
+        ? "new"
+        : s.task_spec.batch?.only_untested_assets
+          ? "untested"
+          : "all",
       enabled: s.enabled,
       kind: s.frequency.kind,
       everyMinutes: String(s.frequency.every_minutes ?? 30),
@@ -167,6 +183,16 @@ export function ScheduleTasksDialog({ categories, onCreated }: { categories: Tas
           mode: form.mode,
           src_program_id: form.mode === "src" ? form.srcProgramID : undefined,
           inherit_coverage: form.mode === "src" ? form.inheritCoverage : false,
+          batch: form.batch
+            ? {
+                shard_by: form.shardBy,
+                assets_per_task: Math.max(1, Number(form.assetsPerTask) || 20),
+                max_shards: Math.max(1, Number(form.maxShards) || 50),
+                campaign_name: form.campaignName.trim() || undefined,
+                only_new_assets: form.batchFilter === "new",
+                only_untested_assets: form.batchFilter === "untested",
+              }
+            : undefined,
         },
         frequency: buildFrequency(),
       };
@@ -368,6 +394,83 @@ export function ScheduleTasksDialog({ categories, onCreated }: { categories: Tas
                   </label>
                 </>
               ) : null}
+              <div className="grid gap-2 rounded-lg border p-3">
+                <label htmlFor="sched-batch" className="flex items-center gap-2 text-sm">
+                  <input
+                    id="sched-batch"
+                    type="checkbox"
+                    className="size-4 accent-primary"
+                    checked={form.batch}
+                    onChange={(e) => setForm({ ...form, batch: e.target.checked })}
+                  />
+                  每次触发按资产分片建一组任务（批量扇出）
+                </label>
+                {form.batch ? (
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="grid gap-1">
+                      <Label className="text-xs">分片方式</Label>
+                      <NativeSelect
+                        size="sm"
+                        value={form.shardBy}
+                        onChange={(e) => setForm({ ...form, shardBy: e.target.value as FormState["shardBy"] })}
+                      >
+                        <NativeSelectOption value="host">按 host</NativeSelectOption>
+                        <NativeSelectOption value="root_domain">按根域名</NativeSelectOption>
+                      </NativeSelect>
+                    </div>
+                    <div className="grid gap-1">
+                      <Label htmlFor="sched-assets-per-task" className="text-xs">
+                        每片资产上限
+                      </Label>
+                      <Input
+                        id="sched-assets-per-task"
+                        inputMode="numeric"
+                        value={form.assetsPerTask}
+                        onChange={(e) => setForm({ ...form, assetsPerTask: e.target.value })}
+                      />
+                    </div>
+                    <div className="grid gap-1">
+                      <Label htmlFor="sched-max-shards" className="text-xs">
+                        最大分片数
+                      </Label>
+                      <Input
+                        id="sched-max-shards"
+                        inputMode="numeric"
+                        value={form.maxShards}
+                        onChange={(e) => setForm({ ...form, maxShards: e.target.value })}
+                      />
+                    </div>
+                    <div className="grid gap-1">
+                      <Label className="text-xs">只跑</Label>
+                      <NativeSelect
+                        size="sm"
+                        value={form.batchFilter}
+                        onChange={(e) =>
+                          setForm({ ...form, batchFilter: e.target.value as FormState["batchFilter"] })
+                        }
+                      >
+                        <NativeSelectOption value="all">全部资产</NativeSelectOption>
+                        <NativeSelectOption value="new">新增资产</NativeSelectOption>
+                        <NativeSelectOption value="untested">未测资产</NativeSelectOption>
+                      </NativeSelect>
+                    </div>
+                    <div className="grid gap-1 sm:col-span-2">
+                      <Label htmlFor="sched-campaign" className="text-xs">
+                        Campaign 名称（可选）
+                      </Label>
+                      <Input
+                        id="sched-campaign"
+                        value={form.campaignName}
+                        placeholder="留空自动生成"
+                        onChange={(e) => setForm({ ...form, campaignName: e.target.value })}
+                      />
+                    </div>
+                    <p className="text-muted-foreground text-xs sm:col-span-2">
+                      资产范围来自本计划任务绑定的 SRC 项目/企业范围；未绑定项目时需通过 API 指定 company_ids 或 asset_ids。
+                    </p>
+                  </div>
+                ) : null}
+              </div>
               <div className="grid gap-2">
                 <Label htmlFor="sched-kind">频率</Label>
                 <div className="flex flex-wrap items-center gap-2">

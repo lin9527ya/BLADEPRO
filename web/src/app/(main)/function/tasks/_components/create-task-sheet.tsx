@@ -164,6 +164,8 @@ export function CreateTaskSheet({
   const [maxShards, setMaxShards] = React.useState("50");
   const [batchTokenBudget, setBatchTokenBudget] = React.useState("0");
   const [campaignName, setCampaignName] = React.useState("");
+  // 批量扇出的资产过滤：all=全部 / new=未被 SRC 任务关联过 / untested=没有任何终态格。
+  const [batchAssetFilter, setBatchAssetFilter] = React.useState<"all" | "new" | "untested">("all");
   // 排队优先级：越大越先拿到并发槽；不抢占运行中任务。
   const [queuePriority, setQueuePriority] = React.useState("0");
   const [description, setDescription] = React.useState("");
@@ -355,6 +357,8 @@ export function CreateTaskSheet({
           maxShards: Math.max(1, Number(maxShards) || 50),
           tokenBudget: Math.max(0, Number(batchTokenBudget) || 0),
           campaignName: campaignName.trim() || undefined,
+          onlyNewAssets: batchAssetFilter === "new",
+          onlyUntestedAssets: batchAssetFilter === "untested",
         });
         if (r.totals.failed) {
           toast.warning(`已创建 ${r.totals.created ?? 0} 个分片，${r.totals.failed} 个失败`, {
@@ -384,6 +388,7 @@ export function CreateTaskSheet({
       setMaxShards("50");
       setBatchTokenBudget("0");
       setCampaignName("");
+      setBatchAssetFilter("all");
       setQueuePriority("0");
       setSelectedTemplateID(null);
       setSourceTaskIDs([]);
@@ -645,6 +650,22 @@ export function CreateTaskSheet({
                         onChange={(e) => setBatchTokenBudget(e.target.value)}
                       />
                     </div>
+                  </div>
+                  <div className="grid gap-1">
+                    <Label className="text-xs">只跑</Label>
+                    <Select
+                      value={batchAssetFilter}
+                      onValueChange={(v) => setBatchAssetFilter(v as typeof batchAssetFilter)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">全部资产</SelectItem>
+                        <SelectItem value="new">新增资产（未被 SRC 任务关联过）</SelectItem>
+                        <SelectItem value="untested">未测资产（没有任何终态格）</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="grid gap-1">
                     <Label htmlFor="campaign-name" className="text-xs">

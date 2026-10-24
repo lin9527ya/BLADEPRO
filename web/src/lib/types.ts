@@ -955,6 +955,20 @@ export interface ScheduleTaskSpec {
   mode?: TaskMode;
   src_program_id?: number;
   inherit_coverage?: boolean;
+  /** 非空 = 每次触发按分片建一组任务。 */
+  batch?: ScheduleBatchSpec;
+}
+
+export interface ScheduleBatchSpec {
+  asset_ids?: number[];
+  asset_types?: string[];
+  shard_by?: "host" | "root_domain";
+  assets_per_task?: number;
+  max_shards?: number;
+  max_assets?: number;
+  campaign_name?: string;
+  only_new_assets?: boolean;
+  only_untested_assets?: boolean;
 }
 
 export interface TaskSchedule {

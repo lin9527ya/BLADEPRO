@@ -35,6 +35,7 @@ type scheduleSpec struct {
 	TemplateID           *int64                 `json:"template_id,omitempty"`
 	LLMProfileIDs        []int64                `json:"llm_profile_ids,omitempty"`
 	CompanyIDs           []int64                `json:"company_ids,omitempty"`
+	SourceTaskIDs        []string               `json:"source_task_ids,omitempty"`
 	TimeoutSeconds       int                    `json:"timeout_seconds,omitempty"`
 	TokenBudget          int64                  `json:"token_budget,omitempty"` // 0 = 全局
 	Priority             int                    `json:"priority,omitempty"`
@@ -48,6 +49,22 @@ type scheduleSpec struct {
 	ModeDoc         json.RawMessage `json:"mode_doc,omitempty"`
 	SrcProgramID    *int64          `json:"src_program_id,omitempty"`
 	InheritCoverage *bool           `json:"inherit_coverage,omitempty"`
+	// Batch 非空 = 每次触发按分片建一组任务（而不是一个）。
+	Batch *scheduleBatchSpec `json:"batch,omitempty"`
+}
+
+// scheduleBatchSpec 是计划任务的分片规格；资产范围仍由 company_ids / program /
+// asset_ids 决定，at trigger 时现解析（这样"只跑新增/未测"每次都是新的）。
+type scheduleBatchSpec struct {
+	AssetIDs           []int64  `json:"asset_ids,omitempty"`
+	AssetTypes         []string `json:"asset_types,omitempty"`
+	ShardBy            string   `json:"shard_by,omitempty"`
+	AssetsPerTask      int      `json:"assets_per_task,omitempty"`
+	MaxShards          int      `json:"max_shards,omitempty"`
+	MaxAssets          int      `json:"max_assets,omitempty"`
+	CampaignName       string   `json:"campaign_name,omitempty"`
+	OnlyNewAssets      bool     `json:"only_new_assets,omitempty"`
+	OnlyUntestedAssets bool     `json:"only_untested_assets,omitempty"`
 }
 
 // taskScheduleDTO 是给 UI 的计划任务视图：多给一个 frequency_text（人话），
@@ -105,6 +122,11 @@ func (s *Server) validateScheduleSpec(spec scheduleSpec) error {
 			return fmt.Errorf("任务分类不存在")
 		}
 	}
+	if spec.Batch != nil {
+		if err := validateScheduleBatch(spec); err != nil {
+			return err
+		}
+	}
 	// 走与 HTTP 建任务完全相同的准备管线：项目规则、SRC 快照、策略、LLM 配置、
 	// 分类、覆盖继承都在写入计划时就校验，避免到触发那天才发现配置写错。
 	if _, perr := s.prepareTaskCreate(context.Background(), scheduleSpecToCreateReq(spec)); perr != nil {
@@ -115,6 +137,9 @@ func (s *Server) validateScheduleSpec(spec scheduleSpec) error {
 
 // createTaskFromSpec 按规格建一个任务并启动（与 HTTP 建任务同一条路径）。
 func (s *Server) createTaskFromSpec(spec scheduleSpec) (*Task, error) {
+	if spec.Batch != nil {
+		return s.createTasksFromBatchSpec(spec)
+	}
 	ctx := context.Background()
 	prep, perr := s.prepareTaskCreate(ctx, scheduleSpecToCreateReq(spec))
 	if perr != nil {
@@ -135,7 +160,7 @@ func scheduleSpecToCreateReq(spec scheduleSpec) createTaskReq {
 	return createTaskReq{
 		Name: spec.Name, Description: spec.Description, Goal: spec.Goal,
 		CategoryID: spec.CategoryID, LLMProfileIDs: spec.LLMProfileIDs,
-		CompanyIDs: spec.CompanyIDs, TimeoutSeconds: spec.TimeoutSeconds,
+		CompanyIDs: spec.CompanyIDs, SourceTaskIDs: spec.SourceTaskIDs, TimeoutSeconds: spec.TimeoutSeconds,
 		TokenBudget: spec.TokenBudget, Priority: spec.Priority,
 		PlanHeartbeatSeconds: spec.PlanHeartbeatSeconds,
 		CoverageEnabled:      spec.CoverageEnabled, SeedFirstIntent: spec.SeedFirstIntent,
@@ -143,6 +168,61 @@ func scheduleSpecToCreateReq(spec scheduleSpec) createTaskReq {
 		Mode: spec.Mode, ModeDoc: spec.ModeDoc, SrcProgramID: spec.SrcProgramID,
 		InheritCoverage: spec.InheritCoverage,
 	}
+}
+
+func validateScheduleBatch(spec scheduleSpec) error {
+	b := spec.Batch
+	if b == nil {
+		return nil
+	}
+	shardBy := strings.ToLower(strings.TrimSpace(b.ShardBy))
+	if shardBy != "" && shardBy != "host" && shardBy != "root_domain" {
+		return fmt.Errorf("分片方式只能是 host / root_domain")
+	}
+	if b.AssetsPerTask < 0 || b.MaxShards < 0 || b.MaxAssets < 0 {
+		return fmt.Errorf("分片配额不能为负")
+	}
+	if len(spec.CompanyIDs) == 0 && len(b.AssetIDs) == 0 && len(spec.SourceTaskIDs) == 0 && spec.SrcProgramID == nil {
+		return fmt.Errorf("批量扇出需要 company_ids / source_task_ids / asset_ids 或绑定 program 才能确定资产范围")
+	}
+	return nil
+}
+
+// createTasksFromBatchSpec creates a group of shard tasks for one schedule tick.
+// Returns the first created task so FinishScheduleRun can record last_task_id.
+func (s *Server) createTasksFromBatchSpec(spec scheduleSpec) (*Task, error) {
+	ctx := context.Background()
+	b := spec.Batch
+	req := createTaskBatchReq{
+		createTaskReq: scheduleSpecToCreateReq(spec),
+		NamePrefix:    strings.TrimSpace(spec.Name),
+		AssetIDs:      b.AssetIDs, AssetTypes: b.AssetTypes, ShardBy: b.ShardBy,
+		AssetsPerTask: b.AssetsPerTask, MaxShards: b.MaxShards, MaxAssets: b.MaxAssets,
+		CampaignName: b.CampaignName, OnlyNewAssets: b.OnlyNewAssets, OnlyUntestedAssets: b.OnlyUntestedAssets,
+	}
+	// 计划任务没有 HTTP 请求体，先跑一遍与 HTTP 相同的归一化。
+	if perr := normalizeBatchReq(&req); perr != nil {
+		return nil, fmt.Errorf("%s", perr.msg)
+	}
+	prep, assets, plans, skipped, perr := s.prepareBatch(ctx, req)
+	if perr != nil {
+		return nil, fmt.Errorf("%s", perr.msg)
+	}
+	_, results, created, err := s.persistBatch(ctx, req, prep, plans, len(assets), skipped)
+	if err != nil {
+		return nil, err
+	}
+	if created == 0 {
+		return nil, fmt.Errorf("所有分片创建失败")
+	}
+	for _, r := range results {
+		if r.Status == "created" && r.TaskID != "" {
+			if t, ok := s.m.Task(r.TaskID); ok {
+				return t, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("分片已创建但任务不在管理器中")
 }
 
 // ---- HTTP ----

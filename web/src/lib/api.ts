@@ -320,6 +320,8 @@ export interface CreateTaskBatchInput extends CreateTaskInput {
   maxAssets?: number;
   campaignName?: string;
   dryRun?: boolean;
+  onlyNewAssets?: boolean;
+  onlyUntestedAssets?: boolean;
 }
 
 function createTaskPayload(input: CreateTaskInput) {
@@ -379,6 +381,8 @@ export const api = {
       max_assets: input.maxAssets ?? 5000,
       campaign_name: input.campaignName,
       dry_run: input.dryRun ?? false,
+      only_new_assets: input.onlyNewAssets ?? false,
+      only_untested_assets: input.onlyUntestedAssets ?? false,
     }),
   taskCategories: () => get<{ categories: TaskCategory[] }>("/task-categories").then((r) => arr(r.categories)),
   updateTask: (id: string, input: { name?: string; pinned?: boolean; priority?: number }) =>

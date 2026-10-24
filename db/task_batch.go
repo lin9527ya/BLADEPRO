@@ -82,3 +82,55 @@ LIMIT $5`, assetIDs, companyIDs, sourceTaskIDs, types, limit+1)
 	}
 	return out, truncated, nil
 }
+
+// FilterBatchAssets applies the "only new / only untested" selectors:
+//   - onlyNew: asset is not linked to any existing SRC task (task_asset_links);
+//   - onlyUntested: asset has no terminal cell in any existing SRC task.
+//
+// Both are coarse, cross-task filters by design: a task-level area budget cannot
+// be known before the new task's scope exists. Returns filtered assets in the
+// original order and the number of skipped assets.
+func (d *DB) FilterBatchAssets(ctx context.Context, assets []BatchAsset, onlyNew, onlyUntested bool) ([]BatchAsset, int, error) {
+	if d == nil || len(assets) == 0 {
+		return assets, 0, nil
+	}
+	if !onlyNew && !onlyUntested {
+		return assets, 0, nil
+	}
+	ids := make([]int64, 0, len(assets))
+	for _, a := range assets {
+		ids = append(ids, a.ID)
+	}
+	rows, err := d.QueryContext(ctx, `
+SELECT a.id
+FROM assets a
+WHERE a.id = ANY($1::bigint[])
+  AND ($2::boolean = false OR NOT EXISTS (
+      SELECT 1 FROM task_asset_links l JOIN tasks t ON t.id=l.task_id
+      WHERE l.asset_id=a.id AND t.mode='src' AND t.deleted_at IS NULL))
+  AND ($3::boolean = false OR NOT EXISTS (
+      SELECT 1 FROM src_cells c JOIN tasks t ON t.id=c.task_id
+      WHERE c.asset_id=a.id AND t.mode='src' AND t.deleted_at IS NULL))`, ids, onlyNew, onlyUntested)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	keep := map[int64]bool{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, 0, err
+		}
+		keep[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	out := make([]BatchAsset, 0, len(assets))
+	for _, a := range assets {
+		if keep[a.ID] {
+			out = append(out, a)
+		}
+	}
+	return out, len(assets) - len(out), nil
+}

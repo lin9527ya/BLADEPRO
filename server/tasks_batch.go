@@ -33,15 +33,17 @@ const (
 
 type createTaskBatchReq struct {
 	createTaskReq
-	NamePrefix    string   `json:"name_prefix,omitempty"`
-	AssetIDs      []int64  `json:"asset_ids,omitempty"`
-	AssetTypes    []string `json:"asset_types,omitempty"`
-	ShardBy       string   `json:"shard_by,omitempty"` // host（默认）| root_domain | count
-	AssetsPerTask int      `json:"assets_per_task,omitempty"`
-	MaxShards     int      `json:"max_shards,omitempty"`
-	MaxAssets     int      `json:"max_assets,omitempty"`
-	CampaignName  string   `json:"campaign_name,omitempty"`
-	DryRun        bool     `json:"dry_run,omitempty"`
+	NamePrefix         string   `json:"name_prefix,omitempty"`
+	AssetIDs           []int64  `json:"asset_ids,omitempty"`
+	AssetTypes         []string `json:"asset_types,omitempty"`
+	ShardBy            string   `json:"shard_by,omitempty"` // host（默认）| root_domain | count
+	AssetsPerTask      int      `json:"assets_per_task,omitempty"`
+	MaxShards          int      `json:"max_shards,omitempty"`
+	MaxAssets          int      `json:"max_assets,omitempty"`
+	CampaignName       string   `json:"campaign_name,omitempty"`
+	DryRun             bool     `json:"dry_run,omitempty"`
+	OnlyNewAssets      bool     `json:"only_new_assets,omitempty"`
+	OnlyUntestedAssets bool     `json:"only_untested_assets,omitempty"`
 }
 
 type batchShardPlan struct {
@@ -66,6 +68,52 @@ func (s *Server) createTaskBatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad json: "+err.Error())
 		return
 	}
+	if perr := normalizeBatchReq(&req); perr != nil {
+		writeErr(w, perr.code, perr.msg)
+		return
+	}
+	prep, assets, plans, skipped, perr := s.prepareBatch(r.Context(), req)
+	if perr != nil {
+		writeErr(w, perr.code, perr.msg)
+		return
+	}
+	if req.DryRun {
+		base := batchBaseName(req, prep)
+		shards := make([]batchShardResult, 0, len(plans))
+		for i, p := range plans {
+			shards = append(shards, batchShardResult{
+				Index: i, Name: batchShardName(base, i, len(plans)), Assets: len(p.Assets), Hosts: p.Hosts, Status: "planned",
+			})
+		}
+		writeJSON(w, 200, map[string]any{
+			"dry_run": true, "shards": shards,
+			"totals": map[string]any{"assets": len(assets), "shards": len(plans), "skipped": skipped},
+		})
+		return
+	}
+	campaign, results, created, err := s.persistBatch(r.Context(), req, prep, plans, len(assets), skipped)
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	status := http.StatusCreated
+	if created == 0 {
+		status = http.StatusInternalServerError
+	}
+	resp := map[string]any{
+		"campaign": campaign,
+		"shards":   results,
+		"totals": map[string]any{
+			"assets": len(assets), "shards": len(plans), "created": created,
+			"failed": len(plans) - created, "skipped": skipped,
+		},
+	}
+	writeJSON(w, status, resp)
+}
+
+// normalizeBatchReq applies shard defaults and the selector guard. Shared by the
+// HTTP handler and schedule-triggered batch fan-out.
+func normalizeBatchReq(req *createTaskBatchReq) *taskCreateErr {
 	req.ShardBy = strings.ToLower(strings.TrimSpace(req.ShardBy))
 	if req.ShardBy == "" {
 		req.ShardBy = "host"
@@ -73,8 +121,7 @@ func (s *Server) createTaskBatch(w http.ResponseWriter, r *http.Request) {
 	switch req.ShardBy {
 	case "host", "root_domain":
 	default:
-		writeErr(w, 400, "shard_by 只能是 host / root_domain")
-		return
+		return taskErr(400, "shard_by 只能是 host / root_domain")
 	}
 	if req.AssetsPerTask <= 0 {
 		req.AssetsPerTask = batchDefaultAssetsPerTask
@@ -95,89 +142,64 @@ func (s *Server) createTaskBatch(w http.ResponseWriter, r *http.Request) {
 		req.MaxAssets = batchMaxAssets
 	}
 	if len(req.CompanyIDs) == 0 && len(req.SourceTaskIDs) == 0 && len(req.AssetIDs) == 0 {
-		writeErr(w, 400, "批量扇出至少需要 company_ids / source_task_ids / asset_ids 之一来确定资产范围")
-		return
+		return taskErr(400, "批量扇出至少需要 company_ids / source_task_ids / asset_ids 之一来确定资产范围")
 	}
+	return nil
+}
 
-	// 先走与单任务相同的创建管线：项目规则、SRC 快照、策略、覆盖继承来源校验只做一次。
-	prep, perr := s.prepareTaskCreate(r.Context(), req.createTaskReq)
+// prepareBatch runs the shared single-task pipeline once, then resolves/filters
+// assets and plans shards. Used by both HTTP batch creation and schedules.
+func (s *Server) prepareBatch(ctx context.Context, req createTaskBatchReq) (*preparedTaskCreate, []db.BatchAsset, []batchShardPlan, int, *taskCreateErr) {
+	prep, perr := s.prepareTaskCreate(ctx, req.createTaskReq)
 	if perr != nil {
-		writeErr(w, perr.code, perr.msg)
-		return
+		return nil, nil, nil, 0, perr
 	}
-	assets, truncated, err := s.m.PG().ResolveBatchAssets(r.Context(), prep.companyIDs, prep.sourceIDs, req.AssetIDs, req.AssetTypes, req.MaxAssets)
+	assets, truncated, err := s.m.PG().ResolveBatchAssets(ctx, prep.companyIDs, prep.sourceIDs, req.AssetIDs, req.AssetTypes, req.MaxAssets)
 	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
+		return nil, nil, nil, 0, taskErr(500, err.Error())
 	}
 	if truncated {
-		writeErr(w, 400, fmt.Sprintf("范围内资产超过上限 %d：请缩窄范围或提高 max_assets", req.MaxAssets))
-		return
+		return nil, nil, nil, 0, taskErr(400, fmt.Sprintf("范围内资产超过上限 %d：请缩窄范围或提高 max_assets", req.MaxAssets))
 	}
 	if len(assets) == 0 {
-		writeErr(w, 400, "所选范围没有资产（检查 company_ids / source_task_ids / asset_ids 与 asset_types）")
-		return
+		return nil, nil, nil, 0, taskErr(400, "所选范围没有资产（检查 company_ids / source_task_ids / asset_ids 与 asset_types）")
+	}
+	assets, skipped, err := s.m.PG().FilterBatchAssets(ctx, assets, req.OnlyNewAssets, req.OnlyUntestedAssets)
+	if err != nil {
+		return nil, nil, nil, 0, taskErr(500, err.Error())
+	}
+	if len(assets) == 0 {
+		return nil, nil, nil, skipped, taskErr(400, fmt.Sprintf("按 only_new/only_untested 过滤后没有资产（跳过 %d 个）", skipped))
 	}
 	plans, perr := planBatchShards(assets, req.ShardBy, req.AssetsPerTask, req.MaxShards)
 	if perr != nil {
-		writeErr(w, perr.code, perr.msg)
-		return
+		return nil, nil, nil, skipped, perr
 	}
+	return prep, assets, plans, skipped, nil
+}
 
-	baseName := strings.TrimSpace(req.NamePrefix)
-	if baseName == "" {
-		baseName = truncateRunes(strings.TrimSpace(prep.req.Name), 32)
-	}
-	if baseName == "" {
-		baseName = truncateRunes(strings.TrimSpace(prep.req.Description), 32)
-	}
-	if baseName == "" {
-		baseName = "批量扇出"
-	}
-	fullName := func(i int) string {
-		return fmt.Sprintf("%s · 分片 %d/%d", baseName, i+1, len(plans))
-	}
-	shardDesc := func(i int, p batchShardPlan) string {
-		hosts := p.Hosts
-		if len(hosts) > 8 {
-			hosts = append(append([]string{}, hosts[:8]...), fmt.Sprintf("…等 %d 个", len(p.Hosts)))
-		}
-		return fmt.Sprintf("%s\n\n【批量扇出 · 分片 %d/%d】资产 %d 个；主机：%s",
-			prep.req.Description, i+1, len(plans), len(p.Assets), strings.Join(hosts, ", "))
-	}
-
-	if req.DryRun {
-		shards := make([]batchShardResult, 0, len(plans))
-		for i, p := range plans {
-			shards = append(shards, batchShardResult{
-				Index: i, Name: fullName(i), Assets: len(p.Assets), Hosts: p.Hosts, Status: "planned",
-			})
-		}
-		writeJSON(w, 200, map[string]any{
-			"dry_run": true, "shards": shards,
-			"totals": map[string]any{"assets": len(assets), "shards": len(plans)},
-		})
-		return
-	}
-
-	campaign, err := s.createBatchCampaign(r.Context(), req, prep, len(plans), len(assets))
+// persistBatch creates the campaign and every shard. It returns the results even
+// when some shards fail; created==0 means the campaign was removed.
+func (s *Server) persistBatch(ctx context.Context, req createTaskBatchReq, prep *preparedTaskCreate, plans []batchShardPlan, totalAssets, skipped int) (*db.Campaign, []batchShardResult, int, error) {
+	campaign, err := s.createBatchCampaign(ctx, req, prep, len(plans), totalAssets)
 	if err != nil {
-		writeErr(w, 400, err.Error())
-		return
+		return nil, nil, 0, err
 	}
+	base := batchBaseName(req, prep)
 	results := make([]batchShardResult, 0, len(plans))
 	created := 0
 	var firstErr error
 	for i, p := range plans {
-		desc := shardDesc(i, p)
+		name := batchShardName(base, i, len(plans))
+		desc := batchShardDesc(prep, i, len(plans), p)
 		shard := &taskShardSpec{
-			Name: fullName(i), Description: desc, Goal: prep.req.Goal,
+			Name: name, Description: desc, Goal: prep.req.Goal,
 			TokenBudget: prep.req.TokenBudget, ScopeRows: p.Scope, AssetIDs: assetIDs(p.Assets),
 			OmitCompanyIDs: true,
 		}
-		t, perr := s.persistPreparedTask(r.Context(), prep, shard)
+		t, perr := s.persistPreparedTask(ctx, prep, shard)
 		if perr != nil {
-			results = append(results, batchShardResult{Index: i, Name: shard.Name, Assets: len(p.Assets), Hosts: p.Hosts, Status: "failed", Error: perr.msg})
+			results = append(results, batchShardResult{Index: i, Name: name, Assets: len(p.Assets), Hosts: p.Hosts, Status: "failed", Error: perr.msg})
 			if firstErr == nil {
 				firstErr = fmt.Errorf("分片 %d 创建失败：%s", i+1, perr.msg)
 			}
@@ -187,27 +209,41 @@ func (s *Server) createTaskBatch(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[task-batch] task %s 归入 campaign %d 失败: %v", t.ID, campaign.ID, err)
 		}
 		s.launchTask(t, desc+" "+prep.req.Goal, prep.req.SeedFirstIntent != nil && *prep.req.SeedFirstIntent)
-		results = append(results, batchShardResult{Index: i, TaskID: t.ID, Name: shard.Name, Assets: len(p.Assets), Hosts: p.Hosts, Status: "created"})
+		results = append(results, batchShardResult{Index: i, TaskID: t.ID, Name: name, Assets: len(p.Assets), Hosts: p.Hosts, Status: "created"})
 		created++
 	}
-	status := http.StatusCreated
 	if created == 0 {
-		status = http.StatusInternalServerError
-		// 一个分片都没建起来：不要留下空 campaign。
 		_, _ = s.m.PG().DeleteCampaign(campaign.ID)
+		return campaign, results, 0, firstErr
 	}
-	resp := map[string]any{
-		"campaign": campaign,
-		"shards":   results,
-		"totals": map[string]any{
-			"assets": len(assets), "shards": len(plans), "created": created,
-			"failed": len(plans) - created,
-		},
+	return campaign, results, created, nil
+}
+
+func batchBaseName(req createTaskBatchReq, prep *preparedTaskCreate) string {
+	base := strings.TrimSpace(req.NamePrefix)
+	if base == "" {
+		base = truncateRunes(strings.TrimSpace(prep.req.Name), 32)
 	}
-	if firstErr != nil {
-		resp["error"] = firstErr.Error()
+	if base == "" {
+		base = truncateRunes(strings.TrimSpace(prep.req.Description), 32)
 	}
-	writeJSON(w, status, resp)
+	if base == "" {
+		base = "批量扇出"
+	}
+	return base
+}
+
+func batchShardName(base string, i, total int) string {
+	return fmt.Sprintf("%s · 分片 %d/%d", base, i+1, total)
+}
+
+func batchShardDesc(prep *preparedTaskCreate, i, total int, p batchShardPlan) string {
+	hosts := p.Hosts
+	if len(hosts) > 8 {
+		hosts = append(append([]string{}, hosts[:8]...), fmt.Sprintf("…等 %d 个", len(p.Hosts)))
+	}
+	return fmt.Sprintf("%s\n\n【批量扇出 · 分片 %d/%d】资产 %d 个；主机：%s",
+		prep.req.Description, i+1, total, len(p.Assets), strings.Join(hosts, ", "))
 }
 
 // createBatchCampaign groups the shards under one campaign so the result can be

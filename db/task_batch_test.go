@@ -114,3 +114,48 @@ VALUES ($1,$2,'manual')`, source.ID, a3); err != nil {
 		t.Fatal("missing domain should fail")
 	}
 }
+
+func TestFilterBatchAssetsOnlyNewAndUntested(t *testing.T) {
+	d, err := Open(testDSN(t))
+	if err != nil {
+		t.Skipf("postgres unavailable (%v) — skipping", err)
+	}
+	defer d.Close()
+	ctx := context.Background()
+	suffix := time.Now().UnixNano()
+	task, err := d.CreateTaskWithOptions("batch-filter", "过滤", TaskCreateOptions{Mode: "src"})
+	if err != nil {
+		t.Fatalf("task: %v", err)
+	}
+	t.Cleanup(func() { _, _ = d.Exec(`DELETE FROM tasks WHERE id=$1`, task.ID) })
+	mk := func(name string) int64 {
+		var id int64
+		if err := d.QueryRow(`INSERT INTO assets(type, domain, root_domain)
+VALUES ('subdomain',$1,$2) RETURNING id`, fmt.Sprintf("%s-%d.example", name, suffix), fmt.Sprintf("%s-%d.example", name, suffix)).Scan(&id); err != nil {
+			t.Fatalf("asset %s: %v", name, err)
+		}
+		t.Cleanup(func() { _, _ = d.Exec(`DELETE FROM assets WHERE id=$1`, id) })
+		return id
+	}
+	tested, linkedOnly, fresh := mk("tested"), mk("linked"), mk("fresh")
+	for _, id := range []int64{tested, linkedOnly} {
+		if _, err := d.Exec(`INSERT INTO task_asset_links(task_id, asset_id, source) VALUES($1,$2,'manual')`, task.ID, id); err != nil {
+			t.Fatalf("link: %v", err)
+		}
+	}
+	if _, err := d.Src().UpsertSrcCell(ctx, &SrcCell{
+		TaskID: task.ID, AssetID: tested, Area: "authz", Item: "*",
+		State: SrcStateClear, EvidenceNodeID: 0, Reason: "x", UpdatedBy: "test",
+	}); err != nil {
+		t.Fatalf("cell: %v", err)
+	}
+	assets := []BatchAsset{{ID: tested}, {ID: linkedOnly}, {ID: fresh}}
+	onlyNew, skipped, err := d.FilterBatchAssets(ctx, assets, true, false)
+	if err != nil || skipped != 2 || len(onlyNew) != 1 || onlyNew[0].ID != fresh {
+		t.Fatalf("onlyNew=%+v skipped=%d err=%v", onlyNew, skipped, err)
+	}
+	untested, skipped, err := d.FilterBatchAssets(ctx, assets, false, true)
+	if err != nil || skipped != 1 || len(untested) != 2 || untested[0].ID != linkedOnly || untested[1].ID != fresh {
+		t.Fatalf("untested=%+v skipped=%d err=%v", untested, skipped, err)
+	}
+}

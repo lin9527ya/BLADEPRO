@@ -113,3 +113,86 @@ func TestScheduleAndTemplateCarrySRCPresets(t *testing.T) {
 		t.Fatalf("task program=%v want %d", task.SrcProgramID, program.ID)
 	}
 }
+
+func TestScheduleBatchFansOut(t *testing.T) {
+	m, err := NewManager(t.TempDir(), "")
+	if err != nil {
+		t.Skipf("postgres unavailable (%v) — skipping", err)
+	}
+	t.Cleanup(func() { _ = m.Close() })
+	td := t.TempDir()
+	s := New(context.Background(), m, td, td, td)
+	h := s.Handler()
+	tok, err := signJWT(s.auth.signKey.get())
+	if err != nil {
+		t.Fatalf("sign jwt: %v", err)
+	}
+	do := func(method, path string, body any) (int, map[string]any) {
+		var r = httptest.NewRequest(method, path, nil)
+		if body != nil {
+			b, _ := json.Marshal(body)
+			r = httptest.NewRequest(method, path, bytes.NewReader(b))
+		}
+		r.Header.Set("Authorization", "Bearer "+tok)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		var out map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return rec.Code, out
+	}
+	suffix := time.Now().UnixNano()
+	root := fmt.Sprintf("sched-batch-%d.example", suffix)
+	ids := []int64{}
+	for i := 0; i < 3; i++ {
+		var id int64
+		domain := fmt.Sprintf("s%d.%s", i, root)
+		if err := m.pg.QueryRow(`INSERT INTO assets(type, domain, root_domain) VALUES('subdomain',$1,$2) RETURNING id`, domain, root).Scan(&id); err != nil {
+			t.Fatalf("asset: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	t.Cleanup(func() { _, _ = m.pg.Exec(`DELETE FROM assets WHERE id = ANY($1::bigint[])`, ids) })
+
+	code, out := do("POST", "/api/task-schedules", map[string]any{
+		"name": "批量计划", "enabled": false,
+		"task_spec": map[string]any{
+			"description": "批量计划扇出", "goal": "按 host 分片",
+			"mode": "src",
+			"batch": map[string]any{
+				"asset_ids": ids, "shard_by": "host", "assets_per_task": 2,
+			},
+		},
+		"frequency": map[string]any{"kind": "every_hours", "every_hours": 6},
+	})
+	if code != 201 {
+		t.Fatalf("create schedule: %d %v", code, out)
+	}
+	schedID := int64(out["id"].(float64))
+	t.Cleanup(func() { _, _ = m.pg.DeleteTaskSchedule(schedID) })
+
+	code, out = do("POST", "/api/task-schedules/"+strconv.FormatInt(schedID, 10)+"/run", nil)
+	if code != 200 {
+		t.Fatalf("run: %d %v", code, out)
+	}
+	taskRef, _ := out["task_id"].(string)
+	taskID, _ := strconv.ParseInt(taskRef, 10, 64)
+	if taskID <= 0 {
+		t.Fatalf("bad task id %q", taskRef)
+	}
+	var campaignID int64
+	if err := m.pg.QueryRow(`SELECT campaign_id FROM tasks WHERE id=$1`, taskID).Scan(&campaignID); err != nil {
+		t.Fatalf("campaign: %v", err)
+	}
+	var count int
+	if err := m.pg.QueryRow(`SELECT count(*) FROM tasks WHERE campaign_id=$1 AND deleted_at IS NULL`, campaignID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("campaign tasks=%d want 2", count)
+	}
+	t.Cleanup(func() {
+		_, _ = m.pg.Exec(`UPDATE tasks SET campaign_id=NULL WHERE campaign_id=$1`, campaignID)
+		_, _ = m.pg.Exec(`DELETE FROM campaigns WHERE id=$1`, campaignID)
+		_, _ = m.pg.Exec(`DELETE FROM tasks WHERE campaign_id IS NULL AND description LIKE '批量计划扇出%'`)
+	})
+}

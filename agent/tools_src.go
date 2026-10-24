@@ -515,12 +515,41 @@ func (t *ToolSet) srcFinishCheck() actool.CoreTool {
 		})
 }
 
-// srcMarkCell 点亮一格（写工具）。终态校验在 srcmode.ValidateCell 里，一条都不能省：
-// tested_found 必须挂 finding、tested_clear 必须有证据、na/budget_stop 必须写原因。
+// srcCellArg is one coverage-cell mark. The tool accepts either one top-level
+// mark (legacy) or a `cells` array; both share this shape.
+type srcCellArg struct {
+	AssetID        int64  `json:"asset_id"`
+	Area           string `json:"area"`
+	Item           string `json:"item"`
+	State          string `json:"state"`
+	Reason         string `json:"reason"`
+	NACode         string `json:"na_code"`
+	EvidenceNodeID int64  `json:"evidence_node_id"`
+	FindingID      int64  `json:"finding_id"`
+}
+
+// srcMarkCell 点亮覆盖格（写工具）。支持单条（兼容旧调用）或 cells 数组批量落账。
+// 终态校验在 srcmode.ValidateCell 里，一条都不能省。
 func (t *ToolSet) srcMarkCell() actool.CoreTool {
+	itemSchema := obj(map[string]any{
+		"asset_id":         intp("要标记的资产 id（来自 src_state / list_assets）"),
+		"area":             str("风险面：" + srcmode.AreaLegend()),
+		"item":             str("细分项，默认 \"*\"（整组）"),
+		"state":            str("终态：tested_found | tested_clear | na | budget_stop"),
+		"reason":           str("结论说明（na/budget_stop 必填；tested_clear 无证据节点时必填）"),
+		"na_code":          str("na 的理由码（只在该面允许的码里选，见 src_state）"),
+		"evidence_node_id": intp("tested_clear 的证据节点 id（一条 fact，可选但推荐）"),
+		"finding_id":       intp("tested_found 对应的 findings.id（必填）"),
+	})
+	props := itemSchema["properties"].(map[string]any)
+	props["cells"] = map[string]any{
+		"type": "array", "items": itemSchema,
+		"description": "【批量】一次点亮多格；与顶层字段同形状，优先于顶层单条参数。返回 cells/errors 按数组下标对应。",
+	}
 	return writeTool(
 		"src_mark_cell",
-		"【SRC 模式】点亮一个覆盖格（asset_id + area + item）的终态。结束一条意图前必须调用。\n"+
+		"【SRC 模式】点亮一个或多个覆盖格（asset_id + area + item）的终态。结束一条意图前必须调用。\n"+
+			"可以传顶层单条字段，也可以用 cells 数组一次提交多格（推荐，减少工具往返）。\n"+
 			"state 取值与要求：\n"+
 			"  tested_found  —— 测出洞：必须带 finding_id（先 report_finding 拿到 id）；\n"+
 			"  tested_clear  —— 测了没洞：必须带 evidence_node_id（record_fact 返回的节点 id）；项目显式允许时才可只写 reason；\n"+
@@ -528,68 +557,91 @@ func (t *ToolSet) srcMarkCell() actool.CoreTool {
 			"  budget_stop   —— 预算/时间用尽没测完：必须写 reason。\n"+
 			"area 只能是："+srcmode.AreaLegend()+"；item 用 \"*\" 表示整组，或用该面的细分项（如 injection/sql、paths/enum-200）。\n"+
 			"同一格尝试次数超过上限后只能用 budget_stop 收口。",
-		obj(map[string]any{
-			"asset_id":         intp("要标记的资产 id（来自 src_state / list_assets）"),
-			"area":             str("风险面：" + srcmode.AreaLegend()),
-			"item":             str("细分项，默认 \"*\"（整组）"),
-			"state":            str("终态：tested_found | tested_clear | na | budget_stop"),
-			"reason":           str("结论说明（na/budget_stop 必填；tested_clear 无证据节点时必填）"),
-			"na_code":          str("na 的理由码（只在该面允许的码里选，见 src_state）"),
-			"evidence_node_id": intp("tested_clear 的证据节点 id（一条 fact，可选但推荐）"),
-			"finding_id":       intp("tested_found 对应的 findings.id（必填）"),
-		}),
+		itemSchema,
 		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			if !t.srcReady() {
 				return actool.Errorf("src_mark_cell 仅在 SRC 模式的任务内可用"), nil
 			}
 			var req struct {
-				AssetID        int64  `json:"asset_id"`
-				Area           string `json:"area"`
-				Item           string `json:"item"`
-				State          string `json:"state"`
-				Reason         string `json:"reason"`
-				NACode         string `json:"na_code"`
-				EvidenceNodeID int64  `json:"evidence_node_id"`
-				FindingID      int64  `json:"finding_id"`
+				srcCellArg
+				Cells []srcCellArg `json:"cells"`
 			}
 			if err := json.Unmarshal(in, &req); err != nil {
 				return actool.Errorf("参数解析失败：" + err.Error()), nil
 			}
-			item := req.Item
-			if item == "" {
-				item = srcmode.AreaAll
+			args := req.Cells
+			single := len(args) == 0
+			if single {
+				if req.AssetID <= 0 {
+					return actool.Errorf("asset_id 必填（或用 cells 数组批量提交）"), nil
+				}
+				args = []srcCellArg{req.srcCellArg}
 			}
-			cell := db.SrcCell{
-				TaskID: t.taskID, AssetID: req.AssetID, Area: req.Area, Item: item,
-				State: req.State, Reason: req.Reason, NACode: req.NACode,
-				EvidenceNodeID: req.EvidenceNodeID, FindingID: req.FindingID,
-				UpdatedBy: t.worker,
+			if len(args) > 100 {
+				return actool.Errorf("一次最多提交 100 个覆盖格"), nil
 			}
-			if err := srcmode.ValidateCell(ctx, t.srcStore, t.taskID, t.srcDoc, cell); err != nil {
-				return actool.Errorf(err.Error()), nil
+			type cellResult struct {
+				Index int         `json:"index"`
+				Cell  *db.SrcCell `json:"cell,omitempty"`
+				Error string      `json:"error,omitempty"`
 			}
-			saved, err := t.srcStore.UpsertSrcCell(ctx, &cell)
-			if err != nil {
-				return actool.Errorf("写覆盖格失败：" + err.Error()), nil
+			saved := make([]cellResult, 0, len(args))
+			okCount := 0
+			for i, arg := range args {
+				item := strings.TrimSpace(arg.Item)
+				if item == "" {
+					item = srcmode.AreaAll
+				}
+				cell := db.SrcCell{
+					TaskID: t.taskID, AssetID: arg.AssetID, Area: arg.Area, Item: item,
+					State: arg.State, Reason: arg.Reason, NACode: arg.NACode,
+					EvidenceNodeID: arg.EvidenceNodeID, FindingID: arg.FindingID,
+					UpdatedBy: t.worker,
+				}
+				if err := srcmode.ValidateCell(ctx, t.srcStore, t.taskID, t.srcDoc, cell); err != nil {
+					saved = append(saved, cellResult{Index: i, Error: err.Error()})
+					continue
+				}
+				row, err := t.srcStore.UpsertSrcCell(ctx, &cell)
+				if err != nil {
+					saved = append(saved, cellResult{Index: i, Error: "写覆盖格失败：" + err.Error()})
+					continue
+				}
+				okCount++
+				saved = append(saved, cellResult{Index: i, Cell: row})
 			}
-			// 只刷一格就能算完的统计走轻量查询；顺带把剩余缺口的摘要回给 worker/planner。
+			out := map[string]any{"cells": saved, "ok": okCount, "failed": len(saved) - okCount}
+			if single && len(saved) == 1 {
+				if saved[0].Cell != nil {
+					out["cell"] = saved[0].Cell
+				}
+				if saved[0].Error != "" {
+					out["error"] = saved[0].Error
+				}
+			}
 			rep, err := srcmode.CheckFinish(ctx, t.srcStore, t.taskID, t.srcDoc)
-			if err != nil {
-				return jsonResult(map[string]any{"cell": saved})
+			if err == nil {
+				out["gaps_total"] = rep.GapsTotal
+				out["gaps_by_area"] = rep.GapsByArea
+				out["finishable"] = rep.Finishable
 			}
-			return jsonResult(map[string]any{
-				"cell":         saved,
-				"gaps_total":   rep.GapsTotal,
-				"gaps_by_area": rep.GapsByArea,
-				"finishable":   rep.Finishable,
-			})
+			return jsonResult(out)
 		})
 }
 
-// srcMarkCheck 点亮一项收尾闸（写工具）。收尾闸回答"测够没有"：
-// JS 抽全、路径枚举、非 404 复测、方法矩阵、参数变体、防护对照、判死三条件、截图。
-// 与 src_mark_cell 一样，终态校验在 srcmode.ValidateCheck：done 必须有达标的数字与
-// 证据节点，na 必须给理由码，budget_stop 必须写原因。
+// srcCheckArg is one closing-check mark; the tool accepts one top-level mark or a
+// `checks` array.
+type srcCheckArg struct {
+	AssetID        int64          `json:"asset_id"`
+	CheckKey       string         `json:"check_key"`
+	State          string         `json:"state"`
+	NACode         string         `json:"na_code"`
+	Reason         string         `json:"reason"`
+	Metrics        map[string]int `json:"metrics"`
+	EvidenceNodeID int64          `json:"evidence_node_id"`
+}
+
+// srcMarkCheck 点亮收尾闸（写工具）。支持单条或 checks 数组批量落账。
 func (t *ToolSet) srcMarkCheck() actool.CoreTool {
 	metrics := map[string]any{
 		"type":        "object",
@@ -616,77 +668,128 @@ func (t *ToolSet) srcMarkCheck() actool.CoreTool {
 		},
 		"additionalProperties": map[string]any{"type": "integer"},
 	}
+	itemSchema := obj(map[string]any{
+		"asset_id":         intp("资产 id（来自 src_state / list_assets）"),
+		"check_key":        str("收尾项：" + strings.Join(srcmode.CheckKeys(), " / ")),
+		"state":            str("终态：done | na | budget_stop"),
+		"na_code":          str("na 的理由码（工具描述与 src_state 里给出可选值）"),
+		"reason":           str("结论说明（na/budget_stop 必填；降级也要写原因）"),
+		"metrics":          metrics,
+		"evidence_node_id": intp("证据节点 id（record_fact 返回；done 必填）"),
+	})
+	props := itemSchema["properties"].(map[string]any)
+	props["checks"] = map[string]any{
+		"type": "array", "items": itemSchema,
+		"description": "【批量】一次登记多項收尾项；与顶层字段同形状，优先于顶层单条参数。返回 checks/errors 按数组下标对应。",
+	}
 	return writeTool(
 		"src_mark_check",
-		"【SRC 模式】登记一项收尾闸（asset_id + check_key）的终态。它与 src_mark_cell 是两层：\n"+
+		"【SRC 模式】登记一项或多项收尾闸（asset_id + check_key）的终态。它与 src_mark_cell 是两层：\n"+
 			"  cell  = 这个风险面测过没有；\n"+
-			"  check = 测够没有（JS 抽全 / 路径枚举 / 非 404 复测 / 方法矩阵 / 参数变体 / 防护对照 / 判死三条件 / 截图）。\n"+
-			"收尾门两层都要清零。check_key 只能是："+strings.Join(srcmode.CheckKeys(), " / ")+"。\n"+
+			"  check = 测够没有（JS 抽全 / 路径枚举 / 非 404 复测 / 方法矩阵 / 参数变体 / 防护对照 / 判死三条件 / 截图 / 缓存对照）。\n"+
+			"收尾门两层都要清零。可以传顶层单条字段，也可以用 checks 数组批量提交（推荐）。\n"+
+			"check_key 只能是："+strings.Join(srcmode.CheckKeys(), " / ")+"。\n"+
 			"done 必须有达标的数字（metrics）与 evidence_node_id（先 record_fact 记下命令与结果）；\n"+
 			"paths/js/methods/non404 优先用 src_probe 跑确定性探针，它返回的 metrics 可直接填这里；\n"+
 			"done 提交后系统会用录制流量核对数字：返回的 verify_warnings 非空时说明自报与实测对不上，先解释差异（可能只是录制没走代理），不要无视；\n"+
 			"na 必须写 reason + na_code（只在 src_state 给出的该 check 的 na_codes 里选）；\n"+
 			"budget_stop 必须写 reason。数字不达标会被拒绝并告诉你还差多少。",
-		obj(map[string]any{
-			"asset_id":         intp("资产 id（来自 src_state / list_assets）"),
-			"check_key":        str("收尾项：" + strings.Join(srcmode.CheckKeys(), " / ")),
-			"state":            str("终态：done | na | budget_stop"),
-			"na_code":          str("na 的理由码（工具描述与 src_state 里给出可选值）"),
-			"reason":           str("结论说明（na/budget_stop 必填；降级也要写原因）"),
-			"metrics":          metrics,
-			"evidence_node_id": intp("证据节点 id（record_fact 返回；done 必填）"),
-		}),
+		itemSchema,
 		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			if !t.srcReady() {
 				return actool.Errorf("src_mark_check 仅在 SRC 模式的任务内可用"), nil
 			}
 			var req struct {
-				AssetID        int64          `json:"asset_id"`
-				CheckKey       string         `json:"check_key"`
-				State          string         `json:"state"`
-				NACode         string         `json:"na_code"`
-				Reason         string         `json:"reason"`
-				Metrics        map[string]int `json:"metrics"`
-				EvidenceNodeID int64          `json:"evidence_node_id"`
+				srcCheckArg
+				Checks []srcCheckArg `json:"checks"`
 			}
 			if err := json.Unmarshal(in, &req); err != nil {
 				return actool.Errorf("参数解析失败：" + err.Error()), nil
 			}
-			chk := db.SrcCheck{
-				TaskID: t.taskID, AssetID: req.AssetID, CheckKey: req.CheckKey,
-				State: req.State, NACode: req.NACode, Reason: req.Reason,
-				Metrics: req.Metrics, EvidenceNodeID: req.EvidenceNodeID,
-				UpdatedBy: t.worker,
+			args := req.Checks
+			single := len(args) == 0
+			if single {
+				if req.AssetID <= 0 || strings.TrimSpace(req.CheckKey) == "" {
+					return actool.Errorf("asset_id 与 check_key 必填（或用 checks 数组批量提交）"), nil
+				}
+				args = []srcCheckArg{req.srcCheckArg}
 			}
-			if err := srcmode.ValidateCheck(ctx, t.srcStore, t.taskID, t.srcDoc, chk); err != nil {
-				return actool.Errorf(err.Error()), nil
+			if len(args) > 100 {
+				return actool.Errorf("一次最多提交 100 个收尾项"), nil
 			}
-			saved, err := t.srcStore.UpsertSrcCheck(ctx, &chk)
-			if err != nil {
-				return actool.Errorf("写收尾项失败：" + err.Error()), nil
+			type checkResult struct {
+				Index           int            `json:"index"`
+				Check           *db.SrcCheck   `json:"check,omitempty"`
+				Error           string         `json:"error,omitempty"`
+				ObservedMetrics map[string]int `json:"observed_metrics,omitempty"`
+				VerifyWarnings  []string       `json:"verify_warnings,omitempty"`
+				AutoScreenshot  bool           `json:"auto_screenshot,omitempty"`
+			}
+			saved := make([]checkResult, 0, len(args))
+			okCount := 0
+			for i, arg := range args {
+				// 平台要求截图时，done 且未给证据节点 → 宿主自动截一张并登记成证据。
+				autoScreenshot := false
+				if strings.TrimSpace(arg.CheckKey) == "screenshots" && strings.TrimSpace(arg.State) == db.SrcCheckDone &&
+					arg.EvidenceNodeID <= 0 && t.srcDoc.RequireScreenshots && t.srcScreenshotter != nil {
+					shot, err := t.srcScreenshotter(ctx, SrcScreenshotRequest{
+						TaskID: t.taskID, AssetID: arg.AssetID, Note: "收尾项截图（自动）",
+					})
+					if err != nil {
+						saved = append(saved, checkResult{Index: i, Error: "自动截图失败：" + err.Error() + "；可改用 src_screenshot 手动重试"})
+						continue
+					}
+					arg.EvidenceNodeID = shot.NodeID
+					autoScreenshot = true
+				}
+				chk := db.SrcCheck{
+					TaskID: t.taskID, AssetID: arg.AssetID, CheckKey: arg.CheckKey,
+					State: arg.State, NACode: arg.NACode, Reason: arg.Reason,
+					Metrics: arg.Metrics, EvidenceNodeID: arg.EvidenceNodeID,
+					UpdatedBy: t.worker,
+				}
+				if err := srcmode.ValidateCheck(ctx, t.srcStore, t.taskID, t.srcDoc, chk); err != nil {
+					saved = append(saved, checkResult{Index: i, Error: err.Error(), AutoScreenshot: autoScreenshot})
+					continue
+				}
+				row, err := t.srcStore.UpsertSrcCheck(ctx, &chk)
+				if err != nil {
+					saved = append(saved, checkResult{Index: i, Error: "写收尾项失败：" + err.Error(), AutoScreenshot: autoScreenshot})
+					continue
+				}
+				entry := checkResult{Index: i, Check: row, AutoScreenshot: autoScreenshot}
+				if t.srcVerifier != nil && row.State == db.SrcCheckDone {
+					warns, obs := t.srcVerifier(ctx, t.taskID, row.AssetID, row.CheckKey, row.Metrics)
+					entry.ObservedMetrics = obs
+					entry.VerifyWarnings = warns
+				}
+				okCount++
+				saved = append(saved, entry)
+			}
+			out := map[string]any{"checks": saved, "ok": okCount, "failed": len(saved) - okCount}
+			if single && len(saved) == 1 {
+				if saved[0].Check != nil {
+					out["check"] = saved[0].Check
+				}
+				if saved[0].Error != "" {
+					out["error"] = saved[0].Error
+				}
+				out["auto_screenshot"] = saved[0].AutoScreenshot
+				if len(saved[0].ObservedMetrics) > 0 {
+					out["observed_metrics"] = saved[0].ObservedMetrics
+				}
+				if len(saved[0].VerifyWarnings) > 0 {
+					out["verify_warnings"] = saved[0].VerifyWarnings
+				}
 			}
 			rep, err := srcmode.CheckFinish(ctx, t.srcStore, t.taskID, t.srcDoc)
-			if err != nil {
-				return jsonResult(map[string]any{"check": saved})
-			}
-			out := map[string]any{
-				"check":         saved,
-				"gaps_total":    rep.GapsTotal,
-				"gaps_by_area":  rep.GapsByArea,
-				"checks_total":  rep.ChecksTotal,
-				"checks_done":   rep.ChecksDone,
-				"checks_by_key": rep.ChecksByKey,
-				"finishable":    rep.Finishable,
-			}
-			// P0-7：自报数字与录制流量对不上时当场告警（不阻断，只让人/模型看见）。
-			if t.srcVerifier != nil && saved.State == db.SrcCheckDone {
-				warns, obs := t.srcVerifier(ctx, t.taskID, saved.AssetID, saved.CheckKey, saved.Metrics)
-				if len(obs) > 0 {
-					out["observed_metrics"] = obs
-				}
-				if len(warns) > 0 {
-					out["verify_warnings"] = warns
-				}
+			if err == nil {
+				out["gaps_total"] = rep.GapsTotal
+				out["gaps_by_area"] = rep.GapsByArea
+				out["checks_total"] = rep.ChecksTotal
+				out["checks_done"] = rep.ChecksDone
+				out["checks_by_key"] = rep.ChecksByKey
+				out["finishable"] = rep.Finishable
 			}
 			return jsonResult(out)
 		})

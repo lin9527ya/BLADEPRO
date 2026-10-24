@@ -819,3 +819,17 @@ DELETE FROM assets a USING deletable d WHERE a.id=d.id`, id, expID)
 	}
 	return result, tx.Commit()
 }
+
+// SetTaskPriority updates one task's queue priority. Used when a task was created
+// without an explicit priority and the server derives one from its asset mix
+// before the task is admitted to the queue.
+func (d *DB) SetTaskPriority(taskID int64, priority int) error {
+	if priority < -1000 {
+		priority = -1000
+	}
+	if priority > 1000 {
+		priority = 1000
+	}
+	_, err := d.Exec(`UPDATE tasks SET priority=$2 WHERE id=$1 AND deleted_at IS NULL`, taskID, priority)
+	return err
+}

@@ -60,6 +60,9 @@ VALUES ($1,'subdomain',$2,'manual','asset tier test')`, taskID, domain); err != 
 	if !listed {
 		t.Fatalf("asset tier missing from InScopeSrcAssets: %+v", assets)
 	}
+	if score, err := d.Src().AutoTaskPriority(ctx, taskID); err != nil || score != 12 {
+		t.Fatalf("auto priority=%d err=%v want 12", score, err)
+	}
 
 	if found, err := d.Assets().SetAssetTier(assetID, ""); err != nil || !found {
 		t.Fatalf("clear tier: found=%v err=%v", found, err)

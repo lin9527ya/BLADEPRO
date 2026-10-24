@@ -351,6 +351,15 @@ func (s *Server) persistPreparedTask(ctx context.Context, prep *preparedTaskCrea
 		}
 		return nil, taskErr(500, err.Error())
 	}
+	// 单任务自动排队优先级：没有显式 priority 时，按范围内资产分级给一个
+	// 可解释的分数（与批量扇出同一套权重）。批量分片已在 shard.Priority 里算过。
+	if shard == nil && prep.req.Priority == 0 && prep.srcDoc.IsSrc() {
+		if score, err := s.m.PG().Src().AutoTaskPriority(ctx, parseIntDefault(t.ID)); err == nil && score != 0 {
+			if err := s.m.PG().SetTaskPriority(parseIntDefault(t.ID), score); err == nil {
+				t.Priority = score
+			}
+		}
+	}
 	s.applyTaskCoverageInheritance(ctx, t, prep)
 	return t, nil
 }

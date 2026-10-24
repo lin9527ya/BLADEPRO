@@ -39,6 +39,10 @@ export function RuntimeSection({ s }: { s: ReturnType<typeof useSettingsState> }
     saveLimits,
     saveWorkers,
     saveTokenBudget,
+    assetTokenBudget,
+    setAssetTokenBudget,
+    savingAssetBudget,
+    saveAssetTokenBudget,
   } = s;
 
   return (
@@ -70,6 +74,40 @@ export function RuntimeSection({ s }: { s: ReturnType<typeof useSettingsState> }
                 onChange={(e) => setTokenBudget(e.target.value)}
               />
               <Button type="button" onClick={saveTokenBudget} disabled={!loaded || savingBudget}>
+                保存
+              </Button>
+            </div>
+          </Field>
+        </SubBlock>
+
+        <SubBlock title="资产 Token 预算（SRC）" icon={<GaugeIcon className="text-muted-foreground size-4" />}>
+          <Field
+            label="单资产预算（token 数）"
+            htmlFor="asset-token-budget"
+            hint={
+              <>
+                仅 SRC 任务：按意图的<b>主资产</b>归因用量（多资产意图只记第一个资产）。单个资产累计
+                <b>输入+输出</b>达到上限后，新意图会被拒绝，未完成的覆盖格自动转 budget_stop，预算转向其他资产；
+                任务本身不会因此收尾。建任务时快照，运行中改全局设置不影响已建任务。留空或 <b>0</b> = 关闭。
+                <br />
+                {Number(assetTokenBudget) > 0
+                  ? "已配置 · 单资产到量自动收口并转向"
+                  : "未配置 · 资产不设 token 上限"}
+              </>
+            }
+          >
+            <div className="flex items-center gap-2">
+              <Input
+                id="asset-token-budget"
+                inputMode="numeric"
+                autoComplete="off"
+                className="max-w-xl"
+                placeholder="例如 500000（0 = 关闭）"
+                value={assetTokenBudget}
+                disabled={!loaded || savingAssetBudget}
+                onChange={(e) => setAssetTokenBudget(e.target.value)}
+              />
+              <Button type="button" onClick={saveAssetTokenBudget} disabled={!loaded || savingAssetBudget}>
                 保存
               </Button>
             </div>

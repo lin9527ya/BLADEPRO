@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+### 新增：资产级 token 预算（P2）
+
+- `llm_usage` 增加 `asset_id`：按意图 payload 的**主资产**归因（多资产意图只记第一个，
+  避免同一笔用量重复计入多个资产）。planner/无资产调用记 0。
+- `mode_doc.asset_token_budget`（0 = 不限）+ 全局默认 `src_asset_token_budget`：
+  建任务时快照，运行中改全局不影响已建任务。
+- 达到上限后：
+  - `add_intent` 拒绝该资产的新意图，提示转向其他资产或提高预算；
+  - 引擎协调器每 15s 扫描，把该资产仍未完成的格自动标为 `budget_stop`
+    （已有终态不改写，worker 后续写回的新结论会自然覆盖）；
+  - 向 planner 投递一次提示并在时间线留痕。任务本身不因此收尾。
+- `graph_overview.src` 与 `src_state` 暴露 `asset_token_budget` / `asset_token_usage`
+  （榜单最多 20 个资产）；SRC 页显示每资产用量与预算，系统设置与建任务弹窗可配置。
+- 回归：按资产归因查询、意图准入拒绝、引擎自动收口（保留已有结论、重复扫描不重复收口）。
+
 ### 新增：跨任务覆盖继承（P2）
 
 - 建任务时可勾选「继承近期覆盖」：经 `POST /api/tasks` 的 `inherit_coverage`（或

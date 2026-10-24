@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -39,6 +40,13 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 	assets, err := t.srcStore.InScopeSrcAssets(ctx, t.taskID)
 	if err != nil {
 		return nil, err
+	}
+	var assetUsage []db.AssetTokenUsage
+	if t.srcDoc.AssetTokenBudget > 0 {
+		assetUsage, _ = t.srcStore.AssetTokenUsageByTask(ctx, t.taskID)
+		if len(assetUsage) > 50 {
+			assetUsage = assetUsage[:50]
+		}
 	}
 	// 一次遍历建索引：大任务下把 O(资产 × 项 × 全量 cells) 的嵌套扫描降成 O(cells)。
 	// 键是 assetID|area|item；同一格理论上只有一行（唯一约束），这里保留第一条也更稳。
@@ -144,16 +152,17 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 	}
 	leases, _ := t.srcStore.ListActiveSrcLeases(ctx, t.taskID)
 	return map[string]any{
-		"mode":         srcmode.ModeSrc,
-		"summary":      rep,
-		"gaps":         rep.Gaps,
-		"leases":       leases,
-		"gaps_total":   rep.GapsTotal,
-		"gaps_by_area": rep.GapsByArea,
-		"checks":       checkRows,
-		"cells":        cells,
-		"assets":       matrix,
-		"finishable":   rep.Finishable,
+		"mode":              srcmode.ModeSrc,
+		"summary":           rep,
+		"gaps":              rep.Gaps,
+		"leases":            leases,
+		"gaps_total":        rep.GapsTotal,
+		"gaps_by_area":      rep.GapsByArea,
+		"checks":            checkRows,
+		"cells":             cells,
+		"assets":            matrix,
+		"asset_token_usage": assetUsage,
+		"finishable":        rep.Finishable,
 		"doc": map[string]any{
 			"allow_budget_stop":     t.srcDoc.AllowBudgetStop,
 			"max_attempts_per_cell": t.srcDoc.MaxAttemptsPerCell,
@@ -164,6 +173,7 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 			"require_screenshots":   t.srcDoc.RequireScreenshots,
 			"require_retest":        t.srcDoc.RequireRetest,
 			"area_roi":              t.srcDoc.AreaROI,
+			"asset_token_budget":    t.srcDoc.AssetTokenBudget,
 			"checks_total":          rep.ChecksTotal,
 			"checks_done":           rep.ChecksDone,
 		},
@@ -215,7 +225,7 @@ func (t *ToolSet) srcOverviewBlock(ctx context.Context) (map[string]any, error) 
 	if len(topLeases) > 20 {
 		topLeases = topLeases[:20]
 	}
-	return map[string]any{
+	out := map[string]any{
 		"gaps_total":            rep.GapsTotal,
 		"leases":                topLeases,
 		"leased_total":          len(leases),
@@ -242,7 +252,21 @@ func (t *ToolSet) srcOverviewBlock(ctx context.Context) (map[string]any, error) 
 		"max_attempts_per_cell": t.srcDoc.MaxAttemptsPerCell,
 		"note": "SRC 模式：本轮只派能点亮空格、或把 tested_clear 变 tested_found、或做实收尾项的意图；" +
 			"gaps_total>0 时不要 prove_goal。focus_asset 是当前最该清零的资产。",
-	}, nil
+	}
+	// 资产级 token 预算：只给预算开启的任务附上用量（最多 20 个资产，按用量降序），
+	// 让 planner 在派意图前就能看到谁快/已经爆预算。
+	if t.srcDoc.AssetTokenBudget > 0 {
+		usage, err := t.srcStore.AssetTokenUsageByTask(ctx, t.taskID)
+		if err == nil {
+			sort.SliceStable(usage, func(i, j int) bool { return usage[i].Tokens > usage[j].Tokens })
+			if len(usage) > 20 {
+				usage = usage[:20]
+			}
+			out["asset_token_budget"] = t.srcDoc.AssetTokenBudget
+			out["asset_token_usage"] = usage
+		}
+	}
+	return out, nil
 }
 
 // srcState 让 planner/main 读完整覆盖状态（矩阵 + 缺口 + 终态格）。

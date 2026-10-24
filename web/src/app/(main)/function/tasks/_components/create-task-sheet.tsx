@@ -153,6 +153,8 @@ export function CreateTaskSheet({
   const [srcProgramID, setSrcProgramID] = React.useState<number | undefined>(undefined);
   // P2 跨任务覆盖继承：把近期同项目/同企业的 tested_clear 与收尾数字带进新任务。
   const [inheritCoverage, setInheritCoverage] = React.useState(false);
+  // P2 资产级 token 预算（0 = 跟随系统全局默认）。
+  const [assetTokenBudget, setAssetTokenBudget] = React.useState("0");
   const [description, setDescription] = React.useState("");
   const [goal, setGoal] = React.useState("");
   const [selectedTemplateID, setSelectedTemplateID] = React.useState<number | null>(null);
@@ -276,6 +278,7 @@ export function CreateTaskSheet({
         mode,
         srcProgramID,
         inheritCoverage: mode === "src" ? inheritCoverage : false,
+        modeDoc: mode === "src" ? { asset_token_budget: Math.max(0, Number(assetTokenBudget) || 0) } : undefined,
         interceptRules: interceptRules
           .map((r) => ({ ...r, pattern: r.pattern.trim() }))
           .filter((r) => r.pattern !== ""),
@@ -297,6 +300,7 @@ export function CreateTaskSheet({
       setMode("");
       setSrcProgramID(undefined);
       setInheritCoverage(false);
+      setAssetTokenBudget("0");
       setSelectedTemplateID(null);
       setSourceTaskIDs([]);
       setCompanyIDs([]);
@@ -433,6 +437,24 @@ export function CreateTaskSheet({
                 </Select>
                 <FieldDescription>
                   绑定项目后，项目的禁用手段/写操作、限速与必做面会编译进本任务；项目规则改动不影响已建任务。
+                </FieldDescription>
+              </Field>
+            )}
+            {mode === "src" && (
+              <Field>
+                <FieldLabel htmlFor="asset-token-budget">资产 Token 预算（可选）</FieldLabel>
+                <Input
+                  id="asset-token-budget"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  className="max-w-xs"
+                  placeholder="0 = 跟随系统默认"
+                  value={assetTokenBudget}
+                  onChange={(e) => setAssetTokenBudget(e.target.value)}
+                />
+                <FieldDescription>
+                  单个资产累计输入+输出 token 的上限（0 = 跟随系统设置的全局默认）。达到上限后不再向该资产派意图，
+                  未完成的格自动转 budget_stop，预算转向其他资产。运行中修改全局设置不影响已建任务。
                 </FieldDescription>
               </Field>
             )}

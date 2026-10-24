@@ -117,6 +117,13 @@ function areaTitle(area: string): string {
   return AREA_TITLES[area] ?? area;
 }
 
+// 紧凑 token 数（与任务总览一致）。
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1) + "M";
+  if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k";
+  return String(n);
+}
+
 const CELL_STATES: SrcCell["state"][] = ["tested_found", "tested_clear", "na", "budget_stop"];
 
 const CELL_STATE_LABELS: Record<SrcCell["state"], string> = {
@@ -262,6 +269,12 @@ export function SrcTab({ taskId }: { taskId: string }) {
   const checks = data?.checks ?? [];
   const gapsByArea = summary?.gaps_by_area ?? data?.gaps_by_area ?? {};
   const finishable = data?.finishable ?? summary?.finishable ?? false;
+  const assetBudget = data?.doc?.asset_token_budget ?? 0;
+  const assetUsage = React.useMemo(() => {
+    const out = new Map<number, number>();
+    for (const row of data?.asset_token_usage ?? []) out.set(row.asset_id, row.tokens);
+    return out;
+  }, [data?.asset_token_usage]);
 
   const openMark = (asset: SrcMatrixAsset, cell: SrcMatrixCell) => {
     setTarget({ asset, cell });
@@ -441,6 +454,11 @@ export function SrcTab({ taskId }: { taskId: string }) {
               {finishable ? "可收尾" : "缺口未清零"}
             </Badge>
           ) : null}
+          {enabled && assetBudget > 0 ? (
+            <Badge variant="outline" title="单资产 token 预算；到量后该资产停止派意图并自动收口未完成格">
+              资产预算 {fmtTokens(assetBudget)} / 资产
+            </Badge>
+          ) : null}
           {enabled && ((summary?.inherited_cells ?? 0) > 0 || (summary?.inherited_checks ?? 0) > 0) ? (
             <Badge variant="outline" title="继承自历史任务；重测会覆盖并清除继承标记">
               继承 {summary?.inherited_cells ?? 0} 格 / {summary?.inherited_checks ?? 0} 项
@@ -576,6 +594,16 @@ export function SrcTab({ taskId }: { taskId: string }) {
                       <span className="text-muted-foreground text-xs">
                         必做 {(asset.required_areas ?? []).length} 面
                       </span>
+                      {assetBudget > 0 ? (
+                        <span
+                          className={`text-xs tabular-nums ${
+                            (assetUsage.get(asset.asset_id) ?? 0) >= assetBudget ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"
+                          }`}
+                          title="该资产已归因的 token / 预算"
+                        >
+                          token {fmtTokens(assetUsage.get(asset.asset_id) ?? 0)}/{fmtTokens(assetBudget)}
+                        </span>
+                      ) : null}
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {(asset.cells ?? []).map((cell) => (

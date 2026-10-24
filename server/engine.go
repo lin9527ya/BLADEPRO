@@ -150,13 +150,14 @@ type Engine struct {
 	plannerRound sync.Map // taskID -> int, planner round counter (for UI round separators)
 
 	// 任务级超时(见 docs/任务级超时与收尾设计.md):
-	settling     sync.Map // taskID -> bool, 任务已进入收尾时序(停止派/领新意图)
-	deadline     sync.Map // taskID -> int64 unix, 绝对截止时刻(首次运行时盖章;0/缺省=不限)
-	stamped      sync.Map // taskID -> bool, first_run_at 是否已盖章(本进程内只盖一次)
-	inflight     sync.Map // taskID -> *int64, 在跑的 planner.Plan + worker.Execute 计数(用于 drain)
-	coordStarted sync.Map // taskID -> bool, deadline 协调器是否已启动(Run/reload 去重)
-	budgetStage  sync.Map // taskID -> string, token 预算提示已投递到的最高档(每档一次)
-	execWatch    sync.Map // intentID -> bool, P13 执行观察者已注册(去重;执行终态→意图退回 open)
+	settling        sync.Map // taskID -> bool, 任务已进入收尾时序(停止派/领新意图)
+	deadline        sync.Map // taskID -> int64 unix, 绝对截止时刻(首次运行时盖章;0/缺省=不限)
+	stamped         sync.Map // taskID -> bool, first_run_at 是否已盖章(本进程内只盖一次)
+	inflight        sync.Map // taskID -> *int64, 在跑的 planner.Plan + worker.Execute 计数(用于 drain)
+	coordStarted    sync.Map // taskID -> bool, deadline 协调器是否已启动(Run/reload 去重)
+	budgetStage     sync.Map // taskID -> string, token 预算提示已投递到的最高档(每档一次)
+	assetBudgetDone sync.Map // "taskID|assetID" -> bool, 资产预算耗尽收口已执行(每资产一次)
+	execWatch       sync.Map // intentID -> bool, P13 执行观察者已注册(去重;执行终态→意图退回 open)
 
 	// resolve returns a task's dedicated planner/worker (wired by the server as the
 	// authoritative task-router). nil,nil means this task is deliberately unavailable
@@ -1086,8 +1087,12 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	}
 	// per-work child context so the planner's kill_work can stop just this work.
 	workCtx, workCancel := context.WithCancelCause(ectx)
-	// 成本归因：这次 run 的所有 LLM 调用都记到该意图（llm_usage.intent_id）。
+	// 成本归因：这次 run 的所有 LLM 调用都记到该意图（llm_usage.intent_id），
+	// 并归到它的主资产（intent payload 的第一个 asset_ids）用于资产级 token 预算。
 	workCtx = llmrec.WithIntent(workCtx, intent.ID)
+	if ids := intent.AssetIDs(); len(ids) > 0 {
+		workCtx = llmrec.WithAsset(workCtx, ids[0])
+	}
 	e.registerWork(intent.ID, workCancel)
 	// wrap the guard hooks so steer_work can inject a mid-run course-correction
 	// for THIS intent (drained before the worker's next tool call).

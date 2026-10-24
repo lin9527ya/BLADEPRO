@@ -500,6 +500,18 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// 资产级 token 预算（P2）：mode_doc 显式给了就用自己的；没给（0）则继承全局
+	// setting `src_asset_token_budget`，创建时快照进 mode_doc，运行中改全局不影响。
+	if srcDoc.IsSrc() && srcDoc.AssetTokenBudget <= 0 {
+		if v := s.srcAssetTokenBudget(); v > 0 {
+			srcDoc.AssetTokenBudget = v
+			modeDoc, err = json.Marshal(srcDoc)
+			if err != nil {
+				writeErr(w, 500, err.Error())
+				return
+			}
+		}
+	}
 	// 跨任务覆盖继承（P2）：校验来源后再建任务，避免建出一条永远无法执行的孤儿任务。
 	inheritRequested := (req.InheritCoverage != nil && *req.InheritCoverage) ||
 		(req.InheritCoverageFrom != nil && *req.InheritCoverageFrom > 0)

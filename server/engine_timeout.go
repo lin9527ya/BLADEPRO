@@ -172,8 +172,9 @@ func (e *Engine) startDeadlineCoordinator(ctx context.Context, t *Task) {
 // deadlineCoordinator waits until the task's absolute deadline, then runs the settle
 // sequence. Absolute wall-clock: it keeps counting through pauses.
 func (e *Engine) deadlineCoordinator(ctx context.Context, t *Task) {
-	var lastLeaseSweep time.Time // 零值 → 首轮立即扫一次，之后按 leaseSweepInterval 节流
-	var lastStallCheck time.Time // 同上（P20 策略停摆判定）
+	var lastLeaseSweep time.Time       // 零值 → 首轮立即扫一次，之后按 leaseSweepInterval 节流
+	var lastStallCheck time.Time       // 同上（P20 策略停摆判定）
+	var lastAssetBudgetCheck time.Time // 资产级 token 预算扫描节流
 	for {
 		select {
 		case <-ctx.Done():
@@ -203,6 +204,12 @@ func (e *Engine) deadlineCoordinator(ctx context.Context, t *Task) {
 					return
 				}
 			}
+		}
+		// 资产级 token 预算（P2）：某资产用完预算后自动把未完成格转 budget_stop，
+		// 并提示 planner 把预算转向其他资产；任务本身不因此收尾。
+		if time.Since(lastAssetBudgetCheck) >= assetBudgetSweepInterval && !e.isSettling(t.ID) {
+			lastAssetBudgetCheck = time.Now()
+			e.checkAssetTokenBudgets(ctx, t)
 		}
 		// P20 探索策略停摆：策略内已无可行方向（窗口内被拒达阈值、期间没有任何成功
 		// 创建的意图、也没有在跑的活）——再唤醒 planner 只会继续烧 token，主动收尾。

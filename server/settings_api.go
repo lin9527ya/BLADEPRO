@@ -75,10 +75,13 @@ func (s *Server) settingsPayload() map[string]any {
 		concLimit = defaultConcurrencyLimit // 关闭时也回显一个合理默认值给 UI
 	}
 	return map[string]any{
-		"traffic_capture":          s.m.TrafficEnabled(),
-		"agent_traffic_binding":    s.m.pg.GetBool(settingAgentTrafficBinding, false),
-		"agent_auto_retest":        s.m.pg.GetBool(settingAutoRetest, false),
-		"task_token_budget":        s.taskTokenBudget(),
+		"traffic_capture":       s.m.TrafficEnabled(),
+		"agent_traffic_binding": s.m.pg.GetBool(settingAgentTrafficBinding, false),
+		"agent_auto_retest":     s.m.pg.GetBool(settingAutoRetest, false),
+		"task_token_budget":     s.taskTokenBudget(),
+		// 资产级 token 预算（默认 0=关）：SRC 任务里单资产用量达上限后停止派意图并
+		// 把未完成格转 budget_stop；建任务时快照进 mode_doc。
+		"src_asset_token_budget":   s.srcAssetTokenBudget(),
 		"llm_record":               s.m.LLMRecordEnabled(),
 		"web_search_enabled":       on,
 		"web_search_backend":       backend,
@@ -196,6 +199,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		AgentTrafficBinding *bool  `json:"agent_traffic_binding"`
 		AgentAutoRetest     *bool  `json:"agent_auto_retest"`
 		TaskTokenBudget     *int64 `json:"task_token_budget"`
+		SrcAssetTokenBudget *int64 `json:"src_asset_token_budget"`
 		LLMRecord           *bool  `json:"llm_record"` // LLM 录制开关（默认关）；即时生效，无需重建 agent
 		// Web search. WebSearchEnabled/Backend toggle the tool + backend; BraveKey/TavilyKey
 		// are optional — omit (null) to leave a stored key untouched, send "" to clear.
@@ -555,6 +559,17 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AgentAutoRetest != nil {
 		if err := s.m.pg.SetBool(settingAutoRetest, *req.AgentAutoRetest); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.SrcAssetTokenBudget != nil {
+		v := *req.SrcAssetTokenBudget
+		if v < 0 || v > maxAssetTokenBudgetValue {
+			writeErr(w, 400, fmt.Sprintf("资产 token 预算必须是 0–%d（0 = 关闭）", maxAssetTokenBudgetValue))
+			return
+		}
+		if err := s.m.pg.SetSetting(settingAssetTokenBudget, strconv.FormatInt(v, 10)); err != nil {
 			writeErr(w, 500, err.Error())
 			return
 		}

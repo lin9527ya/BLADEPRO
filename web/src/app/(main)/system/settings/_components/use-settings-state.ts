@@ -73,6 +73,9 @@ export function useSettingsState() {
   // 任务级 token 预算(0 = 关闭)。
   const [tokenBudget, setTokenBudget] = React.useState("0");
   const [savingBudget, setSavingBudget] = React.useState(false);
+  // 资产级 token 预算（SRC，0 = 关闭）。
+  const [assetTokenBudget, setAssetTokenBudget] = React.useState("0");
+  const [savingAssetBudget, setSavingAssetBudget] = React.useState(false);
   // P24 执行资源限额与外部 MCP 守卫（0 = 不限；保存即对之后提交的执行/调用生效）。
   const [execCPU, setExecCPU] = React.useState("1800");
   const [execMem, setExecMem] = React.useState("0");
@@ -142,6 +145,7 @@ export function useSettingsState() {
     setPyInterp(s.python_interpreter ?? "");
     setWorkers(String(s.workers ?? 3));
     setTokenBudget(String(s.task_token_budget ?? 0));
+    setAssetTokenBudget(String(s.src_asset_token_budget ?? 0));
     setInjectPlanner(s.constraints_inject_planner !== false);
     setInjectWorker(s.constraints_inject_worker !== false);
     setNoaCompaction(!!s.noa_compaction);
@@ -340,6 +344,23 @@ export function useSettingsState() {
       })
       .catch((e) => toast.error("保存失败：" + (e as Error).message))
       .finally(() => setSavingBudget(false));
+  };
+
+  const saveAssetTokenBudget = () => {
+    const n = Number(assetTokenBudget.trim() === "" ? "0" : assetTokenBudget);
+    if (!Number.isInteger(n) || n < 0) {
+      toast.error("资产 token 预算必须是不小于 0 的整数（0 = 关闭）");
+      return;
+    }
+    setSavingAssetBudget(true);
+    api
+      .setSettings({ src_asset_token_budget: n })
+      .then((s) => {
+        apply(s);
+        toast.success(n > 0 ? `已保存资产 token 预算（${n}）` : "已关闭资产 token 预算");
+      })
+      .catch((e) => toast.error("保存失败：" + (e as Error).message))
+      .finally(() => setSavingAssetBudget(false));
   };
 
   const savePython = () => {
@@ -686,6 +707,10 @@ export function useSettingsState() {
     setTokenBudget,
     savingBudget,
     setSavingBudget,
+    assetTokenBudget,
+    setAssetTokenBudget,
+    savingAssetBudget,
+    setSavingAssetBudget,
     execCPU,
     setExecCPU,
     execMem,
@@ -783,6 +808,7 @@ export function useSettingsState() {
     saveLimits,
     saveWorkers,
     saveTokenBudget,
+    saveAssetTokenBudget,
     savePython,
     detectPython,
     toggleTraffic,

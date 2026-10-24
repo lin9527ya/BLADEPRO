@@ -25,6 +25,10 @@ type LLMUsage struct {
 	CacheWrite    int    `json:"cache_write"`
 	// IntentID 是本次调用归属的意图 id（0 = planner/压缩/非意图调用）。
 	IntentID int64 `json:"intent_id,omitempty"`
+	// AssetID 是本次调用归属的**主资产** id（意图 payload 的第一个 asset_ids；
+	// 0 = planner/无资产/非意图调用）。多资产意图只记主资产，用于资产级预算的
+	// 近似归因，避免同一笔用量被重复计入多个资产。
+	AssetID int64 `json:"asset_id,omitempty"`
 	// CostUSD 按调用时 profile 的单价折算（USD）；单价未配置时记 0。
 	CostUSD float64 `json:"cost_usd"`
 	Status  string  `json:"status"` // ok | error
@@ -38,6 +42,7 @@ CREATE TABLE IF NOT EXISTS llm_usage (
     exploration_id BIGINT,
     worker         TEXT,
     intent_id      BIGINT NOT NULL DEFAULT 0,
+    asset_id       BIGINT NOT NULL DEFAULT 0,
     model          TEXT,
     profile_name   TEXT,
     latency_ms     INTEGER,
@@ -51,9 +56,11 @@ CREATE TABLE IF NOT EXISTS llm_usage (
 );
 -- 旧库补列（EnsureLLMUsageTable 每次启动幂等执行）。
 ALTER TABLE llm_usage ADD COLUMN IF NOT EXISTS intent_id BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE llm_usage ADD COLUMN IF NOT EXISTS asset_id BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE llm_usage ADD COLUMN IF NOT EXISTS cost_usd  DOUBLE PRECISION NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_llm_usage_task  ON llm_usage(task_id);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_intent ON llm_usage(task_id, intent_id);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_asset  ON llm_usage(task_id, asset_id);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_model ON llm_usage(task_id, model);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_exp   ON llm_usage(exploration_id);
 -- 数据保留按 ts 清理。上面三个索引前导列都不是时间，全表扫；本表是 always-on
@@ -101,9 +108,9 @@ func (d *DB) InsertLLMUsage(u *LLMUsage) error {
 		expID = u.ExplorationID
 	}
 	_, err := d.Exec(`
-INSERT INTO llm_usage(task_id, exploration_id, worker, intent_id, model, profile_name, latency_ms, input_tokens, output_tokens, cache_read, cache_write, cost_usd, status)
-VALUES (NULLIF($1,''),$2,NULLIF($3,''),$4,NULLIF($5,''),NULLIF($6,''),$7,$8,$9,$10,$11,$12,$13)`,
-		u.TaskID, expID, u.Worker, u.IntentID, u.Model, u.ProfileName,
+INSERT INTO llm_usage(task_id, exploration_id, worker, intent_id, asset_id, model, profile_name, latency_ms, input_tokens, output_tokens, cache_read, cache_write, cost_usd, status)
+VALUES (NULLIF($1,''),$2,NULLIF($3,''),$4,$5,NULLIF($6,''),NULLIF($7,''),$8,$9,$10,$11,$12,$13,$14)`,
+		u.TaskID, expID, u.Worker, u.IntentID, u.AssetID, u.Model, u.ProfileName,
 		u.LatencyMs, u.InputTokens, u.OutputTokens, u.CacheRead, u.CacheWrite, u.CostUSD, u.Status)
 	return err
 }
@@ -372,4 +379,71 @@ func ParseExpID(s string) int64 {
 		return 0
 	}
 	return n
+}
+
+// AssetTokenUsage is one asset's token spend inside a task.
+type AssetTokenUsage struct {
+	AssetID int64 `json:"asset_id"`
+	Tokens  int64 `json:"tokens"`
+}
+
+// TokenUsedByAsset sums input+output tokens attributed to one asset in a task.
+// Attribution is the intent's primary asset (see LLMUsage.AssetID); planner /
+// non-intent calls carry asset_id=0 and are not charged to any asset.
+func (d *DB) TokenUsedByAsset(taskID string, assetID int64) (int64, error) {
+	if taskID == "" || assetID <= 0 {
+		return 0, nil
+	}
+	var used int64
+	err := d.QueryRow(`SELECT COALESCE(SUM(input_tokens+output_tokens),0)
+FROM llm_usage WHERE task_id=$1 AND asset_id=$2`, taskID, assetID).Scan(&used)
+	return used, err
+}
+
+// AssetTokenUsageByTask returns per-asset token spend for one task.
+func (d *DB) AssetTokenUsageByTask(taskID string) ([]AssetTokenUsage, error) {
+	if taskID == "" {
+		return []AssetTokenUsage{}, nil
+	}
+	rows, err := d.Query(`SELECT asset_id, COALESCE(SUM(input_tokens+output_tokens),0)
+FROM llm_usage WHERE task_id=$1 AND asset_id > 0
+GROUP BY asset_id ORDER BY asset_id`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AssetTokenUsage{}
+	for rows.Next() {
+		var u AssetTokenUsage
+		if err := rows.Scan(&u.AssetID, &u.Tokens); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// AssetsOverTokenBudget returns the assets whose token spend reached budget.
+// Only assets with attributed spend are considered (len=0 when budget<=0).
+func (d *DB) AssetsOverTokenBudget(taskID string, budget int64) ([]AssetTokenUsage, error) {
+	if taskID == "" || budget <= 0 {
+		return []AssetTokenUsage{}, nil
+	}
+	rows, err := d.Query(`SELECT asset_id, COALESCE(SUM(input_tokens+output_tokens),0) AS used
+FROM llm_usage WHERE task_id=$1 AND asset_id > 0
+GROUP BY asset_id HAVING COALESCE(SUM(input_tokens+output_tokens),0) >= $2
+ORDER BY used DESC, asset_id`, taskID, budget)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AssetTokenUsage{}
+	for rows.Next() {
+		var u AssetTokenUsage
+		if err := rows.Scan(&u.AssetID, &u.Tokens); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
 }

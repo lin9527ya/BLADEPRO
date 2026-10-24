@@ -80,6 +80,28 @@ func IntentFrom(ctx context.Context) int64 {
 	return id
 }
 
+type assetContextKey struct{}
+
+// WithAsset attaches the primary asset id of the intent this call belongs to, so
+// token spend can be attributed per asset for asset-level budgets. An intent that
+// targets several assets contributes to its first asset only (approximate by
+// design; recording it against every asset would double-count spend).
+func WithAsset(ctx context.Context, assetID int64) context.Context {
+	if assetID <= 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, assetContextKey{}, assetID)
+}
+
+// AssetFrom returns the primary asset id attached by the engine (0 = none).
+func AssetFrom(ctx context.Context) int64 {
+	if ctx == nil {
+		return 0
+	}
+	id, _ := ctx.Value(assetContextKey{}).(int64)
+	return id
+}
+
 // Prices is one profile's USD unit prices per 1M tokens. Zero values = unknown
 // (cost is recorded as 0 rather than guessed).
 type Prices struct {
@@ -220,7 +242,7 @@ func (r *Recorder) Stream(ctx context.Context, req llm.CompletionRequest) iter.S
 				status = "error"
 			}
 			// Lightweight metering row — always written.
-			r.recordUsage(taskID, expID, worker, IntentFrom(ctx), usage, int(time.Since(start).Milliseconds()), status)
+			r.recordUsage(taskID, expID, worker, IntentFrom(ctx), AssetFrom(ctx), usage, int(time.Since(start).Milliseconds()), status)
 			// Heavy trace row — only when body recording is on.
 			if recordBodies {
 				r.record(req, session, taskID, worker, reqBody, capt, start, textBuf.String(), thinkingBuf.String(), usage, stopReason, err)
@@ -298,7 +320,7 @@ func (r *Recorder) Complete(ctx context.Context, req llm.CompletionRequest) (llm
 	if err != nil {
 		status = "error"
 	}
-	r.recordUsage(taskID, expID, worker, IntentFrom(ctx), usage, int(time.Since(start).Milliseconds()), status)
+	r.recordUsage(taskID, expID, worker, IntentFrom(ctx), AssetFrom(ctx), usage, int(time.Since(start).Milliseconds()), status)
 	if recordBodies {
 		r.record(req, session, taskID, worker, reqBody, capt, start, msg.Text(), thinkingText(msg), usage, stopReason, err)
 	}
@@ -317,7 +339,7 @@ func thinkingText(msg llm.Message) string {
 
 // recordUsage appends one lightweight metering row to llm_usage (no bodies). Skips
 // zero-token calls with no model, which carry nothing worth metering.
-func (r *Recorder) recordUsage(taskID string, expID int64, worker string, intentID int64, usage llm.Usage, latencyMs int, status string) {
+func (r *Recorder) recordUsage(taskID string, expID int64, worker string, intentID, assetID int64, usage llm.Usage, latencyMs int, status string) {
 	if r.pg == nil {
 		return
 	}
@@ -337,6 +359,7 @@ func (r *Recorder) recordUsage(taskID string, expID int64, worker string, intent
 		CacheRead:     usage.CacheReadTokens,
 		CacheWrite:    usage.CacheWriteTokens,
 		IntentID:      intentID,
+		AssetID:       assetID,
 		CostUSD:       r.prices.Cost(usage),
 		Status:        status,
 	})

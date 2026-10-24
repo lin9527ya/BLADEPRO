@@ -87,6 +87,21 @@ type Node struct {
 	Inherited     bool      `json:"inherited,omitempty"`
 }
 
+// AssetIDs returns the intent/fact payload's asset_ids (nil on absent/malformed).
+// It is a convenience read: the payload remains the source of truth.
+func (n *Node) AssetIDs() []int64 {
+	if n == nil {
+		return nil
+	}
+	var p struct {
+		AssetIDs []int64 `json:"asset_ids"`
+	}
+	if err := json.Unmarshal(n.Payload, &p); err != nil {
+		return nil
+	}
+	return p.AssetIDs
+}
+
 // Activity is one worker execution step (= old task_activity).
 type Activity struct {
 	ID        int64           `json:"id"`

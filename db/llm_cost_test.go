@@ -54,3 +54,53 @@ func TestLLMUsageCostAndIntentAggregation(t *testing.T) {
 		t.Fatalf("calls=%d want 3", models[0].Calls)
 	}
 }
+
+// TestAssetTokenUsage pins per-asset attribution queries used by the asset budget:
+// only rows with asset_id > 0 count, and the "over budget" query uses input+output.
+func TestAssetTokenUsage(t *testing.T) {
+	d, err := Open(testDSN(t))
+	if err != nil {
+		t.Fatalf("open test database: %v", err)
+	}
+	if err := d.EnsureLLMUsageTable(); err != nil {
+		t.Fatalf("ensure llm_usage table: %v", err)
+	}
+	const taskID = "99003-asset-budget-test"
+	const assetA, assetB = int64(880011), int64(880012)
+	t.Cleanup(func() {
+		_, _ = d.Exec(`DELETE FROM llm_usage WHERE task_id=$1`, taskID)
+		d.Close()
+	})
+	rows := []LLMUsage{
+		{TaskID: taskID, AssetID: assetA, Worker: "worker", InputTokens: 700, OutputTokens: 100, Status: "ok"},
+		{TaskID: taskID, AssetID: assetA, Worker: "worker", InputTokens: 300, OutputTokens: 50, Status: "ok"},
+		{TaskID: taskID, AssetID: assetB, Worker: "worker", InputTokens: 100, OutputTokens: 20, Status: "ok"},
+		{TaskID: taskID, Worker: "planner", InputTokens: 9999, OutputTokens: 9999, Status: "ok"}, // no asset → not charged
+	}
+	for i := range rows {
+		if err := d.InsertLLMUsage(&rows[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	usedA, err := d.TokenUsedByAsset(taskID, assetA)
+	if err != nil || usedA != 1150 {
+		t.Fatalf("asset A used=%d err=%v want 1150", usedA, err)
+	}
+	all, err := d.AssetTokenUsageByTask(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 || all[0].AssetID != assetA || all[0].Tokens != 1150 || all[1].AssetID != assetB || all[1].Tokens != 120 {
+		t.Fatalf("asset usage=%+v", all)
+	}
+	over, err := d.AssetsOverTokenBudget(taskID, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(over) != 1 || over[0].AssetID != assetA || over[0].Tokens != 1150 {
+		t.Fatalf("over budget=%+v want only asset A", over)
+	}
+	if none, err := d.AssetsOverTokenBudget(taskID, 0); err != nil || len(none) != 0 {
+		t.Fatalf("budget=0 should be off: %+v %v", none, err)
+	}
+}

@@ -1483,6 +1483,25 @@ func (t *ToolSet) checkIntentAssetCap(anchors []int64) error {
 	return nil
 }
 
+// checkAssetTokenBudget 落实 mode_doc.asset_token_budget：资产用量达到上限后不再
+// 接受新意图。统计失败时放行——一个瞬时查询错误不该把 planner 卡死；引擎侧仍会
+// 按同一数据做 budget_stop 收口。
+func (t *ToolSet) checkAssetTokenBudget(ctx context.Context, anchors []int64) error {
+	if !t.srcMode || t.srcStore == nil || t.taskID <= 0 || t.srcDoc.AssetTokenBudget <= 0 {
+		return nil
+	}
+	for _, aid := range anchors {
+		used, err := t.srcStore.TokenUsedByAsset(ctx, t.taskID, aid)
+		if err != nil || used < t.srcDoc.AssetTokenBudget {
+			continue
+		}
+		return fmt.Errorf("资产 %d 的 token 预算已用尽（%d/%d，asset_token_budget）：不要再向该资产派意图；"+
+			"把未完成的格用 src_mark_cell 标 budget_stop，预算让给其他资产；确需继续请提高预算或人工放行",
+			aid, used, t.srcDoc.AssetTokenBudget)
+	}
+	return nil
+}
+
 func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, error) {
 	if strings.TrimSpace(it.Summary) == "" {
 		return 0, "", fmt.Errorf("summary 不能为空")
@@ -1565,6 +1584,9 @@ func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, er
 	// 这里落成硬门：同一资产吃满预算后，必须先把已派意图收口或换资产。
 	if t.srcMode && t.srcDoc.MaxIntentsPerAsset > 0 && t.as != nil && len(anchors) > 0 {
 		if err := t.checkIntentAssetCap(anchors); err != nil {
+			return 0, "", err
+		}
+		if err := t.checkAssetTokenBudget(context.Background(), anchors); err != nil {
 			return 0, "", err
 		}
 	}

@@ -61,6 +61,7 @@ func TestResolveRejects(t *testing.T) {
 		{"unknown hard item", "src", `{"hard_items":["paths/nope"]}`, "没有"},
 		{"too many attempts", "src", `{"max_attempts_per_cell":99}`, "max_attempts_per_cell"},
 		{"too many intents", "src", `{"max_intents_per_asset":100000}`, "max_intents_per_asset"},
+		{"negative asset budget", "src", `{"asset_token_budget":-1}`, "asset_token_budget"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

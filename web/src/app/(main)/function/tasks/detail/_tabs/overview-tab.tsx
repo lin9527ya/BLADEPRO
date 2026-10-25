@@ -43,7 +43,8 @@ function fmtCost(usd: number): string {
 // 缓存命中率 = 缓存读 / 输入（InputTokens 已含 cache_read 子集，故比值在 0–100%）。
 function cacheHitRate(cacheRead: number, input: number): string {
   if (input <= 0) return "—";
-  return Math.round((cacheRead / input) * 100) + "%";
+  // 一位小数：93.5% 与 94% 在实际调优里是一个可分辨的差别，取整会把它抹平。
+  return ((cacheRead / input) * 100).toFixed(1) + "%";
 }
 
 // 测试范围一条的显示值：域名 / 网段 / 公司。

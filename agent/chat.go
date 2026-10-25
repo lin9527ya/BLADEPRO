@@ -81,10 +81,18 @@ func chatWorkDirSpec(workDir string) string {
 	return "\n\n**文件输出规约**：需要写文件时，一律写到工作目录 " + workDir + "（这是默认 CWD，相对路径即落在这里，也可用该绝对路径）——不要写 /tmp 或其他绝对路径。"
 }
 
-// chatSystem renders the DB-managed prompt body for agentKey. Custom agents have
-// no per-key in-code default, so DefaultAssistantPrompt is the render fallback.
+// chatSystem renders the DB-managed prompt body for agentKey plus the per-session
+// work-dir notice. Kept as one function for direct callers/tests; the runtime uses
+// chatStaticSystem + a dynamic tail so the static prefix is shared across sessions.
 func chatSystem(agentKey, dataDir, workDir string) string {
-	return renderSystem(agentKey, DefaultAssistantPrompt, chatVars{DataDir: dataDir, Now: nowStr()}) + chatWorkDirSpec(workDir)
+	return chatStaticSystem(agentKey, dataDir) + chatWorkDirSpec(workDir)
+}
+
+// chatStaticSystem is the part of a chat agent's system prompt that is identical
+// across sessions of the same agent key. The per-session work dir is appended as
+// a final dynamic segment by Chat.
+func chatStaticSystem(agentKey, dataDir string) string {
+	return renderSystem(agentKey, DefaultAssistantPrompt, chatVars{DataDir: dataDir, Now: nowStr()})
 }
 
 // chatVars carries the runtime variables a custom agent's prompt may reference.
@@ -123,7 +131,14 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 	tools, def, cleanup := AugmentTools(ctx, agentKey, base)
 	defer cleanup()
 
-	system, boundary := deferredSystem(chatSystem(agentKey, c.workDir, sessionWorkDir), def)
+	system, boundary := deferredSystem(chatStaticSystem(agentKey, c.workDir), def)
+	staticCount := len(system)
+	if boundary == 0 {
+		boundary = staticCount
+	}
+	// 会话工作目录每次会话都不同，放在最后一个动态 system 段；静态段（agent 正文 +
+	// 常驻技能 + deferred 工具说明）因此能在不同会话/不同用户消息之间复用缓存。
+	system = append(system, chatWorkDirSpec(sessionWorkDir))
 	opts := agentcore.Options{
 		Provider:        c.prov,
 		SystemPrompt:    system,

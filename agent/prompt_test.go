@@ -102,4 +102,15 @@ func TestCacheFriendlyStaticSystem(t *testing.T) {
 	if !strings.Contains(workerSystem("proxy:1", "", "/data", "/data/tasks/1/i2", "worker-1"), "/data/tasks/1/i2") {
 		t.Fatal("workerSystem wrapper should still append the run dir for direct callers/tests")
 	}
+	if strings.Contains(DefaultAssistantPrompt, "{{.") {
+		// 聊天页的 static system 按 agentKey 复用；默认正文不该带任何运行期变量。
+		t.Fatalf("assistant default prompt embeds template vars: %q", DefaultAssistantPrompt)
+	}
+	chatStatic := chatStaticSystem("assistant", "/data")
+	if strings.Contains(chatStatic, "文件输出规约") || strings.Contains(chatStatic, "/sessions/") {
+		t.Fatalf("chat static system must not contain the per-session work dir: %q", chatStatic)
+	}
+	if !strings.Contains(chatSystem("assistant", "/data", "/data/sessions/s1"), "/data/sessions/s1") {
+		t.Fatal("chatSystem wrapper should still append the session work dir for direct callers/tests")
+	}
 }

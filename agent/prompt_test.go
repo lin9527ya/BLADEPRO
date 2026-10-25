@@ -80,3 +80,23 @@ func TestRenderSystemOverrideAndFallback(t *testing.T) {
 		t.Fatalf("worker without proxy must NOT inject trafficTool: %q", noProxy)
 	}
 }
+
+// TestCacheFriendlyStaticSystem pins the prompt-cache invariant: per-task/per-intent
+// values (goal, run dir, intent payload) must not sit in the static system prefix.
+func TestCacheFriendlyStaticSystem(t *testing.T) {
+	if strings.Contains(plannerDefaultTmpl, "{{.Goal}}") || strings.Contains(plannerDefaultTmpl, "{{.AssetSummary}}") {
+		t.Fatal("planner default template must not embed per-task goal/assets in system")
+	}
+	if strings.Contains(workerDefaultTmpl, "{{.Now}}") || strings.Contains(workerDefaultTmpl, "{{.WorkerName}}") {
+		// WorkerName is stable per pool slot, but Now changes daily; neither belongs
+		// in the default static body.
+		t.Fatalf("worker default template embeds dynamic vars")
+	}
+	static := workerStaticSystem("proxy:1", "", "/data", "worker-1")
+	if strings.Contains(static, "中间产物输出规约") || strings.Contains(static, "/tasks/") {
+		t.Fatalf("worker static system must not contain per-intent run dir: %q", static)
+	}
+	if !strings.Contains(workerSystem("proxy:1", "", "/data", "/data/tasks/1/i2", "worker-1"), "/data/tasks/1/i2") {
+		t.Fatal("workerSystem wrapper should still append the run dir for direct callers/tests")
+	}
+}

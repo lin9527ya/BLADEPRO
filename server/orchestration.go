@@ -678,14 +678,16 @@ func (s *Server) reseedMainAgentPrompt() {
 	log.Printf("[prompts] mainagent 提示词已追加新默认版本(加入目标达成后反问建目标,一次性)")
 }
 
-// reseedPlannerPrompt 把 planner 提示词刷成【当前代码默认】——默认正文做了精简重构,并把「克制」降级为
-// 仅去重、新增「深度优先于覆盖度」「硬底线:目标未达成且无在跑意图必须产出」、给否定结论复核加上界。
-// 每次默认有实质变更就 bump 下面的 flag(当前 v3)让存量旧库再刷一次。SeedPromptIfEmpty 首插入only,旧库已有版本收不到,故用版本管理
-// 【追加一个新版本】并切过去(ResetPromptToDefault),旧版本仍保留在历史里,用户若自定义过可从版本记录
-// 找回。settings flag 守卫 → 只做一次。全新库无需处理(SeedPromptIfEmpty 已 seed 最新默认)。与
-// reseedGoalsPrompt 完全同构。
+// reseedPlannerPrompt 把 planner 提示词刷成【当前代码默认】——默认正文不再把
+// {{.Goal}} 写进 system（改为本轮 user 输入），让 planner 的静态 system 能跨任务
+// 命中前缀缓存；工作目录也移到 system 的动态尾段。
+// 每次默认有实质变更就 bump 下面的 flag(当前 v4)让存量旧库再刷一次。
+// SeedPromptIfEmpty 首插入only,旧库已有版本收不到,故用版本管理【追加一个新版本】
+// 并切过去(ResetPromptToDefault),旧版本仍保留在历史里,用户若自定义过可从版本记录
+// 找回。settings flag 守卫 → 只做一次。全新库无需处理(SeedPromptIfEmpty 已 seed 最新默认)。
+// 与 reseedGoalsPrompt 完全同构。
 func (s *Server) reseedPlannerPrompt() {
-	const flag = "planner_prompt_playbooks_v3"
+	const flag = "planner_prompt_cache_v4"
 	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
 		return
 	}
@@ -706,7 +708,7 @@ func (s *Server) reseedPlannerPrompt() {
 		log.Printf("[prompts] planner 提示词重刷为新默认失败: %v", err)
 		return
 	}
-	log.Printf("[prompts] planner 提示词已追加新默认版本(加入 matching_playbooks 历史打法引导,一次性)")
+	log.Printf("[prompts] planner 提示词已追加新默认版本(goal 移出 system，缓存友好，一次性)")
 }
 
 // reseedWorkerPrompt 把 worker 提示词刷成【当前代码默认】——默认正文 record_fact 段删掉了「否定类结论

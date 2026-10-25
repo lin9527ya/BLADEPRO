@@ -391,7 +391,7 @@ func renderGraphOverview(data map[string]any) string {
 // tail is code-owned (artifactSpec) and appended by plannerSystem after rendering.
 const plannerDefaultTmpl = `你是一个网络安全平台授权渗透测试系统的"规划者"，被频繁唤醒（图一变就唤醒）。职责：读态势 → 判目标 → **只在确有未被覆盖的新方向时**补充探索意图。你是规划者、不是执行者：本轮所有产物只能是【生成/说清意图】或【判定目标】，绝不在 plan 里把活干了。
 
-任务目标：{{.Goal}}
+**任务目标在本轮用户输入开头给出**（不写进本 system 段，避免每个任务都击穿提示词前缀缓存）。
 
 **本轮该产出几个意图（先想清楚这条）**：
 - **硬底线（最高优先）**：只要【目标未达成】且【当前没有任何 open 或 running 意图】（frontier_open=0 且 running_intents 为空），本轮就【必须】产出至少一个向目标推进的意图——没有在跑的 work 可等、也没有在排队的方向时，产出 0 意图=任务停摆；哪怕已知方向都只在 recent_done 里，也要据下面 done/exhausted/blocked 的判断另开一条或续派一条。**这条被迫产出的意图落点由你判断**：还没动用的战果是现成的落点之一（见下面「手上的能力」），但另开一条全新方向同样正当——硬底线管的是「必须产出」，不管产出什么。
@@ -440,10 +440,16 @@ const plannerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
 不重复、不硬凑；但目标未达成、又有未覆盖且更深的打法时，该派就派。简洁、聚焦、高效。`
 
 func plannerSystem(goal, dataDir, workDir, assetSummary string) string {
-	body := renderSystem("planner", plannerDefaultTmpl, PlannerVars{
+	return plannerStaticSystem(goal, dataDir, assetSummary) + artifactSpec(workDir)
+}
+
+// plannerStaticSystem keeps the part that can be identical across tasks. The
+// default template intentionally no longer embeds {{.Goal}}/{{.AssetSummary}};
+// they are still passed for user-edited templates that reference them.
+func plannerStaticSystem(goal, dataDir, assetSummary string) string {
+	return renderSystem("planner", plannerDefaultTmpl, PlannerVars{
 		Goal: goal, AssetSummary: assetSummary, DataDir: dataDir, Now: nowStr(),
 	})
-	return body + artifactSpec(workDir)
 }
 
 // Plan runs one planning round. emit, if non-nil, receives the planner's execution
@@ -510,7 +516,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	taskDir := ensureRunDir(p.workDir, taskID, 0)
 	ctx = intercept.WithReviewContext(ctx, taskDir, intercept.ReviewBackground{})
 	p.summaryOnce.Do(func() { p.assetSummary = assetSummaryForTask(as, taskID) })
-	sysBody := plannerSystem(goal, p.workDir, taskDir, p.assetSummary)
+	sysBody := plannerStaticSystem(goal, p.workDir, p.assetSummary)
 	if p.wantConstraints() {
 		sysBody += constraintBlock(ts) // 操作约束(若有)注入系统提示,框定探索边界
 	}
@@ -522,6 +528,13 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 		sysBody += srcmode.PlannerOverlay(tsx.SrcDoc())
 	}
 	system, boundary := deferredSystem(sysBody, def)
+	staticCount := len(system)
+	if boundary == 0 {
+		boundary = staticCount
+	}
+	// 工作目录是任务级的，放在最后一个动态 system 段：静态段（基础正文 + 常驻技能
+	// + deferred 工具说明 + SRC 策略）可以在不同任务之间命中前缀缓存。
+	system = append(system, artifactSpec(taskDir))
 	// planner 无自身墙钟预算;有 deadline 时把 MaxDuration 夹逼到剩余,让在跑的规划轮在
 	// 任务到点时进收尾(因超时→任务超时词,因步数→per-run 词)。
 	maxDur, clamped := clampMaxDuration(tc.DeadlineUnix, 0)
@@ -607,7 +620,11 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	}
 	// P20：硬底线在有策略时改写成"只在策略内成立"——否则提示词自相矛盾：
 	// 一边要求必须派人，一边把提出来的人全拒掉。
-	input := lead + situational + "\n\n据上面的态势，判定目标。目标已【真正达成】（已拿到目标成果/已确认目标漏洞）时用 prove_goal 逐个标记。" +
+	goalLine := ""
+	if strings.TrimSpace(goal) != "" {
+		goalLine = "任务目标：\n" + goal + "\n\n"
+	}
+	input := goalLine + lead + situational + "\n\n据上面的态势，判定目标。目标已【真正达成】（已拿到目标成果/已确认目标漏洞）时用 prove_goal 逐个标记。" +
 		policy.HardFloorText(derefPolicy(pol)) +
 		renderPlannerTodos(opts.Todos.List())
 	// MaxDuration 现在会在墙钟到点打断在跑工具并就地进收尾(在活 ctx 上),单轮卡死不再

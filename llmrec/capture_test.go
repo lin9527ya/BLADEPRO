@@ -5,6 +5,8 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/lin9527ya/Norma/llm"
 )
 
 func TestCaptureFromNilAndMissing(t *testing.T) {
@@ -99,5 +101,43 @@ func TestCaptureEmptyWhenNoHTTPHappened(t *testing.T) {
 	_, c := NewCapture(context.Background())
 	if c.RawRequest() != "" || c.RawResponse() != "" {
 		t.Fatal("unused capture should be empty")
+	}
+}
+
+// TestUsageCaptureRecoversDeepSeekCacheTokens pins the wire-field fallback:
+// DeepSeek reports cache hits as prompt_cache_hit_tokens, which the provider's
+// normalized Usage does not carry. The usage-only capture must recover it from
+// the SSE tail without storing the response body.
+func TestUsageCaptureRecoversDeepSeekCacheTokens(t *testing.T) {
+	ctx, c := NewUsageCapture(context.Background())
+	if CaptureFrom(ctx) != c {
+		t.Fatal("usage capture not attached to context")
+	}
+	if c.RawResponse() != "" {
+		t.Fatal("usage-only capture must not expose a body")
+	}
+	c.SetRequest("huge request should not be stored")
+	if c.RawRequest() != "" {
+		t.Fatal("usage-only capture must not store requests")
+	}
+	sse := "data: {\"usage\":{\"prompt_tokens\":100,\"prompt_cache_hit_tokens\":80,\"prompt_cache_miss_tokens\":20}}\n\ndata: [DONE]\n"
+	body := c.TeeResponse(200, io.NopCloser(strings.NewReader(sse)))
+	if _, err := io.ReadAll(body); err != nil {
+		t.Fatal(err)
+	}
+	got := c.ApplyProviderUsage(llm.Usage{InputTokens: 100, OutputTokens: 7})
+	if got.CacheReadTokens != 80 || got.InputTokens != 100 || got.OutputTokens != 7 {
+		t.Fatalf("usage=%+v", got)
+	}
+	// Provider-parsed value wins.
+	if got := c.ApplyProviderUsage(llm.Usage{InputTokens: 100, CacheReadTokens: 5}); got.CacheReadTokens != 5 {
+		t.Fatalf("must not overwrite provider cache read: %+v", got)
+	}
+	// OpenAI-style cached_tokens fallback.
+	_, c2 := NewUsageCapture(context.Background())
+	body2 := c2.TeeResponse(200, io.NopCloser(strings.NewReader(`{"usage":{"prompt_tokens":50,"prompt_tokens_details":{"cached_tokens":30}}}`)))
+	_, _ = io.ReadAll(body2)
+	if got := c2.ApplyProviderUsage(llm.Usage{InputTokens: 50}); got.CacheReadTokens != 30 {
+		t.Fatalf("cached_tokens fallback=%+v", got)
 	}
 }

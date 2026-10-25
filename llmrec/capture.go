@@ -4,8 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/lin9527ya/Norma/llm"
 )
 
 type captureContextKey struct{}
@@ -27,19 +31,36 @@ type captureContextKey struct{}
 // The transport writes from norma's stream-reading goroutine while the Recorder
 // snapshots at stream end, so all state is mutex-guarded.
 type Capture struct {
-	mu       sync.Mutex
-	request  string
-	attempts []*attempt
+	mu        sync.Mutex
+	request   string
+	attempts  []*attempt
+	usageOnly bool
 }
 
 type attempt struct {
 	status int
 	body   strings.Builder
+	// tail keeps only the last usageTailMax bytes for usage-only captures. SSE
+	// usage arrives at the end, so a bounded tail is enough and never grows with
+	// the response body.
+	tail []byte
 }
+
+const usageTailMax = 128 << 10
 
 // NewCapture returns a context carrying a fresh Capture, plus the Capture itself.
 func NewCapture(ctx context.Context) (context.Context, *Capture) {
 	c := &Capture{}
+	return context.WithValue(ctx, captureContextKey{}, c), c
+}
+
+// NewUsageCapture returns a lightweight capture that keeps only the response
+// tail needed to recover vendor usage fields (DeepSeek reports cache hits as
+// prompt_cache_hit_tokens, which the provider's normalized Usage does not carry).
+// It never stores the request/response bodies, so it is safe to enable on every
+// call even when llm_record is off.
+func NewUsageCapture(ctx context.Context) (context.Context, *Capture) {
+	c := &Capture{usageOnly: true}
 	return context.WithValue(ctx, captureContextKey{}, c), c
 }
 
@@ -57,7 +78,7 @@ func CaptureFrom(ctx context.Context) *Capture {
 // SetRequest stores the outgoing request body. Retries re-send identical bytes,
 // so only the first attempt's body is kept.
 func (c *Capture) SetRequest(body string) {
-	if c == nil || body == "" {
+	if c == nil || body == "" || c.usageOnly {
 		return
 	}
 	c.mu.Lock()
@@ -79,6 +100,70 @@ func (c *Capture) TeeResponse(status int, rc io.ReadCloser) io.ReadCloser {
 	c.attempts = append(c.attempts, a)
 	c.mu.Unlock()
 	return &teeBody{rc: rc, c: c, a: a}
+}
+
+// ApplyProviderUsage fills cache-read tokens from vendor-specific wire fields when
+// the provider's normalized Usage left them at zero. Currently this recovers
+// DeepSeek's prompt_cache_hit_tokens (and OpenAI-style cached_tokens as fallback);
+// it never overwrites a non-zero value the provider already parsed.
+func (c *Capture) ApplyProviderUsage(u llm.Usage) llm.Usage {
+	if c == nil || u.CacheReadTokens > 0 {
+		return u
+	}
+	if hit, ok := c.cacheHitTokens(); ok && hit > 0 {
+		u.CacheReadTokens = hit
+	}
+	return u
+}
+
+var (
+	deepSeekCacheHitRe = regexp.MustCompile(`"prompt_cache_hit_tokens"\s*:\s*(\d+)`)
+	cachedTokensRe     = regexp.MustCompile(`"cached_tokens"\s*:\s*(\d+)`)
+)
+
+// cacheHitTokens scans the last successful response tail and returns the last
+// occurrence of a vendor cache-hit counter.
+func (c *Capture) cacheHitTokens() (int, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := len(c.attempts) - 1; i >= 0; i-- {
+		a := c.attempts[i]
+		if a == nil || a.status != 200 {
+			continue
+		}
+		text := string(a.tail)
+		if text == "" && a.body.Len() > 0 {
+			// Full capture path (llm_record on): usage is at the end of the body,
+			// so scan only the tail instead of a potentially huge response.
+			body := a.body.String()
+			if len(body) > 2*usageTailMax {
+				body = body[len(body)-usageTailMax:]
+			}
+			text = body
+		}
+		if text == "" {
+			continue
+		}
+		if m := lastMatch(deepSeekCacheHitRe, text); m != "" {
+			if n, err := strconv.Atoi(m); err == nil {
+				return n, true
+			}
+		}
+		if m := lastMatch(cachedTokensRe, text); m != "" {
+			if n, err := strconv.Atoi(m); err == nil {
+				return n, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func lastMatch(re *regexp.Regexp, s string) string {
+	all := re.FindAllStringSubmatch(s, -1)
+	if len(all) == 0 {
+		return ""
+	}
+	return all[len(all)-1][1]
 }
 
 // RawRequest returns the request body as sent, or "" if nothing was captured.
@@ -153,7 +238,16 @@ func (t *teeBody) Read(p []byte) (int, error) {
 	n, err := t.rc.Read(p)
 	if n > 0 {
 		t.c.mu.Lock()
-		t.a.body.Write(p[:n])
+		if t.c.usageOnly {
+			t.a.tail = append(t.a.tail, p[:n]...)
+			if len(t.a.tail) > 2*usageTailMax {
+				// Keep the tail (usage fields are at the end), not the head. Trim at
+				// 2x so a long SSE stream does not copy 128KB on every read.
+				t.a.tail = append([]byte(nil), t.a.tail[len(t.a.tail)-usageTailMax:]...)
+			}
+		} else {
+			t.a.body.Write(p[:n])
+		}
 		t.c.mu.Unlock()
 	}
 	return n, err

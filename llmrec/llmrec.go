@@ -220,6 +220,11 @@ func (r *Recorder) Stream(ctx context.Context, req llm.CompletionRequest) iter.S
 	if recordBodies {
 		reqBody = r.serializeRequest(req)
 		ctx, capt = NewCapture(ctx)
+	} else {
+		// Always keep a small response tail: DeepSeek's cache-hit counter lives
+		// only on the wire (prompt_cache_hit_tokens), not in llm.Usage. This costs
+		// at most 128KB per call and never stores bodies.
+		ctx, capt = NewUsageCapture(ctx)
 	}
 
 	return func(yield func(llm.StreamEvent, error) bool) {
@@ -242,6 +247,7 @@ func (r *Recorder) Stream(ctx context.Context, req llm.CompletionRequest) iter.S
 				status = "error"
 			}
 			// Lightweight metering row — always written.
+			usage = capt.ApplyProviderUsage(usage)
 			r.recordUsage(taskID, expID, worker, IntentFrom(ctx), AssetFrom(ctx), usage, int(time.Since(start).Milliseconds()), status)
 			// Heavy trace row — only when body recording is on.
 			if recordBodies {
@@ -313,9 +319,15 @@ func (r *Recorder) Complete(ctx context.Context, req llm.CompletionRequest) (llm
 	if recordBodies {
 		reqBody = r.serializeRequest(req)
 		ctx, capt = NewCapture(ctx)
+	} else {
+		// Always keep a small response tail: DeepSeek's cache-hit counter lives
+		// only on the wire (prompt_cache_hit_tokens), not in llm.Usage. This costs
+		// at most 128KB per call and never stores bodies.
+		ctx, capt = NewUsageCapture(ctx)
 	}
 
 	msg, stopReason, usage, err := r.inner.Complete(ctx, req)
+	usage = capt.ApplyProviderUsage(usage)
 	status := "ok"
 	if err != nil {
 		status = "error"

@@ -69,6 +69,11 @@ export function MCPDialogs({
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-medium">{item.title}</span>
+                      {item.tag && (
+                        <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
+                          {item.tag}
+                        </Badge>
+                      )}
                       <Badge variant="outline" className="px-1.5 py-0 text-[10px] uppercase">
                         {item.transport}
                       </Badge>

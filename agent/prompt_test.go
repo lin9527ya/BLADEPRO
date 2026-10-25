@@ -87,6 +87,9 @@ func TestCacheFriendlyStaticSystem(t *testing.T) {
 	if strings.Contains(plannerDefaultTmpl, "{{.Goal}}") || strings.Contains(plannerDefaultTmpl, "{{.AssetSummary}}") {
 		t.Fatal("planner default template must not embed per-task goal/assets in system")
 	}
+	if strings.Contains(mainAgentDefaultTmpl, "{{.Goal}}") || strings.Contains(mainAgentDefaultTmpl, "{{.AssetSummary}}") {
+		t.Fatal("mainagent default template must not embed per-task goal/assets in system")
+	}
 	if strings.Contains(workerDefaultTmpl, "{{.Now}}") || strings.Contains(workerDefaultTmpl, "{{.WorkerName}}") {
 		// WorkerName is stable per pool slot, but Now changes daily; neither belongs
 		// in the default static body.

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/lin9527ya/Norma/agentcore"
@@ -153,15 +154,21 @@ const mainAgentDefaultTmpl = `你是一个授权渗透测试系统的"主 agent"
    - 人想"增/改测试约束（允许/禁止某类操作，如『仅测当前端口』『禁止爆破』『只做被动侦察』）" → 用 set_constraints 登记（type=allow 允许 / type=deny 禁止）。约束会在下一轮规划时注入 planner/worker 的提示词以框定探索边界；也可在总览「约束管理」里增删改。
 3. 用人话简洁回复，说明你做了什么。
 
-当前任务目标：{{.Goal}}
+**任务目标在本轮用户消息开头给出**（不写进本 system 段，避免每个任务都击穿提示词前缀缓存）。
 
 不要编造发现；只根据工具返回的真实数据回答。`
 
 func mainAgentSystem(goal, dataDir, workDir, assetSummary string) string {
-	body := renderSystem("mainagent", mainAgentDefaultTmpl, MainVars{
+	return mainAgentStaticSystem(goal, dataDir, assetSummary) + artifactSpec(workDir)
+}
+
+// mainAgentStaticSystem keeps the part that can be identical across tasks. The
+// default template no longer embeds {{.Goal}}; it is still passed for user-edited
+// templates that reference it.
+func mainAgentStaticSystem(goal, dataDir, assetSummary string) string {
+	return renderSystem("mainagent", mainAgentDefaultTmpl, MainVars{
 		Goal: goal, AssetSummary: assetSummary, DataDir: dataDir, Now: nowStr(),
 	})
-	return body + artifactSpec(workDir)
 }
 
 // Chat handles one human message and returns the assistant reply. emit, if
@@ -209,12 +216,18 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 	mainDir := ensureRunDir(m.workDir, taskID, 0)
 	ctx = intercept.WithReviewWorkingDirectory(ctx, mainDir)
 	m.summaryOnce.Do(func() { m.assetSummary = assetSummaryForTask(as, taskID) })
-	sysBody := mainAgentSystem(goal, m.workDir, mainDir, m.assetSummary)
+	sysBody := mainAgentStaticSystem(goal, m.workDir, m.assetSummary)
 	if tsx.SrcMode() {
 		// 主 agent 也会替人执行动作：同样要先裁决通用渗透文案与 SRC 纪律的冲突。
 		sysBody = srcmode.SrcPrecedenceNote() + sysBody
 	}
 	system, boundary := deferredSystem(sysBody, def)
+	staticCount := len(system)
+	if boundary == 0 {
+		boundary = staticCount
+	}
+	// 任务级工作目录放在最后一个动态 system 段，静态 system 可跨任务命中缓存。
+	system = append(system, artifactSpec(mainDir))
 	opts := agentcore.Options{
 		Provider:        m.prov,
 		SystemPrompt:    system,
@@ -279,7 +292,11 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 	// C2: this session is fresh each turn; re-unlock skill-gated MCPs from prior
 	// Skill() calls in the reloaded history so revealed tools stay callable.
 	seedUnlockFromHistory(s.Messages(), def.UnlockSkill)
-	text, _, err := captureRunSession(ctx, s, message, func(r db.Activity) {
+	input := message
+	if strings.TrimSpace(goal) != "" {
+		input = "任务目标：\n" + goal + "\n\n" + message
+	}
+	text, _, err := captureRunSession(ctx, s, input, func(r db.Activity) {
 		if emit != nil {
 			r.Worker = "mainagent"
 			emit(r)

@@ -648,13 +648,14 @@ func (s *Server) reseedGoalsPrompt() {
 	log.Printf("[prompts] goals 提示词已追加新默认版本(加入抽操作约束步,一次性)")
 }
 
-// reseedMainAgentPrompt 把 mainagent 提示词刷成【当前代码默认】——默认正文新增了「目标全部
-// 达成后 add_intent 直投意图时,反问人是否登记为正式目标」这段引导,而 SeedPromptIfEmpty 首插入
-// only,旧库已有版本收不到。用版本管理【追加一个新版本】并切过去(ResetPromptToDefault),旧版本仍
-// 保留在历史里,用户若自定义过可从版本记录找回。settings flag 守卫 → 只做一次。全新库无需处理
+// reseedMainAgentPrompt 把 mainagent 提示词刷成【当前代码默认】——默认正文不再把
+// {{.Goal}} 写进 system（改为每轮 user 消息开头），工作目录移到 system 动态尾段，
+// 让静态 system 能跨任务命中前缀缓存。SeedPromptIfEmpty 首插入 only,旧库已有版本
+// 收不到。用版本管理【追加一个新版本】并切过去(ResetPromptToDefault),旧版本仍保留在
+// 历史里,用户若自定义过可从版本记录找回。settings flag 守卫 → 只做一次。全新库无需处理
 // (SeedPromptIfEmpty 已 seed 最新默认)。与 reseedGoalsPrompt 完全同构。
 func (s *Server) reseedMainAgentPrompt() {
-	const flag = "mainagent_prompt_goalless_intent_v1"
+	const flag = "mainagent_prompt_cache_v2"
 	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
 		return
 	}
@@ -675,7 +676,7 @@ func (s *Server) reseedMainAgentPrompt() {
 		log.Printf("[prompts] mainagent 提示词重刷为新默认失败: %v", err)
 		return
 	}
-	log.Printf("[prompts] mainagent 提示词已追加新默认版本(加入目标达成后反问建目标,一次性)")
+	log.Printf("[prompts] mainagent 提示词已追加新默认版本(goal 移出 system，缓存友好，一次性)")
 }
 
 // reseedPlannerPrompt 把 planner 提示词刷成【当前代码默认】——默认正文不再把

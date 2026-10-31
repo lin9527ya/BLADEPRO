@@ -13,10 +13,20 @@
 #   BENCH_TIMEOUT_SECONDS / BENCH_MAX_INTENTS / BENCH_MAX_INTENTS_PER_ASSET
 #   BENCH_MODEL         仅写入清单，便于人工固定模型配置
 #   BENCH_ALLOW_NONLOCAL=1  显式允许非本机靶场（默认拒绝）
+#   BENCH_REPEAT=N          重复运行 N 次，每次独立任务/run 目录（默认 1）
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 BASE="${BLADEPRO_BASE_URL:-http://127.0.0.1:9898}"
+# A repeat run is a sequence of independent tasks; each child keeps its own run_dir
+# and manifest so paired medians can be computed without merging task state.
+if [[ "${BENCH_REPEAT:-1}" -gt 1 && "${BENCH_REPEAT_CHILD:-0}" != "1" ]]; then
+  for i in $(seq 1 "${BENCH_REPEAT:-1}"); do
+    echo "[+] repeat $i/${BENCH_REPEAT}"
+    BENCH_REPEAT_CHILD=1 BENCH_RUN_INDEX="$i" "$0" "$@"
+  done
+  exit 0
+fi
 TARGET="${TARGET_URL:-http://127.0.0.1:18080}"
 GOLDEN="${GOLDEN:-srcbench/targets.json}"
 TARGET_NAME="${BENCH_TARGET_NAME:-local-vuln}"
@@ -112,13 +122,22 @@ jq -n \
   --arg task_id "$task_id" --arg status "$status" \
   --argjson tokens "$tokens" --argjson cache_tokens "$cache_tokens" \
   --argjson mode_doc "$mode_doc" --argjson no_output "$no_output" --arg git_rev "$(git rev-parse HEAD 2>/dev/null || echo unknown)" \
-  '{base_url:$base,target_url:$target,golden:$golden,target_name:$target_name,model:$model,task_id:$task_id,status:$status,tokens:$tokens,cache_tokens:$cache_tokens,no_output:$no_output,mode_doc:$mode_doc,created_at:(now|todate),git_rev:$git_rev}' \
+  --argjson repeat_index "${BENCH_RUN_INDEX:-1}" \
+  '{base_url:$base,target_url:$target,golden:$golden,target_name:$target_name,model:$model,task_id:$task_id,status:$status,tokens:$tokens,cache_tokens:$cache_tokens,no_output:$no_output,mode_doc:$mode_doc,created_at:(now|todate),git_rev:$git_rev,repeat_index:$repeat_index}' \
   > "$run_dir/manifest.json"
 
 go run ./srcbench/score \
   --target "$TARGET_NAME" --golden "$GOLDEN" \
   --findings "$run_dir/findings.array.json" \
   --src "$run_dir/src.json" \
+  --tokens "$tokens" --json > "$run_dir/score.json"
+go run ./srcbench/score \
+  --target "$TARGET_NAME" --golden "$GOLDEN" \
+  --findings "$run_dir/findings.array.json" \
+  --src "$run_dir/src.json" \
   --tokens "$tokens" | tee "$run_dir/score.md"
+if [[ -n "${BENCH_BASELINE:-}" ]]; then
+  srcbench/compare-baseline.sh "$run_dir/score.json" "$BENCH_BASELINE"
+fi
 
 echo "[+] 产物：$run_dir"

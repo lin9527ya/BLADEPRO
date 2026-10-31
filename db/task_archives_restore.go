@@ -209,18 +209,37 @@ WHERE archive.id=$1 FOR UPDATE OF archive,task`, archiveID).Scan(&taskID, &expID
 	}
 	taskRow := taskRows[0]
 	categoryID, _ := jsonInt64(taskRow["category_id"])
-	if categoryID > 0 && !rowExists(tx, "task_categories", categoryID) {
-		taskRow["category_id"] = nil
-		warnings = append(warnings, fmt.Sprintf("任务分类 %d 已删除，已恢复为未分类", categoryID))
+	if categoryID > 0 {
+		exists, err := rowExists(tx, "task_categories", categoryID)
+		if err != nil {
+			return nil, fmt.Errorf("restore task category reference: %w", err)
+		}
+		if !exists {
+			taskRow["category_id"] = nil
+			warnings = append(warnings, fmt.Sprintf("任务分类 %d 已删除，已恢复为未分类", categoryID))
+		}
 	}
 	companyID, _ := jsonInt64(taskRow["company_id"])
-	if companyID > 0 && !rowExists(tx, "companies", companyID) {
-		taskRow["company_id"] = nil
-		warnings = append(warnings, fmt.Sprintf("任务企业 %d 已删除，企业关联已跳过", companyID))
+	if companyID > 0 {
+		exists, err := rowExists(tx, "companies", companyID)
+		if err != nil {
+			return nil, fmt.Errorf("restore task company reference: %w", err)
+		}
+		if !exists {
+			taskRow["company_id"] = nil
+			warnings = append(warnings, fmt.Sprintf("任务企业 %d 已删除，企业关联已跳过", companyID))
+		}
 	}
 	for _, key := range []string{"llm_profile_id", "active_llm_profile_id"} {
 		profileID, _ := jsonInt64(taskRow[key])
-		if profileID > 0 && !rowExists(tx, "llm_profiles", profileID) {
+		if profileID <= 0 {
+			continue
+		}
+		exists, err := rowExists(tx, "llm_profiles", profileID)
+		if err != nil {
+			return nil, fmt.Errorf("restore task LLM reference: %w", err)
+		}
+		if !exists {
 			taskRow[key] = nil
 			warnings = append(warnings, fmt.Sprintf("LLM 配置 %d 已删除，已从任务配置中移除", profileID))
 		}
@@ -353,13 +372,15 @@ func decodeArchiveRows(raw json.RawMessage) ([]map[string]any, error) {
 	return rows, nil
 }
 
-func rowExists(tx *sql.Tx, table string, id int64) bool {
+func rowExists(tx *sql.Tx, table string, id int64) (bool, error) {
 	if table != "task_categories" && table != "llm_profiles" && table != "companies" && table != "tasks" && table != "assets" {
-		return false
+		return false, fmt.Errorf("archive restore: unsupported reference table %q", table)
 	}
 	var exists bool
-	_ = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM `+table+` WHERE id=$1)`, id).Scan(&exists)
-	return exists
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM `+table+` WHERE id=$1)`, id).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
 }
 
 func insertArchiveRows(tx *sql.Tx, table string, raw json.RawMessage) error {
@@ -443,10 +464,16 @@ func restoreArchiveAssets(tx *sql.Tx, taskID int64, raw json.RawMessage) (map[in
 		if !ok || oldID <= 0 {
 			return nil, nil, errors.New("archived asset has invalid id")
 		}
-		if companyID, ok := jsonInt64(row["company_id"]); ok && companyID > 0 && !rowExists(tx, "companies", companyID) {
-			row["company_id"] = nil
-			row["company_source"] = "explicit"
-			warnings = append(warnings, fmt.Sprintf("资产 %d 的企业 %d 已删除，已恢复为未归属", oldID, companyID))
+		if companyID, ok := jsonInt64(row["company_id"]); ok && companyID > 0 {
+			exists, err := rowExists(tx, "companies", companyID)
+			if err != nil {
+				return nil, nil, fmt.Errorf("restore asset company reference: %w", err)
+			}
+			if !exists {
+				row["company_id"] = nil
+				row["company_source"] = "explicit"
+				warnings = append(warnings, fmt.Sprintf("资产 %d 的企业 %d 已删除，已恢复为未归属", oldID, companyID))
+			}
 		}
 		if existing, found, err := findArchiveAssetNaturalID(tx, row); err != nil {
 			return nil, nil, err
@@ -458,7 +485,11 @@ func restoreArchiveAssets(tx *sql.Tx, taskID int64, raw json.RawMessage) (map[in
 			continue
 		}
 		candidate := oldID
-		if rowExists(tx, "assets", oldID) {
+		occupied, err := rowExists(tx, "assets", oldID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("restore asset id reference: %w", err)
+		}
+		if occupied {
 			if err := tx.QueryRow(`SELECT nextval(pg_get_serial_sequence('assets','id'))`).Scan(&candidate); err != nil {
 				return nil, nil, err
 			}
@@ -623,9 +654,15 @@ func restoreTaskScopes(tx *sql.Tx, raw json.RawMessage) ([]string, error) {
 	warnings := []string{}
 	kept := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
-		if companyID, ok := jsonInt64(row["company_id"]); ok && companyID > 0 && !rowExists(tx, "companies", companyID) {
-			warnings = append(warnings, fmt.Sprintf("企业 %d 已删除，关联范围已跳过", companyID))
-			continue
+		if companyID, ok := jsonInt64(row["company_id"]); ok && companyID > 0 {
+			exists, err := rowExists(tx, "companies", companyID)
+			if err != nil {
+				return nil, fmt.Errorf("restore task scope company reference: %w", err)
+			}
+			if !exists {
+				warnings = append(warnings, fmt.Sprintf("企业 %d 已删除，关联范围已跳过", companyID))
+				continue
+			}
 		}
 		kept = append(kept, row)
 	}
@@ -646,7 +683,15 @@ func restoreTaskLLMProfiles(tx *sql.Tx, raw json.RawMessage) ([]string, error) {
 	position := 0
 	for _, row := range rows {
 		profileID, ok := jsonInt64(row["profile_id"])
-		if !ok || !rowExists(tx, "llm_profiles", profileID) {
+		if !ok {
+			warnings = append(warnings, fmt.Sprintf("LLM 配置 %d 已删除，配置链项已跳过", profileID))
+			continue
+		}
+		exists, err := rowExists(tx, "llm_profiles", profileID)
+		if err != nil {
+			return nil, fmt.Errorf("restore LLM profile reference: %w", err)
+		}
+		if !exists {
 			warnings = append(warnings, fmt.Sprintf("LLM 配置 %d 已删除，配置链项已跳过", profileID))
 			continue
 		}

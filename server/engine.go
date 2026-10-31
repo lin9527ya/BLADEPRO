@@ -55,6 +55,27 @@ func (e *Engine) bumpDrop(taskID string) int64 {
 	return atomic.AddInt64(v.(*int64), 1)
 }
 
+// DroppedActivity reports unpersistable activity rows for one task.
+func (e *Engine) DroppedActivity(taskID string) int64 {
+	v, ok := e.dropCnt.Load(taskID)
+	if !ok {
+		return 0
+	}
+	return atomic.LoadInt64(v.(*int64))
+}
+
+// DroppedActivityTotal aggregates dropped activity rows across tasks.
+func (e *Engine) DroppedActivityTotal() int64 {
+	var total int64
+	e.dropCnt.Range(func(_, v any) bool {
+		if n, ok := v.(*int64); ok && n != nil {
+			total += atomic.LoadInt64(n)
+		}
+		return true
+	})
+	return total
+}
+
 // preview collapses newlines and trims s to a short rune-safe snippet for one-line
 // log output (avoids dumping a multi-KB summary/detail into the log).
 func preview(s string, n int) string {
@@ -416,6 +437,14 @@ func (e *Engine) slotLock(taskID, name string) *sync.Mutex {
 	key := taskID + "/" + name
 	v, _ := e.slotLocks.LoadOrStore(key, &sync.Mutex{})
 	return v.(*sync.Mutex)
+}
+
+// withSlotLock runs fn while holding the slot lock and always releases it, even
+// when runWorkerStep panics. A leaked slot lock permanently strands work#N.
+func withSlotLock(mu *sync.Mutex, fn func()) {
+	mu.Lock()
+	defer mu.Unlock()
+	fn()
 }
 
 func workerSlotFromOwner(owner string) int {
@@ -942,6 +971,11 @@ func (e *Engine) plannerLoop(ctx context.Context, t *Task) {
 	heartbeat := time.NewTimer(interval)
 	defer heartbeat.Stop()
 
+	// 连续 0 意图 + 无任何可领/在跑意图 = 探索停摆。只观察不硬拦会留下
+	// "有 worker 空闲、planner 每轮说已覆盖"的死循环；给两次短补唤醒后暂停任务，
+	// 让人看到原因。有在跑工作或本轮派出意图时立即归零。
+	zeroRounds, idleNudges := 0, 0
+
 	// runRound 跑一轮规划(含 debounce 合并 + 各 guard)。src 仅用于日志区分触发来源。
 	runRound := func(src string) {
 		// debounce: coalesce a burst of changes into one planning round
@@ -1020,6 +1054,10 @@ func (e *Engine) plannerLoop(ctx context.Context, t *Task) {
 		e.BeginLLMCall(t.ID)
 		met, reason, err := planner.Plan(ectx, taskIDInt, e.m.assets, t.Store, t.Goal, triggers, emit)
 		e.EndLLMCall(t.ID)
+		if exhausted := planner.TakeStrategyExhaustedReason(); exhausted != "" {
+			e.settleStrategyExhausted(ectx, t, exhausted)
+			return
+		}
 		switch {
 		case err != nil && ectx.Err() == nil:
 			log.Printf("[planner] task %s 规划出错: %v", t.ID, err)
@@ -1057,6 +1095,44 @@ func (e *Engine) plannerLoop(ctx context.Context, t *Task) {
 
 		default:
 			log.Printf("[planner] task %s 规划完成", t.ID)
+		}
+		if err == nil && !met {
+			active := false
+			if has, herr := t.Store.HasActiveIntent(); herr == nil {
+				active = has
+			}
+			if active || planner.LastRoundIntents() > 0 {
+				zeroRounds, idleNudges = 0, 0
+			} else {
+				zeroRounds++
+				if zeroRounds == 1 {
+					e.emitActivity(t, db.Activity{Worker: "planner", Kind: "text",
+						Summary: "本轮 0 意图且没有任何可领/在跑意图：已安排短补唤醒；连续 3 轮将暂停任务交人工"})
+				}
+				if zeroRounds < 3 && idleNudges < 2 && e.TaskWorkers(t.ID) > 0 {
+					idleNudges++
+					goSafe("planner/idle-nudge", nil, func() {
+						select {
+						case <-time.After(4 * time.Second):
+							if ectx.Err() == nil {
+								t.Notify()
+							}
+						case <-ectx.Done():
+						}
+					})
+				}
+				if zeroRounds >= 3 {
+					e.emitActivity(t, db.Activity{Worker: "system", Kind: "system",
+						Summary: "连续 3 轮 0 意图且探索已停摆：暂停任务，等待人工补充方向/策略"})
+					if err := e.m.ApplyTaskPause(t.ID); err == nil {
+						e.Pause(t.ID, agent.Causef("idle_stall", "探索连续空转，任务已暂停",
+							"planner 连续 3 轮没有新增意图，且没有 open/running 意图可等；任务已暂停以避免无限空转。请补充方向、调整策略或降低预算后恢复。"))
+					}
+					return
+				}
+			}
+		} else {
+			zeroRounds, idleNudges = 0, 0
 		}
 		e.touch(t.ID)
 	}
@@ -1117,9 +1193,8 @@ func (e *Engine) workerLoop(ctx context.Context, t *Task, name string) {
 		// The slot transcript is shared across intents; a detached human-message
 		// run may temporarily own this slot, so serialize the pool worker around it.
 		lock := e.slotLock(t.ID, name)
-		lock.Lock()
-		claimed := e.runWorkerStep(ctx, t, name, worker)
-		lock.Unlock()
+		var claimed bool
+		withSlotLock(lock, func() { claimed = e.runWorkerStep(ctx, t, name, worker) })
 		e.decInflight(t.ID)
 		if !claimed && sleepCtx(ctx, 800*time.Millisecond) {
 			return
@@ -1418,7 +1493,7 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	}
 	log.Printf("[worker %s] task %s 意图 #%d 结束: %s (写回 %s)", name, t.ID, intent.ID, state, wrote)
 	e.touch(t.ID)
-	t.NotifyDone(intent.ID) // results changed the graph -> wake the planner (with the just-finished intent id)
+	t.NotifyDone(intent.ID, state) // state is part of the trigger so no_output/blocked are not read as completion
 	return true
 }
 
@@ -1505,7 +1580,7 @@ func (e *Engine) watchExecutions(t *Task, intentID int64) {
 			Summary: "长任务执行收束，意图退回待领续跑", Detail: executionDigest(rows)})
 		log.Printf("[exec] task %s 意图 #%d 执行收束，已退回 open", t.ID, intentID)
 		e.touch(t.ID)
-		t.NotifyDone(intentID)
+		t.NotifyRequeued(intentID)
 	})
 }
 

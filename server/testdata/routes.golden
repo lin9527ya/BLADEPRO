@@ -140,7 +140,9 @@ GET /api/storage/report	server.(*Server).getStorageReport-fm
 GET /api/sync/scopesentry/projects	server.(*Server).syncSSProjects-fm
 GET /api/sync/scopesentry/status	server.(*Server).syncSSStatus-fm
 GET /api/sync/scopesentry/tasks	server.(*Server).syncSSTasks-fm
+GET /api/system/dependencies	server.(*Server).systemDependencies-fm
 GET /api/system/info	server.(*Server).systemInfo-fm
+GET /api/system/metrics	server.(*Server).systemMetrics-fm
 GET /api/task-archives	server.(*Server).listTaskArchives-fm
 GET /api/task-archives/{id}	server.(*Server).getTaskArchive-fm
 GET /api/task-categories	server.(*Server).pgListTaskCategories-fm

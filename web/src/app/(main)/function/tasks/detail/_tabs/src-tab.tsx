@@ -110,6 +110,8 @@ function cellTone(state?: string): string {
       return "border-border bg-muted text-muted-foreground";
     case "budget_stop":
       return "border-amber-500/40 bg-amber-500/15 text-amber-600 dark:text-amber-400";
+    case "manual_unverified":
+      return "border-sky-500/40 bg-sky-500/15 text-sky-600 dark:text-sky-400";
     default:
       return "border-dashed border-border text-muted-foreground";
   }
@@ -525,6 +527,14 @@ export function SrcTab({ taskId }: { taskId: string }) {
           </div>
 
           {/* 交付面：格清零 ≠ 能交，中危以上每条都要有齐备的可提交件。 */}
+          <div className="flex flex-wrap items-center gap-1.5 text-muted-foreground text-xs">
+            <span>调度</span>
+            <Badge variant="outline">在跑 {data.intent_states?.running ?? 0}</Badge>
+            <Badge variant="outline">空闲槽 {data.idle_slots ?? 0}</Badge>
+            <Badge variant="outline">可领 {data.claimable_intents ?? 0}</Badge>
+            <Badge variant="outline">租约 {(data.leases ?? []).length}</Badge>
+          </div>
+
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <Stat label="中危+ 发现" value={summary?.findings_medium_plus ?? 0} />
             <Stat label="报告齐备" value={summary?.reports_ready ?? 0} />
@@ -562,6 +572,11 @@ export function SrcTab({ taskId }: { taskId: string }) {
                     <Badge variant="outline">#{item.intent_id}</Badge>
                     <span className="truncate">{item.summary}</span>
                     <span className="text-muted-foreground">等待 {item.depends_on.map((id) => `#${id}`).join("、")}</span>
+                    {item.blocked_by?.length ? (
+                      <span className="text-amber-600 dark:text-amber-400">
+                        {item.blocked_by.map((dep) => `#${dep.intent_id} ${dep.state}${dep.terminal ? "（需处理）" : ""}`).join("、")}
+                      </span>
+                    ) : null}
                   </div>
                 ))}
               </CardContent>
@@ -709,10 +724,11 @@ export function SrcTab({ taskId }: { taskId: string }) {
                           title={`${item.hint}`}
                           onClick={() => openCheck(row, item)}
                           className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition-colors hover:opacity-80 ${cellTone(
-                            item.state === "done" ? (item.verification === "manual_unverified" ? "budget_stop" : "tested_clear") : item.state === "na" ? "na" : undefined,
+                            item.state === "done" ? (item.verification === "manual_unverified" ? "manual_unverified" : "tested_clear") : item.state === "na" ? "na" : undefined,
                           )}`}
                         >
                           <span>{item.title}</span>
+                          {item.inherited_stale ? <span title="源任务的证据已变更或撤回，请在本任务重测">·源变更</span> : null}
                           <span className="font-medium">
                             {item.state === "done" ? (item.verification === "manual_unverified" ? "待核验" : item.verification === "manual_approved" ? "人工核验" : "已验证") : item.state === "na" ? "N/A" : item.state === "budget_stop" ? "预算停" : "未做"}
                           </span>

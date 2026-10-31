@@ -23,6 +23,12 @@ func (s *Server) activity(w http.ResponseWriter, r *http.Request) {
 	}
 	since := int64(atoiDefault(r.URL.Query().Get("since"), 0))
 	limit := atoiDefault(r.URL.Query().Get("limit"), 300)
+	if limit <= 0 {
+		limit = 300
+	}
+	if limit > 500 {
+		limit = 500
+	}
 	var intentPtr *int64
 	if iv := r.URL.Query().Get("intent"); iv != "" {
 		if n, err := strconv.ParseInt(iv, 10, 64); err == nil {
@@ -406,7 +412,22 @@ func (s *Server) streamActivity(w http.ResponseWriter, r *http.Request) {
 	// DB is the source of truth). The Broadcaster keeps buffering live events meanwhile;
 	// the id<=since skip below drops any that this replay already covered.
 	const replayBatch = 500
+	const replayMax = 5000
+	replayed := 0
 	for {
+		if replayed >= replayMax {
+			// A multi-hundred-thousand-row backlog must not turn one browser
+			// connection into an unbounded replay. Advance Last-Event-ID to the
+			// current max so a reconnect does not restart the same backlog; the UI
+			// can reload history for the skipped window.
+			if maxID, err := t.Store.ActivityMaxID(); err == nil && maxID > since {
+				fmt.Fprintf(w, "event: resync\ndata: {}\nid: %d\n\n", maxID)
+			} else {
+				fmt.Fprint(w, "event: resync\ndata: {}\n\n")
+			}
+			flusher.Flush()
+			return
+		}
 		items, cursor, err := t.Store.ActivityList(intentPtr, since, replayBatch)
 		if err != nil {
 			log.Printf("[activity/stream] task=%s replay since=%d: %v", t.ID, since, err)
@@ -415,6 +436,7 @@ func (s *Server) streamActivity(w http.ResponseWriter, r *http.Request) {
 		for _, a := range items {
 			sendSSE(a)
 		}
+		replayed += len(items)
 		if cursor > since {
 			since = cursor
 		}

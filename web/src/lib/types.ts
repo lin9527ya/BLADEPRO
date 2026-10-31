@@ -1070,6 +1070,8 @@ export interface SrcMatrixCell {
   finding_id?: number;
   /** >0 = 从该任务继承的结论（证据在源任务）。 */
   inherited_from_task_id?: number;
+  /** 源任务的同一格在继承后发生变化/撤回；这是历史提示，不是新鲜结论。 */
+  inherited_stale?: boolean;
 }
 
 export interface SrcMatrixAsset {
@@ -1107,6 +1109,8 @@ export interface SrcCheckItem {
   evidence_node_id?: number;
   /** >0 = 这项 done 数字继承自该任务。 */
   inherited_from_task_id?: number;
+  /** 源任务的同一收尾项在继承后已变化/撤回。 */
+  inherited_stale?: boolean;
   /** screenshots 项关联的证据产物 id（GET /api/evidence/artifacts/{id}）。 */
   artifact_id?: number;
   /** 从录制流量推导出的实测值（P0-7）；仅在可核验的收尾项上出现。 */
@@ -1228,12 +1232,36 @@ export interface SrcTaskState {
   checks?: SrcCheckAsset[];
   finishable?: boolean;
   legend?: string;
+  /** 调度快照（只读）：本任务 worker 池、空闲槽、可领意图数。 */
+  workers?: number;
+  idle_slots?: number;
+  claimable_intents?: number;
+  intent_states?: Record<string, number>;
+  /** 当前单元格租约（只读）。 */
+  leases?: {
+    asset_id?: number;
+    area?: string;
+    owner_intent_id?: number;
+    worker?: string;
+    expires_at?: string;
+  }[];
   /** 本任务的提交台账（P2）。 */
   submissions?: SrcSubmission[];
   /** 资产级 token 预算的用量（仅在开启预算时返回，最多 50 个资产）。 */
   asset_token_usage?: { asset_id: number; tokens: number }[];
   /** 依赖未完成的排队意图（不会出现在可领取视图里）。 */
-  pending_dependencies?: { intent_id: number; summary: string; depends_on: number[] }[];
+  pending_dependencies?: {
+    intent_id: number;
+    summary: string;
+    depends_on: number[];
+    blocked_by?: {
+      intent_id: number;
+      state: string;
+      summary?: string;
+      terminal?: boolean;
+      action?: string;
+    }[];
+  }[];
   /** 只读身份对照事实（src_identity_diff）。 */
   identity_diffs?: {
     node_id: number;

@@ -17,6 +17,9 @@ type SrcProbeRequest struct {
 	Kind      string
 	MaxPaths  int
 	Endpoints []string
+	// Identity is a Program test-identity label; the host resolves its credential
+	// from the deployment environment. The value never enters the prompt/cache.
+	Identity string
 	// Force bypasses the asset-level result cache (paths/js/methods) and re-runs.
 	Force bool
 }
@@ -43,6 +46,7 @@ func (t *ToolSet) srcProbeTool() actool.CoreTool {
 			"max_paths": intp("paths 探针最多跑多少条（默认 200，上限 1000）"),
 			"endpoints": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "methods 探针的可选端点列表（URL 或相对路径，默认资产 URL）"},
 			"force":     map[string]any{"type": "boolean", "description": "true = 跳过资产级枚举缓存重新跑（默认 false，12h 内的 paths/js/methods 结果会直接复用）"},
+			"identity":  str("可选：使用 Program 中已授权的测试身份 label 发起认证请求；凭据由宿主从部署环境读取，模型不接触"),
 		}, "asset_id", "kind"),
 		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			if !t.srcReady() {
@@ -56,6 +60,7 @@ func (t *ToolSet) srcProbeTool() actool.CoreTool {
 				Kind      string   `json:"kind"`
 				MaxPaths  int      `json:"max_paths"`
 				Endpoints []string `json:"endpoints"`
+				Identity  string   `json:"identity"`
 				Force     bool     `json:"force"`
 			}
 			if err := json.Unmarshal(in, &req); err != nil {
@@ -72,7 +77,7 @@ func (t *ToolSet) srcProbeTool() actool.CoreTool {
 			}
 			res, err := t.srcProber(ctx, SrcProbeRequest{
 				TaskID: t.taskID, AssetID: req.AssetID, Kind: kind,
-				MaxPaths: req.MaxPaths, Endpoints: req.Endpoints, Force: req.Force,
+				MaxPaths: req.MaxPaths, Endpoints: req.Endpoints, Identity: req.Identity, Force: req.Force,
 			})
 			if err != nil {
 				return actool.Errorf("探针失败：" + err.Error()), nil

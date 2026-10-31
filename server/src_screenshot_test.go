@@ -85,5 +85,16 @@ VALUES ($1,'ip','127.0.0.1/32','manual','screenshot test')`, taskID); err != nil
 	if err := srcmode.ValidateCheck(ctx, m.pg.Src(), taskID, doc, chk); err == nil {
 		t.Fatal("plain fact node must not satisfy screenshots")
 	}
+	// Another asset's screenshot must not satisfy this asset's check.
+	var otherAsset int64
+	if err := m.pg.QueryRow(`INSERT INTO assets(type, url, ip)
+VALUES ('service',$1,'127.0.0.1') RETURNING id`, page.URL+"?other").Scan(&otherAsset); err != nil {
+		t.Fatalf("other asset: %v", err)
+	}
+	t.Cleanup(func() { _, _ = m.pg.Exec(`DELETE FROM assets WHERE id=$1`, otherAsset) })
+	chk.AssetID, chk.EvidenceNodeID = otherAsset, res.NodeID
+	if err := srcmode.ValidateCheck(ctx, m.pg.Src(), taskID, doc, chk); err == nil {
+		t.Fatal("screenshot of another asset satisfied this asset's check")
+	}
 	_ = fmt.Sprint(time.Now()) // keep imports stable if the test is shortened later
 }

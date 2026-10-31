@@ -40,6 +40,18 @@ func (d *DB) QueryRow(q string, a ...any) *sql.Row {
 // CompleteSrcTask locks the publication row while the domain validator reads its
 // entire proof. Mutation fences use the same row, so no late goal can cross done.
 func (d *DB) CompleteSrcTask(ctx context.Context, id int64, validate func(*DB, *Task) (json.RawMessage, error)) (bool, error) {
+	return d.finishSrcTask(ctx, id, validate)
+}
+
+// ForceCompleteSrcTask is the human-override completion path. It uses the same
+// row lock, proof ledger and completed revision as CompleteSrcTask, but the caller
+// decides the proof and may record an override despite remaining gaps. It still
+// refuses non-SRC, paused, or already-terminal tasks.
+func (d *DB) ForceCompleteSrcTask(ctx context.Context, id int64, validate func(*DB, *Task) (json.RawMessage, error)) (bool, error) {
+	return d.finishSrcTask(ctx, id, validate)
+}
+
+func (d *DB) finishSrcTask(ctx context.Context, id int64, validate func(*DB, *Task) (json.RawMessage, error)) (bool, error) {
 	if err := d.SealSrcAuthorization(ctx, id); err != nil {
 		return false, err
 	}

@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -76,6 +79,9 @@ type Planner struct {
 	// the whole transcript (which grows without bound and mostly repeats old graph
 	// snapshots).
 	lastRoundNote string
+	// strategyExhausted is set by the mark_strategy_exhausted tool and consumed by
+	// the engine after this round.
+	strategyExhausted string
 
 	// todos keeps ONE plan-scratchpad per task (keyed by exploration id) so the
 	// planner's multi-step plan survives across wake-ups — each Plan() is a fresh
@@ -127,6 +133,14 @@ func (p *Planner) workers() int {
 // LastRoundIntents returns how many intents the latest round created (engine
 // observability / idle-slot diagnostics).
 func (p *Planner) LastRoundIntents() int { return p.lastRoundIntents }
+
+// TakeStrategyExhaustedReason returns and clears the reason recorded by the
+// mark_strategy_exhausted tool in the latest round.
+func (p *Planner) TakeStrategyExhaustedReason() string {
+	reason := p.strategyExhausted
+	p.strategyExhausted = ""
+	return reason
+}
 
 // SetNonStreaming wires a resolver deciding whether runs use the non-streaming
 // model path (true = non-streaming). nil/unset = streaming (default).
@@ -248,6 +262,8 @@ type TriggerEvent struct {
 	Kind     string
 	IntentID int64
 	Detail   string
+	State    string   // Kind=="done" 专用：done/negative/no_output/blocked/exhausted/stopped
+	Requeued bool     // Kind=="done" 专用：执行未收束，意图已退回 open 等待续跑
 	Summary  string   // Kind=="cancelled" 专用：删除前捕获的意图摘要（真删除后节点已不存在，无法再查）
 	Goals    []string // Kind=="goal" 专用：本次 set_goals 新增的目标文本（1 条或多条）
 	OldGoal  string   // Kind=="goal_edited" 专用：修改前的目标文本
@@ -295,7 +311,29 @@ func renderTriggers(ts *db.ExplorationStore, evs []TriggerEvent) string {
 		case "src_gate":
 			b.WriteString(fmt.Sprintf("\n- %s —— **这不是可忽略的提示**：本轮不要再用 prove_goal 收尾，先按 src_state 的 top_gaps 派意图把缺口点亮（tested_found/tested_clear/na/budget_stop 都要写证据与原因）。", ev.Detail))
 		default: // "done"
-			b.WriteString(fmt.Sprintf("\n- 意图 #%d（%s）的 worker 结束，输出结论：%s", ev.IntentID, intentSummary(ts, ev.IntentID), workerOutput(ts, ev.IntentID)))
+			state := strings.TrimSpace(ev.State)
+			label := "结束"
+			if ev.Requeued {
+				label = "长任务执行收束，意图已退回待领续跑"
+			} else {
+				switch state {
+				case "done":
+					label = "正常完成"
+				case "negative":
+					label = "完成并给出否定结论"
+				case "out-of-scope":
+					label = "判定超出授权范围"
+				case "no_output":
+					label = "结束但没有写回任何事实/覆盖（no_output，不是已测完）"
+				case "blocked":
+					label = "因模型/网络失败中断（blocked，需重派或换打法）"
+				case "exhausted":
+					label = "预算耗尽中断（exhausted，需续派或换打法）"
+				case "stopped":
+					label = "已停止（stopped）"
+				}
+			}
+			b.WriteString(fmt.Sprintf("\n- 意图 #%d（%s）的 worker %s，输出结论：%s", ev.IntentID, intentSummary(ts, ev.IntentID), label, workerOutput(ts, ev.IntentID)))
 			if fids := factIDsYielded(ts, ev.IntentID); fids != "" {
 				b.WriteString(fmt.Sprintf("；本意图新产生的事实 id：%s ", fids))
 			}
@@ -523,10 +561,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 		if src := as.Src(); src != nil {
 			if mode, raw, err := src.TaskMode(ctx, taskID); err == nil && mode == srcmode.ModeSrc {
 				tsx.SetSrcMode(srcmode.Parse(raw), src)
-				tsx.SetSrcPreparer(p.srcPreparer)
-				tsx.SetSrcVerifier(p.srcVerifier)
-				tsx.SetSrcProber(p.srcProber)
-				tsx.SetSrcScreenshotter(p.srcScreenshotter)
+				tsx.SetSrcHostCapabilities(p.srcPreparer, p.srcVerifier, p.srcProber, p.srcScreenshotter, p.srcIdentityDiffer)
 			}
 		}
 	}
@@ -675,6 +710,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	if note := strings.TrimSpace(p.lastRoundNote); note != "" {
 		input = "【上一轮结论摘要（本轮是独立会话，只承接结论，不承接旧对话；态势以下方本轮快照为准）】\n" + note + "\n\n" + input
 	}
+	p.seedTodos(opts.Todos, taskID)
 	prevMaxIntentID := latestIntentID(ts)
 	lastText := ""
 	// MaxDuration 现在会在墙钟到点打断在跑工具并就地进收尾(在活 ctx 上),单轮卡死不再
@@ -689,7 +725,9 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 				emit(r)
 			}
 		})
+	p.persistTodos(opts.Todos, taskID)
 	p.lastRoundIntents = tsx.intentsRound
+	p.strategyExhausted = tsx.strategyExhausted
 	if err == nil {
 		p.rememberRound(ts, prevMaxIntentID, lastText)
 	}
@@ -714,6 +752,56 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 		}
 	}
 	return tsx.GoalMet, tsx.Reason, err
+}
+
+func (p *Planner) todoFile(taskID int64) string {
+	if p.workDir == "" || taskID <= 0 {
+		return ""
+	}
+	return filepath.Join(p.workDir, "tasks", strconv.FormatInt(taskID, 10), "planner-todos.json")
+}
+
+// seedTodos restores the planner's cross-round scratchpad after a restart. The
+// list is loaded through the same TodoWrite tool so the SDK store remains the
+// single owner of the in-memory representation.
+func (p *Planner) seedTodos(store *actool.TodoStore, taskID int64) {
+	if store == nil || len(store.List()) > 0 {
+		return
+	}
+	path := p.todoFile(taskID)
+	if path == "" {
+		return
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var items []actool.Todo
+	if json.Unmarshal(raw, &items) != nil || len(items) == 0 {
+		return
+	}
+	body, _ := json.Marshal(map[string]any{"todos": items})
+	_, _ = store.Tool().Call(context.Background(), body, nil)
+}
+
+func (p *Planner) persistTodos(store *actool.TodoStore, taskID int64) {
+	path := p.todoFile(taskID)
+	if path == "" || store == nil {
+		return
+	}
+	items := store.List()
+	if len(items) == 0 {
+		_ = os.Remove(path)
+		return
+	}
+	raw, err := json.Marshal(items)
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o775); err != nil {
+		return
+	}
+	_ = os.WriteFile(path, raw, 0o600)
 }
 
 // intentQueueBlock is code-owned queue discipline. It is static for a task (the

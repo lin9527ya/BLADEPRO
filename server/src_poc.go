@@ -68,7 +68,7 @@ func (s *Server) buildSrcPoc(ctx context.Context, f *db.DBFinding) (*srcPocBundl
 		sn := b.Snapshot
 		step := srcPocStep{
 			Role: b.Role, Note: strings.TrimSpace(b.Note), Method: strings.ToUpper(strings.TrimSpace(sn.Method)),
-			URL: strings.TrimSpace(sn.URL), Headers: parseSrcPocHeaders(sn.ReqHead),
+			URL: redactURL(strings.TrimSpace(sn.URL)), Headers: redactHeaderLines(parseSrcPocHeaders(sn.ReqHead)),
 		}
 		if step.Method == "" {
 			step.Method = "GET"
@@ -78,7 +78,7 @@ func (s *Server) buildSrcPoc(ctx context.Context, f *db.DBFinding) (*srcPocBundl
 			if note != "" {
 				omitted = append(omitted, note)
 			}
-			step.Body, step.Truncated = body, truncated
+			step.Body, step.Truncated = redactPocBody(step.Headers, body), truncated
 		}
 		steps = append(steps, step)
 	}

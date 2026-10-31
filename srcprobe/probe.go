@@ -38,6 +38,9 @@ type Options struct {
 	Endpoints []string // methods
 	Retest    []string // non404：待复测的 URL（或相对路径）
 	MaxRetest int
+	// Headers are host-resolved request headers (e.g. an authorized test-identity
+	// Cookie). They are never returned in Result or written to logs.
+	Headers map[string]string
 }
 
 // Hit 是一条非 404/非成功的观察。
@@ -74,6 +77,7 @@ type runner struct {
 	next     time.Time
 	requests int
 	host     string
+	headers  map[string]string
 }
 
 var sourceMapRe = regexp.MustCompile(`(?im)sourceMappingURL=([^\s*"']+)`)
@@ -102,7 +106,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	r := &runner{
 		client: client, interval: time.Second / time.Duration(rate), next: time.Now(),
-		host: strings.ToLower(target.Hostname()),
+		host: strings.ToLower(target.Hostname()), headers: opts.Headers,
 	}
 	res := &Result{
 		Kind: opts.Kind, Target: target.String(),
@@ -151,6 +155,9 @@ func (r *runner) do(ctx context.Context, method, rawURL string) (*http.Response,
 		return nil, nil, err
 	}
 	req.Header.Set("User-Agent", "bladepro-src-probe/1")
+	for name, value := range r.headers {
+		req.Header.Set(name, value)
+	}
 	r.requests++
 	resp, err := r.client.Do(req)
 	if err != nil {

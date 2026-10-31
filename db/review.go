@@ -121,7 +121,7 @@ WITH items AS (
   JOIN tasks t ON t.id=c.task_id
   LEFT JOIN assets a ON a.id=c.asset_id
   WHERE c.state='budget_stop' AND t.mode='src' AND t.deleted_at IS NULL
-    AND t.status NOT IN ('done','failed','timeout')
+    AND t.status NOT IN `+TerminalStatusSQL()+`
 
   UNION ALL
   -- 5) 四件套全部 N/A 的资产（现有 suspicious_na 口径）
@@ -135,7 +135,7 @@ WITH items AS (
   FROM src_cells c
   JOIN tasks t ON t.id=c.task_id
   LEFT JOIN assets a ON a.id=c.asset_id
-  WHERE t.mode='src' AND t.deleted_at IS NULL AND t.status NOT IN ('done','failed','timeout')
+  WHERE t.mode='src' AND t.deleted_at IS NULL AND t.status NOT IN `+TerminalStatusSQL()+`
   GROUP BY c.task_id, c.asset_id, t.name, t.description, a.url, a.domain, a.ip, a.app_name, a.root_domain
   HAVING count(*) FILTER (WHERE c.area IN ('injection','ssrf','xss','rce') AND c.state='na' AND c.item='*') = 4
 

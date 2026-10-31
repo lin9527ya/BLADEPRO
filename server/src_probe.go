@@ -53,6 +53,29 @@ func (s *Server) runSrcProbe(ctx context.Context, req agent.SrcProbeRequest) (*s
 	if strings.TrimSpace(doc.TimeWindow) != "" && !doc.InWindow(time.Now()) {
 		return nil, fmt.Errorf("当前不在平台作业时间窗（%s）内：等窗口开启后再探", doc.TimeWindow)
 	}
+	headers := map[string]string{}
+	identityLabel := strings.TrimSpace(req.Identity)
+	if identityLabel != "" {
+		id, ok := doc.IdentityByLabel(identityLabel)
+		if !ok {
+			return nil, fmt.Errorf("身份 label 未在平台项目中配置（test_identities）")
+		}
+		if err := srcmode.ValidateTestIdentities([]srcmode.TestIdentity{id}); err != nil {
+			return nil, err
+		}
+		credential := strings.TrimSpace(os.Getenv(id.CredentialEnv))
+		if credential == "" {
+			return nil, fmt.Errorf("身份凭据未在部署环境提供（credential_env）")
+		}
+		if strings.ContainsAny(credential, "\r\n") {
+			return nil, fmt.Errorf("身份凭据包含非法换行字符")
+		}
+		header := strings.TrimSpace(id.Header)
+		if header == "" {
+			header = "Cookie"
+		}
+		headers[header] = credential
+	}
 	store := s.m.PG().Src()
 	asset, err := store.SrcAssetInScope(ctx, req.TaskID, req.AssetID)
 	if err != nil {
@@ -131,14 +154,17 @@ func (s *Server) runSrcProbe(ctx context.Context, req agent.SrcProbeRequest) (*s
 	}
 	res, err := srcprobe.Run(ctx, srcprobe.Options{
 		Target: target, Kind: req.Kind, Wordlist: words, MaxPaths: req.MaxPaths,
-		Rate: rate, Client: client, Endpoints: req.Endpoints, Retest: retest,
+		Rate: rate, Client: client, Endpoints: req.Endpoints, Retest: retest, Headers: headers,
 	})
 	if err != nil {
 		return nil, err
 	}
 	res.Notes = append(res.Notes, note)
+	if identityLabel != "" {
+		res.Notes = append(res.Notes, "认证身份："+identityLabel+"（凭据由部署环境注入，不进入结果/日志）")
+	}
 	rows, complete := trace.snapshot()
-	params, _ := json.Marshal(map[string]any{"target": target, "kind": req.Kind, "max_paths": req.MaxPaths, "endpoints": req.Endpoints, "wordlist": words, "retest": retest})
+	params, _ := json.Marshal(map[string]any{"target": target, "kind": req.Kind, "max_paths": req.MaxPaths, "endpoints": req.Endpoints, "wordlist": words, "retest": retest, "identity": identityLabel})
 	result, _ := json.Marshal(map[string]any{"probe": res, "requests": rows})
 	receipt := &db.SrcProbeRun{ID: runID, TaskID: req.TaskID, AssetID: req.AssetID, Kind: req.Kind, Target: target, Params: params, Metrics: res.Metrics, Complete: complete, Truncated: res.Truncated, Result: result}
 	if err := s.m.pg.RecordSrcProbeRun(ctx, receipt); err != nil {
@@ -161,7 +187,11 @@ func (s *Server) runSrcProbe(ctx context.Context, req agent.SrcProbeRequest) (*s
 // non404. The key includes the parameters that change the result (paths max,
 // methods endpoint set); target is part of the cache primary key.
 func srcProbeCacheKey(req agent.SrcProbeRequest, doc srcmode.ModeDoc) string {
-	prefix := fmt.Sprintf("probe-v1:rate=%d:tier=%s:thresholds=%v:", doc.RateLimit, doc.Tier(), doc.CheckThresholds)
+	identity := strings.TrimSpace(req.Identity)
+	if identity == "" {
+		identity = "anonymous"
+	}
+	prefix := fmt.Sprintf("probe-v1:identity=%s:rate=%d:tier=%s:thresholds=%v:", identity, doc.RateLimit, doc.Tier(), doc.CheckThresholds)
 	switch req.Kind {
 	case srcprobe.KindPaths:
 		max := req.MaxPaths

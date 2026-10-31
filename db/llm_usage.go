@@ -1,6 +1,8 @@
 package db
 
 import (
+	"context"
+	"math"
 	"sort"
 	"strconv"
 	"time"
@@ -446,4 +448,25 @@ ORDER BY used DESC, asset_id`, taskID, budget)
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// LLMLatencyPercentiles returns p50/p95 latency (ms) over the recent window.
+// ceil is intentional: truncating turns a tiny sample's p95 into p50.
+func (d *DB) LLMLatencyPercentiles(ctx context.Context, window time.Duration) (int64, int64, error) {
+	if d == nil || d.DB == nil {
+		return 0, 0, nil
+	}
+	if window <= 0 {
+		window = 24 * time.Hour
+	}
+	var p50, p95 float64
+	err := d.QueryRowContext(ctx, `
+SELECT COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms),0),
+       COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms),0)
+FROM llm_usage WHERE ts > now() - make_interval(secs => $1) AND latency_ms > 0`,
+		int64(window/time.Second)).Scan(&p50, &p95)
+	if err != nil {
+		return 0, 0, err
+	}
+	return int64(math.Ceil(p50)), int64(math.Ceil(p95)), nil
 }

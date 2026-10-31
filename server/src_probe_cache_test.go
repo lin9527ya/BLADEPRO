@@ -39,4 +39,9 @@ func TestSrcProbeCacheKey(t *testing.T) {
 	if a == key(agent.SrcProbeRequest{Kind: srcprobe.KindMethods, Endpoints: []string{"/b", "/a"}}, changed) {
 		t.Fatal("rule changes must invalidate the probe cache key")
 	}
+	identityA := key(agent.SrcProbeRequest{Kind: srcprobe.KindMethods, Endpoints: []string{"/a"}, Identity: "A"}, doc)
+	identityB := key(agent.SrcProbeRequest{Kind: srcprobe.KindMethods, Endpoints: []string{"/a"}, Identity: "B"}, doc)
+	if identityA == identityB {
+		t.Fatal("different identities must not share probe cache entries")
+	}
 }

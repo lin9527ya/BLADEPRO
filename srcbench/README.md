@@ -28,6 +28,13 @@ runner 会：健康检查 → 建固定预算的 `mode=src` 任务 → 轮询到
 （task/findings/src/manifest/score）。默认只允许 loopback/私网靶场；不要把生产站点
 写进 bench。
 
+重复试验用 `BENCH_REPEAT=3 srcbench/run-benchmark.sh`：每轮创建独立任务和 run 目录，
+manifest 带 `repeat_index`，报告中位数/波动时应使用这些独立结果，不要合并任务状态。
+
+要设回归门，先保存一份 `score.json` 作为基线，再运行时带
+`BENCH_BASELINE=path/to/baseline.json`；runner 会调用 `srcbench/compare-baseline.sh`，
+按 `BENCH_REGRESSION_RATIO`（默认 0.90）检查 P/R/F1/覆盖率与 tokens_per_tp。
+
 ### 手工跑一次（不用 runner）
 
 1. **启动靶场**（本机、无真实数据，天然在授权范围内）：

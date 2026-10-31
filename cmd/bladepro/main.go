@@ -157,6 +157,12 @@ func run() int {
 		log.Fatalf("open stores: %v", err)
 	}
 	defer mgr.Close()
+	// The engine, scheduler and startup recovery all assume exclusive ownership of
+	// the database. Fail early instead of letting a second process steal running
+	// intents and the fixed recording-proxy port.
+	if err := mgr.PG().AcquireInstanceLock(ctx); err != nil {
+		log.Fatalf("instance lock: %v", err)
+	}
 
 	// Surviving this long means a freshly swapped-in build actually works, so drop
 	// the upgrade marker and stop counting attempts. Until it fires, every boot

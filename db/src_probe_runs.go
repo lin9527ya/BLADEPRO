@@ -115,7 +115,7 @@ func (s *SrcStore) CheckVerified(ctx context.Context, c SrcCheck) error {
 		return s.ValidateProbeCheck(ctx, c)
 	}
 	if c.Verification == "artifact_verified" {
-		a, err := s.ScreenshotArtifactForNode(ctx, c.TaskID, c.EvidenceNodeID)
+		a, err := s.ScreenshotArtifactForNode(ctx, c.TaskID, c.AssetID, c.EvidenceNodeID)
 		if err != nil {
 			return err
 		}

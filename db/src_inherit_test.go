@@ -4,6 +4,7 @@ package db
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -152,5 +153,69 @@ VALUES ($1,'subdomain',$2,'manual','inherit test')`, dst.ID, domain); err != nil
 	}
 	if reCheck.InheritedFromTaskID != 0 {
 		t.Fatalf("re-marked check still inherited: %+v", reCheck)
+	}
+}
+
+func TestInheritedCoverageBecomesStaleWhenSourceChanges(t *testing.T) {
+	d, err := Open(testDSN(t))
+	if err != nil {
+		t.Skipf("postgres unavailable (%v)", err)
+	}
+	defer d.Close()
+	newTask := func(desc string) *Task {
+		task, err := d.CreateTaskWithOptions(desc, "inherit-stale", TaskCreateOptions{Mode: "src"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = d.DeleteTask(task.ID) })
+		return task
+	}
+	src, dst := newTask("stale-src"), newTask("stale-dst")
+	ctx := context.Background()
+	store := d.Src()
+	const domain = "inherit-stale.example"
+	assetID, err := d.Assets().UpsertSubdomain(UpsertSubdomainReq{Domain: domain, TaskID: src.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = d.Exec(`DELETE FROM src_cells WHERE asset_id=$1`, assetID)
+		_, _ = d.Exec(`DELETE FROM src_checks WHERE asset_id=$1`, assetID)
+		_, _ = d.Exec(`DELETE FROM assets WHERE id=$1`, assetID)
+	})
+	if _, err := d.Exec(`INSERT INTO task_scope(task_id, kind, domain, source, reason)
+VALUES ($1,'subdomain',$2,'manual','stale test')`, dst.ID, domain); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertSrcCell(ctx, &SrcCell{TaskID: src.ID, AssetID: assetID, Area: "authz", Item: "*", State: SrcStateClear, Reason: "initial", UpdatedBy: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertSrcCheck(ctx, &SrcCheck{TaskID: src.ID, AssetID: assetID, CheckKey: "paths_enum", State: SrcCheckDone, Metrics: map[string]int{"paths": 200}, UpdatedBy: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.InheritSrcCoverage(ctx, src.ID, dst.ID); err != nil {
+		t.Fatal(err)
+	}
+	staleCells, err := store.StaleInheritedCells(ctx, dst.ID)
+	if err != nil || staleCells[""+strconv.FormatInt(assetID, 10)+"|authz|*"] {
+		t.Fatalf("fresh inherited cell flagged stale: %v %v", staleCells, err)
+	}
+	// Source changes after the copy: the inherited result is now only historical.
+	if _, err := store.UpsertSrcCell(ctx, &SrcCell{TaskID: src.ID, AssetID: assetID, Area: "authz", Item: "*", State: SrcStateClear, Reason: "changed after copy", UpdatedBy: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	staleCells, err = store.StaleInheritedCells(ctx, dst.ID)
+	if err != nil || !staleCells[""+strconv.FormatInt(assetID, 10)+"|authz|*"] {
+		t.Fatalf("changed inherited cell not stale: %v %v", staleCells, err)
+	}
+	if _, err := store.UpsertSrcCheck(ctx, &SrcCheck{TaskID: src.ID, AssetID: assetID, CheckKey: "paths_enum", State: SrcCheckDone, Metrics: map[string]int{"paths": 300}, UpdatedBy: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	chk, err := store.GetSrcCheck(ctx, dst.ID, assetID, "paths_enum")
+	if err != nil || chk == nil {
+		t.Fatalf("dst check: %v %v", chk, err)
+	}
+	if stale, err := store.InheritedCheckStale(ctx, *chk); err != nil || !stale {
+		t.Fatalf("changed inherited check not stale: %v %v", stale, err)
 	}
 }

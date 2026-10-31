@@ -613,10 +613,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 		if src := as.Src(); src != nil {
 			if mode, raw, err := src.TaskMode(ctx, taskID); err == nil && mode == srcmode.ModeSrc {
 				tsx.SetSrcMode(srcmode.Parse(raw), src)
-				tsx.SetSrcPreparer(w.srcPreparer)
-				tsx.SetSrcVerifier(w.srcVerifier)
-				tsx.SetSrcProber(w.srcProber)
-				tsx.SetSrcScreenshotter(w.srcScreenshotter)
+				tsx.SetSrcHostCapabilities(w.srcPreparer, w.srcVerifier, w.srcProber, w.srcScreenshotter, w.srcIdentityDiffer)
 			}
 		}
 	}

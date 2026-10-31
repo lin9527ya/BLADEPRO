@@ -89,3 +89,42 @@ func TestIntentIdempotencyKeyAndUnblock(t *testing.T) {
 		t.Fatalf("unblocked intent not claimable: %v %v", ok, err)
 	}
 }
+
+func TestPendingDependencyReportsFailedPrerequisite(t *testing.T) {
+	dsn, _, err := DSN()
+	if err != nil {
+		t.Skip("isolated PostgreSQL not configured")
+	}
+	d, err := Open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	task, err := d.CreateTaskWithOptions("dependency-failed", "dependency-failed", TaskCreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.DeleteTask(task.ID) })
+	store := d.Exploration(task.ExplorationID)
+	first, err := store.AddIntentGraph(map[string]any{"summary": "first"}, 5, nil, "planner", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.AddIntentGraph(map[string]any{"summary": "second", "depends_on": []int64{first}}, 5, nil, "planner", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetNodeState(first, "blocked"); err != nil {
+		t.Fatal(err)
+	}
+	deps, err := store.PendingIntentDependencies(10)
+	if err != nil || len(deps) != 1 || deps[0].IntentID != second || len(deps[0].BlockedBy) != 1 {
+		t.Fatalf("pending dependencies=%+v %v", deps, err)
+	}
+	if !deps[0].BlockedBy[0].Terminal || deps[0].BlockedBy[0].State != "blocked" || deps[0].BlockedBy[0].Action == "" {
+		t.Fatalf("failed prerequisite not explained: %+v", deps[0])
+	}
+	if fr, _ := store.Frontier(10); len(fr) != 0 {
+		t.Fatalf("failed prerequisite silently released downstream: %+v", fr)
+	}
+}

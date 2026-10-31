@@ -123,6 +123,8 @@ type triggerState struct {
 type agentState struct {
 	mu      sync.Mutex
 	bundles map[string]*taskAgentBundle
+	rowMu   sync.Mutex
+	rows    *agentRowCache
 }
 
 // archiveState 是冷任务归档的后台工作者。

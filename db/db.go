@@ -12,7 +12,10 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -62,6 +65,40 @@ func shortSum(s string) string {
 		return s
 	}
 	return s[:12]
+}
+
+// statementTimeoutDSN appends PostgreSQL's per-session statement_timeout to a
+// postgres:// DSN. BLADEPRO_DB_STATEMENT_TIMEOUT_MS overrides it; 0 disables.
+func statementTimeoutDSN(dsn string) string {
+	const def = 60000
+	raw := strings.TrimSpace(os.Getenv("BLADEPRO_DB_STATEMENT_TIMEOUT_MS"))
+	ms := def
+	if raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err == nil {
+			ms = n
+		}
+	}
+	if ms <= 0 {
+		return dsn
+	}
+	u, err := url.Parse(dsn)
+	if err != nil || u.Scheme == "" {
+		return dsn
+	}
+	q := u.Query()
+	opt := strings.TrimSpace(q.Get("options"))
+	if strings.Contains(opt, "statement_timeout") {
+		return dsn
+	}
+	timeout := "-c statement_timeout=" + strconv.Itoa(ms)
+	if opt == "" {
+		q.Set("options", timeout)
+	} else {
+		q.Set("options", opt+" "+timeout)
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // maxOpenConns 是连接池上限，见 Open 里的说明。取值远低于 PostgreSQL 默认的
@@ -140,6 +177,9 @@ func DSN() (dsn, source string, err error) {
 type DB struct {
 	*sql.DB
 	tx *sql.Tx
+
+	lockMu   sync.Mutex
+	lockConn *sql.Conn
 }
 
 // ensureDatabase connects to the postgres system database and creates the target
@@ -179,6 +219,7 @@ func Open(dsn string) (*DB, error) {
 	if err := guardDatabaseForTests(dsn); err != nil {
 		return nil, err
 	}
+	dsn = statementTimeoutDSN(dsn)
 	if err := ensureDatabase(dsn); err != nil {
 		return nil, err
 	}

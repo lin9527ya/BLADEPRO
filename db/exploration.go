@@ -2039,12 +2039,22 @@ func (s *ExplorationStore) TokenStatsBySession() ([]SessionTokenUsage, error) {
 	return out, rows.Err()
 }
 
+const maxActivityReadLimit = 500
+
+func clampActivityLimit(limit, def int) int {
+	if limit <= 0 {
+		limit = def
+	}
+	if limit > maxActivityReadLimit {
+		limit = maxActivityReadLimit
+	}
+	return limit
+}
+
 // ActivityList returns steps after sinceID (exclusive), optionally filtered by node.
 // Returns items and the new cursor (max id seen).
 func (s *ExplorationStore) ActivityList(nodeID *int64, sinceID int64, limit int) ([]Activity, int64, error) {
-	if limit <= 0 {
-		limit = 300
-	}
+	limit = clampActivityLimit(limit, 300)
 	var rows *sql.Rows
 	var err error
 	const cols = `id, node_id, COALESCE(worker,''), COALESCE(kind,''), COALESCE(tool,''), COALESCE(tool_use_id,''), is_error, COALESCE(summary,''), metadata, created_at, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, main_seg`
@@ -2079,9 +2089,7 @@ FROM activity WHERE exploration_id=$1 AND id>$2 ORDER BY id LIMIT $3`, s.expID, 
 // Long runs exceed any head-page limit, so reading "the final conclusion" must
 // start from the tail.
 func (s *ExplorationStore) ActivityTail(nodeID int64, limit int) ([]Activity, error) {
-	if limit <= 0 || limit > 2000 {
-		limit = 200
-	}
+	limit = clampActivityLimit(limit, 200)
 	const cols = `id, node_id, COALESCE(worker,''), COALESCE(kind,''), COALESCE(tool,''), COALESCE(tool_use_id,''), is_error, COALESCE(summary,''), metadata, created_at, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, main_seg`
 	rows, err := s.db.Query(`SELECT `+cols+` FROM activity
 WHERE exploration_id=$1 AND node_id=$2 ORDER BY id DESC LIMIT $3`, s.expID, nodeID, limit)
@@ -2110,9 +2118,7 @@ WHERE exploration_id=$1 AND node_id=$2 ORDER BY id DESC LIMIT $3`, s.expID, node
 // ActivityTailForTerminalIntent is the inherited-source equivalent: only a
 // terminal worker intent may expose its trace, and the tail is what matters.
 func (s *ExplorationStore) ActivityTailForTerminalIntent(nodeID int64, limit int) ([]Activity, error) {
-	if limit <= 0 || limit > 2000 {
-		limit = 200
-	}
+	limit = clampActivityLimit(limit, 200)
 	const cols = `a.id, a.node_id, COALESCE(a.worker,''), COALESCE(a.kind,''), COALESCE(a.tool,''), COALESCE(a.tool_use_id,''), a.is_error, COALESCE(a.summary,''), a.created_at, a.input_tokens, a.output_tokens, a.cache_read_tokens, a.cache_write_tokens`
 	rows, err := s.db.Query(`SELECT `+cols+` FROM activity a
 JOIN exploration_nodes n ON n.id=a.node_id AND n.exploration_id=a.exploration_id
@@ -2147,9 +2153,7 @@ ORDER BY a.id DESC LIMIT $3`, s.expID, nodeID, limit)
 // intent reopened between API-level checks cannot expose its new in-flight trace.
 // Model reasoning and accounting rows are never inherited.
 func (s *ExplorationStore) ActivityListForTerminalIntent(nodeID, sinceID int64, limit int) ([]Activity, int64, error) {
-	if limit <= 0 {
-		limit = 300
-	}
+	limit = clampActivityLimit(limit, 300)
 	rows, err := s.db.Query(`SELECT a.id, a.node_id, COALESCE(a.worker,''), COALESCE(a.kind,''),
 		COALESCE(a.tool,''), COALESCE(a.tool_use_id,''), a.is_error, COALESCE(a.summary,''),
 		a.created_at, a.input_tokens, a.output_tokens, a.cache_read_tokens, a.cache_write_tokens
@@ -2221,9 +2225,7 @@ func (f ActivitySessionFilter) cond(argStart int) (string, []any) {
 // still-older steps exist before the returned window (so the client can stop loading
 // on scroll-up). Summary-only columns — detail is lazy-loaded via ActivityDetail.
 func (s *ExplorationStore) ActivityPage(f ActivitySessionFilter, before int64, limit int) ([]Activity, bool, error) {
-	if limit <= 0 {
-		limit = 200
-	}
+	limit = clampActivityLimit(limit, 200)
 	const cols = `id, node_id, COALESCE(worker,''), COALESCE(kind,''), COALESCE(tool,''), COALESCE(tool_use_id,''), is_error, COALESCE(summary,''), metadata, created_at, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, main_seg`
 	args := []any{s.expID}
 	cond, cargs := f.cond(len(args) + 1)
@@ -2268,9 +2270,7 @@ ORDER BY id DESC LIMIT $%d`, cond, beforeArg, beforeArg, limitArg)
 // combines ownership, terminal-state and row-kind checks in one query, closing
 // the race where a previously completed source intent is reopened before paging.
 func (s *ExplorationStore) ActivityPageForTerminalIntent(nodeID, before int64, limit int) ([]Activity, bool, error) {
-	if limit <= 0 {
-		limit = 200
-	}
+	limit = clampActivityLimit(limit, 200)
 	rows, err := s.db.Query(`SELECT a.id, a.node_id, COALESCE(a.worker,''), COALESCE(a.kind,''),
 		COALESCE(a.tool,''), COALESCE(a.tool_use_id,''), a.is_error, COALESCE(a.summary,''),
 		a.created_at, a.input_tokens, a.output_tokens, a.cache_read_tokens, a.cache_write_tokens
@@ -2404,9 +2404,7 @@ const traceCols = `id, node_id, COALESCE(worker,''), COALESCE(kind,''), COALESCE
 // are dropped so the caller sees the work's actions + observations, not the
 // model's internal reasoning or token-accounting noise.
 func (s *ExplorationStore) ActivityTrace(nodeID int64, limit int) ([]Activity, error) {
-	if limit <= 0 {
-		limit = 500
-	}
+	limit = clampActivityLimit(limit, 500)
 	rows, err := s.db.Query(`SELECT `+traceCols+`
 FROM activity WHERE exploration_id=$1 AND node_id=$2 AND kind NOT IN ('thinking','usage')
 ORDER BY id LIMIT $3`, s.expID, nodeID, limit)
@@ -2420,9 +2418,7 @@ ORDER BY id LIMIT $3`, s.expID, nodeID, limit)
 // ActivityTraceForTerminalIntent returns one inherited work trace only while its
 // source intent is still terminal at query time.
 func (s *ExplorationStore) ActivityTraceForTerminalIntent(nodeID int64, limit int) ([]Activity, error) {
-	if limit <= 0 {
-		limit = 500
-	}
+	limit = clampActivityLimit(limit, 500)
 	rows, err := s.db.Query(`SELECT a.id, a.node_id, COALESCE(a.worker,''), COALESCE(a.kind,''), COALESCE(a.tool,''), a.is_error, COALESCE(a.summary,'')
 	FROM activity a
 	JOIN exploration_nodes n ON n.id=a.node_id AND n.exploration_id=a.exploration_id
@@ -2442,9 +2438,7 @@ func (s *ExplorationStore) ActivityTraceForTerminalIntent(nodeID int64, limit in
 // nil searches across ALL works (node_id IS NOT NULL — planner/main steps have no
 // node_id, so this cleanly means "worker traces"). thinking/usage rows dropped.
 func (s *ExplorationStore) ActivityTraceSearch(nodeID *int64, q string, limit int) ([]Activity, error) {
-	if limit <= 0 {
-		limit = 100
-	}
+	limit = clampActivityLimit(limit, 100)
 	like := "%" + q + "%"
 	var rows *sql.Rows
 	var err error
@@ -2467,9 +2461,7 @@ AND (summary ILIKE $2 OR detail ILIKE $2) ORDER BY id LIMIT $3`, s.expID, like, 
 // ActivityTraceSearchForTerminalIntent is the scoped inherited search variant;
 // terminal eligibility is evaluated by the same statement that reads the rows.
 func (s *ExplorationStore) ActivityTraceSearchForTerminalIntent(nodeID int64, q string, limit int) ([]Activity, error) {
-	if limit <= 0 {
-		limit = 100
-	}
+	limit = clampActivityLimit(limit, 100)
 	like := "%" + q + "%"
 	rows, err := s.db.Query(`SELECT a.id, a.node_id, COALESCE(a.worker,''), COALESCE(a.kind,''), COALESCE(a.tool,''), a.is_error, COALESCE(a.summary,'')
 	FROM activity a
@@ -2489,9 +2481,7 @@ func (s *ExplorationStore) ActivityTraceSearchForTerminalIntent(nodeID int64, q 
 // ActivityTraceSearchTerminalIntents searches inherited worker history without
 // exposing planner/main rows or work that is still open/running in the source.
 func (s *ExplorationStore) ActivityTraceSearchTerminalIntents(q string, limit int) ([]Activity, error) {
-	if limit <= 0 {
-		limit = 100
-	}
+	limit = clampActivityLimit(limit, 100)
 	like := "%" + q + "%"
 	rows, err := s.db.Query(`SELECT a.id, a.node_id, COALESCE(a.worker,''), COALESCE(a.kind,''), COALESCE(a.tool,''), a.is_error, COALESCE(a.summary,'')
 	FROM activity a
@@ -2563,9 +2553,7 @@ func (s *ExplorationStore) ActivityTraceSearchExcluding(excludeNodeID int64, q s
 	if excludeNodeID <= 0 {
 		return s.ActivityTraceSearch(nil, q, limit)
 	}
-	if limit <= 0 {
-		limit = 100
-	}
+	limit = clampActivityLimit(limit, 100)
 	like := "%" + q + "%"
 	rows, err := s.db.Query(`SELECT `+traceCols+`
 FROM activity WHERE exploration_id=$1 AND node_id IS NOT NULL AND node_id <> $2
@@ -2652,47 +2640,85 @@ func (s *ExplorationStore) AddStandaloneFinding(taskID, nodeID int64, vulnclass,
 	return s.db.AddFinding(taskID, nodeID, vulnclass, name, severity, summary, evidence, worker, assetIDs)
 }
 
+// IntentDependencyStatus is one unsatisfied prerequisite of an open intent.
+type IntentDependencyStatus struct {
+	IntentID int64  `json:"intent_id"`
+	State    string `json:"state"`
+	Summary  string `json:"summary"`
+	Terminal bool   `json:"terminal"` // exhausted/no_output/blocked: will never satisfy without action
+	Action   string `json:"action"`
+}
+
 // PendingIntentDependency is one open intent whose prerequisites are unfinished.
 // The planner needs to see these explicitly; otherwise they look like ordinary
 // queued work that simply never gets claimed.
 type PendingIntentDependency struct {
-	IntentID  int64   `json:"intent_id"`
-	Summary   string  `json:"summary"`
-	DependsOn []int64 `json:"depends_on"`
+	IntentID  int64                    `json:"intent_id"`
+	Summary   string                   `json:"summary"`
+	DependsOn []int64                  `json:"depends_on"`
+	BlockedBy []IntentDependencyStatus `json:"blocked_by,omitempty"`
 }
 
 // PendingIntentDependencies lists open intents blocked by unfinished prerequisites.
+// It also reports each prerequisite's state so a failed chain is not indistinguishable
+// from a merely slow one.
 func (s *ExplorationStore) PendingIntentDependencies(limit int) ([]PendingIntentDependency, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
 	rows, err := s.db.Query(`
-SELECT n.id, COALESCE(n.payload->>'summary',''), n.payload->'depends_on'
+SELECT n.id, COALESCE(n.payload->>'summary',''), n.payload->'depends_on',
+       dn.id, dn.state, COALESCE(dn.payload->>'summary','')
 FROM exploration_nodes n
+CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(n.payload->'depends_on','[]'::jsonb)) dep
+JOIN exploration_nodes dn ON dn.id = dep.value::bigint AND dn.exploration_id=$1
 WHERE n.exploration_id=$1 AND n.kind='intent' AND n.state='open'
   AND n.payload ? 'depends_on'
-  AND EXISTS (
-    SELECT 1 FROM jsonb_array_elements_text(COALESCE(n.payload->'depends_on','[]'::jsonb)) dep
-    JOIN exploration_nodes dn ON dn.id = dep.value::bigint
-    WHERE dn.exploration_id=$1
-      AND dn.state NOT IN ('done','negative','out-of-scope','stopped','deleted')
-  )
-ORDER BY n.id LIMIT $2`, s.expID, limit)
+  AND dn.state NOT IN ('done','negative','out-of-scope','stopped','deleted')
+ORDER BY n.id, dn.id LIMIT $2`, s.expID, limit*10)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []PendingIntentDependency{}
+	byIntent := map[int64]*PendingIntentDependency{}
+	order := []int64{}
 	for rows.Next() {
-		var item PendingIntentDependency
-		var deps []byte
-		if err := rows.Scan(&item.IntentID, &item.Summary, &deps); err != nil {
+		var (
+			item                 PendingIntentDependency
+			depsJSON             []byte
+			depID                int64
+			depState, depSummary string
+		)
+		if err := rows.Scan(&item.IntentID, &item.Summary, &depsJSON, &depID, &depState, &depSummary); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(deps, &item.DependsOn)
-		out = append(out, item)
+		entry := byIntent[item.IntentID]
+		if entry == nil {
+			if len(order) >= limit {
+				continue
+			}
+			entry = &item
+			_ = json.Unmarshal(depsJSON, &entry.DependsOn)
+			byIntent[item.IntentID] = entry
+			order = append(order, item.IntentID)
+		}
+		terminal := depState == "exhausted" || depState == "no_output" || depState == "blocked"
+		action := "等待前置完成"
+		if terminal {
+			action = "前置已结束但无产出/失败：重派、改派或 unblock_intent 拆链"
+		}
+		entry.BlockedBy = append(entry.BlockedBy, IntentDependencyStatus{
+			IntentID: depID, State: depState, Summary: depSummary, Terminal: terminal, Action: action,
+		})
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]PendingIntentDependency, 0, len(order))
+	for _, id := range order {
+		out = append(out, *byIntent[id])
+	}
+	return out, nil
 }
 
 // IdentityDiffFacts returns recent read-only identity comparisons recorded by

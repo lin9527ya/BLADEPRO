@@ -104,15 +104,16 @@ FROM evidence_artifacts WHERE task_id=$1 ORDER BY id DESC`, taskID)
 }
 
 // ScreenshotArtifactForNode returns the image artifact attached to an exploration
-// node, or nil when the node has no verified image. Used by the screenshots check.
-func (d *DB) ScreenshotArtifactForNode(ctx context.Context, taskID, nodeID int64) (*EvidenceArtifact, error) {
-	if d == nil || taskID <= 0 || nodeID <= 0 {
+// node for a specific asset. The asset predicate prevents a screenshot of another
+// in-scope host from satisfying this asset's screenshots closure item.
+func (d *DB) ScreenshotArtifactForNode(ctx context.Context, taskID, assetID, nodeID int64) (*EvidenceArtifact, error) {
+	if d == nil || taskID <= 0 || assetID <= 0 || nodeID <= 0 {
 		return nil, nil
 	}
 	a, err := scanEvidenceArtifact(d.QueryRowContext(ctx, `SELECT `+evidenceArtifactCols+`
 FROM evidence_artifacts
-WHERE task_id=$1 AND node_id=$2 AND mime LIKE 'image/%'
-ORDER BY id DESC LIMIT 1`, taskID, nodeID))
+WHERE task_id=$1 AND asset_id=$2 AND node_id=$3 AND mime LIKE 'image/%'
+ORDER BY id DESC LIMIT 1`, taskID, assetID, nodeID))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -121,9 +122,9 @@ ORDER BY id DESC LIMIT 1`, taskID, nodeID))
 
 // ScreenshotArtifactForNode is the SrcStore-facing wrapper used by the check
 // validators (they hold a SrcStore, not the DB).
-func (s *SrcStore) ScreenshotArtifactForNode(ctx context.Context, taskID, nodeID int64) (*EvidenceArtifact, error) {
+func (s *SrcStore) ScreenshotArtifactForNode(ctx context.Context, taskID, assetID, nodeID int64) (*EvidenceArtifact, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
-	return s.db.ScreenshotArtifactForNode(ctx, taskID, nodeID)
+	return s.db.ScreenshotArtifactForNode(ctx, taskID, assetID, nodeID)
 }

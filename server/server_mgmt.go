@@ -310,6 +310,7 @@ func (s *Server) pgCreateAgent(w http.ResponseWriter, r *http.Request) {
 	if err := pg.SeedPromptIfEmpty(a.ID, agent.DefaultAssistantPrompt); err != nil {
 		log.Printf("[agents] seed starter prompt for %s 失败: %v", a.Key, err)
 	}
+	s.invalidateAgentRows()
 	writeJSON(w, 200, agentDTO(a))
 }
 
@@ -361,6 +362,7 @@ func (s *Server) pgDeleteAgent(w http.ResponseWriter, r *http.Request) {
 	if err := pg.DeleteTriggersForAgent(a.Key); err != nil {
 		log.Printf("[agents] 清理 %s 触发器失败: %v", a.Key, err)
 	}
+	s.invalidateAgentRows()
 	writeJSON(w, 200, map[string]any{"deleted": a.Key})
 }
 
@@ -795,6 +797,7 @@ func (s *Server) pgSetAgentVisibility(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
+	s.invalidateAgentRows()
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 

@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 )
 
@@ -519,4 +520,35 @@ WHERE task_id=$1 AND asset_id=$2 AND area=$3 AND ($4='' OR item=$4)`, taskID, as
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// StaleInheritedCells returns inherited cells whose source row disappeared,
+// changed away from tested_clear, or was updated after the inheritance copy.
+// It is a read-time invalidation signal; it never silently deletes the row.
+func (s *SrcStore) StaleInheritedCells(ctx context.Context, taskID int64) (map[string]bool, error) {
+	out := map[string]bool{}
+	if s == nil || s.db == nil || taskID <= 0 {
+		return out, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT c.asset_id, c.area, c.item
+FROM src_cells c
+LEFT JOIN src_cells src
+  ON src.task_id=c.inherited_from_task_id AND src.asset_id=c.asset_id
+ AND src.area=c.area AND src.item=c.item
+WHERE c.task_id=$1 AND c.inherited_from_task_id > 0
+  AND (src.id IS NULL OR src.state <> 'tested_clear' OR src.updated_at > c.created_at)`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var assetID int64
+		var area, item string
+		if err := rows.Scan(&assetID, &area, &item); err != nil {
+			return nil, err
+		}
+		out[strconv.FormatInt(assetID, 10)+"|"+area+"|"+item] = true
+	}
+	return out, rows.Err()
 }

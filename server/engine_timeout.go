@@ -297,6 +297,15 @@ func (e *Engine) sweepExpiredLeases(t *Task) {
 
 // settlePolicyStall 是"策略停摆"的收尾动作：先留痕再走与超时/预算共用的收尾时序，
 // 只是终态记 policy_blocked（"策略封死"与"超时"是两回事，改策略/加目标即可复活）。
+func (e *Engine) settleStrategyExhausted(ctx context.Context, t *Task, reason string) {
+	e.emitActivity(t, db.Activity{Worker: "system", Kind: "system",
+		Summary: "规划者标记策略穷尽：" + reason,
+		Detail:  "planner 调用 mark_strategy_exhausted；任务按 policy_blocked 收尾，改策略或加目标后可复活。",
+	})
+	log.Printf("[policy] task %s 规划者标记策略穷尽: %s", t.ID, reason)
+	e.settleTask(ctx, t, "规划者标记策略穷尽："+reason, "policy_blocked")
+}
+
 func (e *Engine) settlePolicyStall(ctx context.Context, t *Task) {
 	e.emitActivity(t, db.Activity{Worker: "system", Kind: "system",
 		Summary: fmt.Sprintf("探索策略内已无可行方向（近 %s 内被拒 ≥ %d 条且无新增意图），任务进入收尾", policyStallWindow, policyStallMinRejects)})

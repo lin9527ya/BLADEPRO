@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 )
 
@@ -86,7 +87,7 @@ func (s *SrcStore) UpsertSrcCheck(ctx context.Context, c *SrcCheck) (*SrcCheck, 
 		c.Verification = "probe_verified"
 	}
 	if c.State == SrcCheckDone && c.CheckKey == "screenshots" {
-		a, err := s.ScreenshotArtifactForNode(ctx, c.TaskID, c.EvidenceNodeID)
+		a, err := s.ScreenshotArtifactForNode(ctx, c.TaskID, c.AssetID, c.EvidenceNodeID)
 		if err != nil {
 			return nil, err
 		}
@@ -192,4 +193,54 @@ func (s *SrcStore) DeleteUnverifiedSrcCheck(ctx context.Context, c SrcCheck) (bo
 	}
 	n, err := res.RowsAffected()
 	return n == 1, err
+}
+
+// StaleInheritedChecks returns inherited checks whose source row disappeared,
+// stopped being done, or changed after this task copied it.
+func (s *SrcStore) StaleInheritedChecks(ctx context.Context, taskID int64) (map[string]bool, error) {
+	out := map[string]bool{}
+	if s == nil || s.db == nil || taskID <= 0 {
+		return out, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT c.asset_id, c.check_key
+FROM src_checks c
+LEFT JOIN src_checks src
+  ON src.task_id=c.inherited_from_task_id AND src.asset_id=c.asset_id
+ AND src.check_key=c.check_key
+WHERE c.task_id=$1 AND c.inherited_from_task_id > 0
+  AND (src.id IS NULL OR src.state <> 'done' OR src.updated_at > c.created_at)`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var assetID int64
+		var key string
+		if err := rows.Scan(&assetID, &key); err != nil {
+			return nil, err
+		}
+		out[strconv.FormatInt(assetID, 10)+"|"+key] = true
+	}
+	return out, rows.Err()
+}
+
+// InheritedCheckStale checks one inherited closure item against its current
+// source row at validation time.
+func (s *SrcStore) InheritedCheckStale(ctx context.Context, c SrcCheck) (bool, error) {
+	if s == nil || s.db == nil || c.TaskID <= 0 || c.InheritedFromTaskID <= 0 {
+		return false, nil
+	}
+	var stale bool
+	err := s.db.QueryRowContext(ctx, `
+SELECT EXISTS(
+  SELECT 1 FROM src_checks cur
+  LEFT JOIN src_checks src
+    ON src.task_id=cur.inherited_from_task_id AND src.asset_id=cur.asset_id
+   AND src.check_key=cur.check_key
+  WHERE cur.task_id=$1 AND cur.asset_id=$2 AND cur.check_key=$3
+    AND cur.inherited_from_task_id > 0
+    AND (src.id IS NULL OR src.state <> 'done' OR src.updated_at > cur.created_at)
+)`, c.TaskID, c.AssetID, c.CheckKey).Scan(&stale)
+	return stale, err
 }

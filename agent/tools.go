@@ -99,6 +99,9 @@ type ToolSet struct {
 	// workerCap 是本任务的 worker 池大小（0 = 未知/不启用）。队列背压用：可领意图
 	// 超过 2×workerCap 时拒收低优先级新意图，避免 frontier 涨得比 worker 消化快。
 	workerCap int
+	// strategyExhausted is set by mark_strategy_exhausted. The engine reads it
+	// after Plan and enters the policy-blocked settlement path.
+	strategyExhausted string
 	// emitPolicy 是"意图被策略拒绝"的留痕通道（引擎的 emitActivity）。
 	// nil 时退回直接写库 + 日志，保证不静默丢。
 	emitPolicy func(db.Activity)
@@ -2028,6 +2031,89 @@ func (t *ToolSet) proveGoal() actool.CoreTool {
 		})
 }
 
+func (t *ToolSet) abandonGoal() actool.CoreTool {
+	return t.writeExpTool("abandon_goal",
+		"【目标处置】确认某个目标无法达成/不再适用时，把它标记为 abandoned，并必须写明理由。abandoned 不是 met，SRC 收尾门仍会检查覆盖/证据缺口，不能借此绕过交付要求。",
+		obj(map[string]any{
+			"goal_id": idp("要放弃的目标 id（必须是本任务 open 目标）"),
+			"reason":  str("为什么不可达/不再适用（必填，进图与审计）"),
+		}, "goal_id", "reason"),
+		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
+			var a struct {
+				GoalID json.RawMessage `json:"goal_id"`
+				Reason string          `json:"reason"`
+			}
+			_ = json.Unmarshal(in, &a)
+			goalID := pid(a.GoalID)
+			reason := strings.TrimSpace(a.Reason)
+			if goalID <= 0 || reason == "" {
+				return actool.Errorf("goal_id 和 reason 必填"), nil
+			}
+			n, err := t.ts.GetNode(goalID)
+			if err != nil || n == nil || n.Kind != db.KindGoal {
+				return actool.Errorf("goal_id 必须是本任务的目标节点"), nil
+			}
+			if n.State != "open" {
+				return actool.Errorf(fmt.Sprintf("只能放弃 open 目标（当前 %s）", n.State)), nil
+			}
+			var payload map[string]any
+			_ = json.Unmarshal(n.Payload, &payload)
+			if payload == nil {
+				payload = map[string]any{}
+			}
+			payload["abandon_reason"] = reason
+			if err := t.ts.SetNodePayload(goalID, db.KindGoal, payload); err != nil {
+				return actool.Errorf(err.Error()), nil
+			}
+			if err := t.ts.SetNodeState(goalID, "abandoned"); err != nil {
+				return actool.Errorf(err.Error()), nil
+			}
+			return actool.Text(fmt.Sprintf("goal %d abandoned", goalID)), nil
+		})
+}
+
+func (t *ToolSet) markStrategyExhausted() actool.CoreTool {
+	return t.writeExpTool("mark_strategy_exhausted",
+		"【合法收口】确认在授权范围/操作策略内确实已无可行方向时调用，而不是用边缘意图凑数。reason 必须说清穷尽了什么、被什么挡住；evidence_ids 至少 1 个本任务事实/漏洞/意图节点。系统会落一条事实并进入 policy_blocked 收尾，改策略或加目标后可复活。",
+		obj(map[string]any{
+			"reason":       str("穷尽原因与各方向的阻塞依据（必填）"),
+			"evidence_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "至少 1 个本任务事实/漏洞/意图节点 id"},
+		}, "reason", "evidence_ids"),
+		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
+			var a struct {
+				Reason      string            `json:"reason"`
+				EvidenceIDs []json.RawMessage `json:"evidence_ids"`
+			}
+			_ = json.Unmarshal(in, &a)
+			reason := strings.TrimSpace(a.Reason)
+			ids := pidList(a.EvidenceIDs)
+			if reason == "" || len(ids) == 0 {
+				return actool.Errorf("reason 和至少 1 个 evidence_ids 必填"), nil
+			}
+			for _, id := range ids {
+				n, err := t.ts.GetNode(id)
+				if err != nil || n == nil {
+					return actool.Errorf(fmt.Sprintf("evidence_ids 里的 %d 不是本任务节点", id)), nil
+				}
+				switch n.Kind {
+				case db.KindFact, db.KindFinding, db.KindIntent:
+				default:
+					return actool.Errorf(fmt.Sprintf("evidence_ids 里的 %d 是 %s，必须是事实/漏洞/意图", id, n.Kind)), nil
+				}
+			}
+			payload := map[string]any{
+				"summary":      "策略穷尽：" + reason,
+				"detail":       reason,
+				"evidence_ids": ids,
+			}
+			if _, err := t.ts.AddNode(db.KindFact, payload, 1, "confirmed", "planner", nil); err != nil {
+				return actool.Errorf(fmt.Sprintf("记录策略穷尽失败：%v", err)), nil
+			}
+			t.strategyExhausted = reason
+			return actool.Text("strategy exhausted recorded; task will enter policy_blocked settlement"), nil
+		})
+}
+
 func (t *ToolSet) goalMet() actool.CoreTool {
 	return writeTool("goal_met", "【立即结束整个任务】——仅当你确认任务的【全部目标都已真正达成、整体收官】时才调（注意是任务【整体】完成；仅仅达成了其中某一个目标/某一个 flag/某一个漏洞【不算】——那种情况用 prove_goal 标记该目标即可）。⚠️它不是用来“结束本轮规划”的：本轮没有新意图要派、或在等 worker 产出，都【直接结束本轮即可，不要调本工具】（0 个意图是完全正常的）。正常判定优先用 prove_goal 逐个证明目标；goal_met 只是绕过逐个证明、直接从全局收官的手段。",
 		obj(map[string]any{"reason": str("达成理由（必须是目标真正达成的证据，不能是“本轮无新方向”这类结束本轮的理由）")}, "reason"),
@@ -3617,7 +3703,7 @@ func (t *ToolSet) PlannerTools() []actool.CoreTool {
 		t.graphOverview(), t.listFindings(), t.listFacts(), t.nodeDetail(),
 		// cold-digest §6.1: restore folded cold nodes (digest body → members → detail).
 		t.expandDigest(),
-		t.getWorkerOutput(), t.getWorkerTrace(), t.searchAllWorkerTraces(), t.listGoals(), t.addIntent(), t.proveGoal(), t.goalMet(),
+		t.getWorkerOutput(), t.getWorkerTrace(), t.searchAllWorkerTraces(), t.listGoals(), t.addIntent(), t.proveGoal(), t.goalMet(), t.abandonGoal(), t.markStrategyExhausted(),
 		t.killWorkTool(), t.steerWorkTool(), t.unblockIntent(), t.dropIntent(), t.consumeHint(),
 		// P13 长任务执行：planner 可发起长扫描并复查在跑的执行（未接线时返回可读拒绝）。
 		t.runExecution(), t.waitExecution(), t.getExecution(), t.cancelExecution(),

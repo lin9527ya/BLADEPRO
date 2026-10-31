@@ -349,9 +349,7 @@ func (s *ExplorationStore) ActivityTraceSearchWithSources(nodeID int64, q string
 // direct source. The local owner is excluded only from the current exploration;
 // inherited traces are immutable historical context.
 func (s *ExplorationStore) ActivityTraceSearchAllWithSources(excludeNodeID int64, q string, limit int) ([]Activity, error) {
-	if limit <= 0 {
-		limit = 100
-	}
+	limit = clampActivityLimit(limit, 100)
 	out, err := s.ActivityTraceSearchExcluding(excludeNodeID, q, limit)
 	if err != nil {
 		return nil, err

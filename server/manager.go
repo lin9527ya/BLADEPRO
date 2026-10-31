@@ -1478,7 +1478,7 @@ func (m *Manager) ApplyTaskAdmission(id, expectedStatus, status string, queued b
 	err = m.pg.QueryRow(`UPDATE tasks
 	SET status=$2,
 	    completed_at=CASE
-	        WHEN $2 IN ('done','failed','timeout') THEN COALESCE(completed_at, now())
+	        WHEN $2 IN `+pgdb.TerminalStatusSQL()+` THEN COALESCE(completed_at, now())
 	        ELSE NULL
 	    END,
 	    paused=false,
@@ -1494,11 +1494,11 @@ func (m *Manager) ApplyTaskAdmission(id, expectedStatus, status string, queued b
 	        ELSE 'resume'
 	    END,
 	    first_run_at=CASE
-	        WHEN $6='timeout' AND $2 NOT IN ('done','failed','timeout') THEN NULL
+	        WHEN $6='timeout' AND $2 NOT IN `+pgdb.TerminalStatusSQL()+` THEN NULL
 	        ELSE first_run_at
 	    END,
 	    deadline_at=CASE
-	        WHEN $6='timeout' AND $2 NOT IN ('done','failed','timeout') THEN NULL
+	        WHEN $6='timeout' AND $2 NOT IN `+pgdb.TerminalStatusSQL()+` THEN NULL
 	        ELSE deadline_at
 	    END
 	WHERE id=$1 AND deleted_at IS NULL AND status=$6
@@ -1555,7 +1555,7 @@ func (m *Manager) ApplyTaskPause(id string) error {
 	err = m.pg.QueryRow(`UPDATE tasks
 		SET paused=true, queued=false, queued_at=NULL
 		WHERE id=$1 AND deleted_at IS NULL AND paused=false
-		  AND status NOT IN ('done','failed','timeout')
+		  AND status NOT IN `+pgdb.TerminalStatusSQL()+`
 		RETURNING COALESCE(queue_mode,'')`, n).Scan(&mode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("task %s is unavailable for pause", id)
@@ -2077,10 +2077,25 @@ func (t *Task) Notify() {
 // what triggered this wake-up. The planner reads the accumulated triggers next
 // round so it can spell out which intent finished (+ its output). Events pile up
 // (debounce) until the round drains them via drainTriggers.
-func (t *Task) NotifyDone(intentID int64) {
+func (t *Task) NotifyDone(intentID int64, state ...string) {
+	if intentID > 0 {
+		ev := agent.TriggerEvent{Kind: "done", IntentID: intentID}
+		if len(state) > 0 {
+			ev.State = state[0]
+		}
+		t.trigMu.Lock()
+		t.pendingTriggers = append(t.pendingTriggers, ev)
+		t.trigMu.Unlock()
+	}
+	t.Notify()
+}
+
+// NotifyRequeued reports that an intent was returned to open because its managed
+// execution is still running; it is not a completion trigger.
+func (t *Task) NotifyRequeued(intentID int64) {
 	if intentID > 0 {
 		t.trigMu.Lock()
-		t.pendingTriggers = append(t.pendingTriggers, agent.TriggerEvent{Kind: "done", IntentID: intentID})
+		t.pendingTriggers = append(t.pendingTriggers, agent.TriggerEvent{Kind: "done", IntentID: intentID, Requeued: true})
 		t.trigMu.Unlock()
 	}
 	t.Notify()

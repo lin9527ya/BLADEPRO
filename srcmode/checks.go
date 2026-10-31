@@ -269,6 +269,11 @@ func ValidateCheck(ctx context.Context, store *db.SrcStore, taskID int64, doc Mo
 		// Inherited checks keep their evidence in the source task. A fresh
 		// inherited observation is valid; an old one must be retested.
 		if check.InheritedFromTaskID > 0 {
+			if stale, err := store.InheritedCheckStale(ctx, check); err != nil {
+				return err
+			} else if stale {
+				return fmt.Errorf("%s 的继承源证据已变更/撤回，需要在本任务重测", def.Title)
+			}
 			if check.ObservedAt != nil && time.Since(*check.ObservedAt) <= 30*24*time.Hour {
 				return nil
 			}
@@ -332,7 +337,7 @@ func ValidateCheck(ctx context.Context, store *db.SrcStore, taskID int64, doc Mo
 	}
 	// 截图项不是"挂个节点就算"：节点必须指向一张真实图片产物（sha256/MIME 可核对）。
 	if def.Key == "screenshots" && check.State == db.SrcCheckDone {
-		artifact, err := store.ScreenshotArtifactForNode(ctx, taskID, check.EvidenceNodeID)
+		artifact, err := store.ScreenshotArtifactForNode(ctx, taskID, check.AssetID, check.EvidenceNodeID)
 		if err != nil {
 			return err
 		}

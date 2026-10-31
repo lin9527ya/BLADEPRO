@@ -55,3 +55,30 @@ func TestRememberRoundEmpty(t *testing.T) {
 		t.Fatalf("nil store must not invent a round note: %q", p.lastRoundNote)
 	}
 }
+
+func TestRenderTriggersDistinguishesTerminalStates(t *testing.T) {
+	d := testDB(t)
+	defer d.Close()
+	task, err := d.CreateTaskWithOptions("trigger-state", "trigger-state", db.TaskCreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.DeleteTask(task.ID) })
+	ts := d.Exploration(task.ExplorationID)
+	id, err := ts.AddIntent(map[string]any{"summary": "trigger intent"}, 5, nil, "planner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	noOutput := renderTriggers(ts, []TriggerEvent{{Kind: "done", IntentID: id, State: "no_output"}})
+	if !strings.Contains(noOutput, "no_output") || !strings.Contains(noOutput, "不是已测完") {
+		t.Fatalf("no_output trigger misleading: %s", noOutput)
+	}
+	blocked := renderTriggers(ts, []TriggerEvent{{Kind: "done", IntentID: id, State: "blocked"}})
+	if !strings.Contains(blocked, "blocked") || !strings.Contains(blocked, "需重派") {
+		t.Fatalf("blocked trigger misleading: %s", blocked)
+	}
+	requeued := renderTriggers(ts, []TriggerEvent{{Kind: "done", IntentID: id, Requeued: true}})
+	if !strings.Contains(requeued, "退回待领") {
+		t.Fatalf("requeued trigger misleading: %s", requeued)
+	}
+}

@@ -68,6 +68,17 @@ func (s *Server) getTaskSrc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	snap["enabled"] = true
+	if workers := s.engine.TaskWorkers(t.ID); workers > 0 {
+		states, _ := t.Store.IntentStateCounts()
+		claimable, _ := t.Store.CountClaimableIntents()
+		running := states["running"]
+		idle := workers - running
+		if idle < 0 {
+			idle = 0
+		}
+		snap["workers"], snap["idle_slots"] = workers, idle
+		snap["claimable_intents"], snap["intent_states"] = claimable, states
+	}
 	writeJSON(w, 200, snap)
 }
 
@@ -156,17 +167,31 @@ func (s *Server) postTaskSrcForceFinish(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, 400, "该任务已满足收尾条件，无需人工放行")
 		return
 	}
-	if err := s.m.SetTaskStatus(t.ID, "done"); err != nil {
+	if !s.engine.beginTaskOperation(t.ID) {
+		writeErr(w, 409, "任务正在删除，无法人工放行")
+		return
+	}
+	defer s.engine.decInflight(t.ID)
+	// Recompute the report inside the completion transaction: the check above is
+	// only the UX gate; the proof must reflect the rows that are actually current.
+	won, committed, err := s.engine.forceCompleteSrcTask(r.Context(), t, reason)
+	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
+	if !won {
+		writeErr(w, 409, "任务已终态或暂停，无法人工放行；请恢复后重试")
+		return
+	}
+	s.engine.cancelExec(t.ID, agent.AbortGoalMet)
+	goSafe("server/reconcile-concurrency", nil, func() { s.reconcileConcurrency() })
 	meta, _ := json.Marshal(map[string]any{
-		"gaps_total": rep.GapsTotal, "cells_total": rep.CellsTotal, "reason": reason,
+		"gaps_total": committed.GapsTotal, "cells_total": committed.CellsTotal, "reason": reason,
 	})
 	s.engine.emitActivity(t, db.Activity{Worker: "system", Kind: "src_gate",
 		Metadata: meta,
-		Summary:  "人工放行收尾：尚有 " + strconv.Itoa(rep.GapsTotal) + " 个缺口未清零，理由：" + reason})
-	writeJSON(w, 200, map[string]any{"ok": true, "status": "done", "gaps_total": rep.GapsTotal})
+		Summary:  "人工放行收尾：尚有 " + strconv.Itoa(committed.GapsTotal) + " 个缺口未清零，理由：" + reason})
+	writeJSON(w, 200, map[string]any{"ok": true, "status": "done", "gaps_total": committed.GapsTotal})
 }
 
 // postTaskSrcCheck lets a human mark one收尾闸 (JS 抽全/路径枚举/…). The same

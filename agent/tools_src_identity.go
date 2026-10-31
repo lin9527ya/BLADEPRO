@@ -10,11 +10,11 @@ import (
 
 // SrcIdentityRequest is one read-only identity differential on the same asset.
 type SrcIdentityRequest struct {
-	TaskID    int64
-	AssetID   int64
-	Path      string
-	IdentityA string
-	IdentityB string
+	TaskID    int64  `json:"-"`
+	AssetID   int64  `json:"asset_id"`
+	Path      string `json:"path"`
+	IdentityA string `json:"identity_a"`
+	IdentityB string `json:"identity_b"`
 }
 
 // SrcIdentityObservation intentionally carries no request/response headers or
@@ -46,6 +46,17 @@ type SrcIdentityDiffer func(ctx context.Context, req SrcIdentityRequest) (*SrcId
 func (t *ToolSet) SetSrcIdentityDiffer(fn SrcIdentityDiffer) { t.srcIdentityDiffer = fn }
 func (p *Planner) SetSrcIdentityDiffer(fn SrcIdentityDiffer) { p.srcIdentityDiffer = fn }
 func (w *Worker) SetSrcIdentityDiffer(fn SrcIdentityDiffer)  { w.srcIdentityDiffer = fn }
+
+// SetSrcHostCapabilities wires the host-side SRC capabilities as one set. Keeping
+// them together prevents a new capability from being added to the host but silently
+// left unwired in one of the two agent loops (the identity tool had exactly that bug).
+func (t *ToolSet) SetSrcHostCapabilities(preparer SrcPreparer, verifier SrcVerifier, prober SrcProber, screenshotter SrcScreenshotter, differ SrcIdentityDiffer) {
+	t.SetSrcPreparer(preparer)
+	t.SetSrcVerifier(verifier)
+	t.SetSrcProber(prober)
+	t.SetSrcScreenshotter(screenshotter)
+	t.SetSrcIdentityDiffer(differ)
+}
 
 func (t *ToolSet) srcIdentityDiffTool() actool.CoreTool {
 	return writeTool("src_identity_diff",

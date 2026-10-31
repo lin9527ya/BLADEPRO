@@ -587,6 +587,7 @@ func (s *Server) invalidateTaskAgents() {
 	s.agents.mu.Lock()
 	s.agents.bundles = map[string]*taskAgentBundle{}
 	s.agents.mu.Unlock()
+	s.invalidateAgentRows()
 }
 
 func (s *Server) agentsForTask(t *Task) *taskAgentBundle {

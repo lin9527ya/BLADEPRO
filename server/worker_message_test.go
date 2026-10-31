@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -63,4 +64,17 @@ func TestWorkerSlotFromOwner(t *testing.T) {
 			t.Errorf("workerSlotFromOwner(%q)=%d, want %d", owner, got, want)
 		}
 	}
+}
+
+// A panic in runWorkerStep must not leave the slot mutex permanently held.
+func TestWithSlotLockReleasesOnPanic(t *testing.T) {
+	var mu sync.Mutex
+	func() {
+		defer func() { _ = recover() }()
+		withSlotLock(&mu, func() { panic("runWorkerStep panic") })
+	}()
+	if !mu.TryLock() {
+		t.Fatal("slot lock leaked after panic")
+	}
+	mu.Unlock()
 }

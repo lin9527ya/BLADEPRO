@@ -221,3 +221,32 @@ func TestCompletionAndConcurrentGoalCannotBothCommit(t *testing.T) {
 		t.Fatal("completion with open goal", err)
 	}
 }
+
+func TestForceCompleteSrcTaskWritesManualOverrideProof(t *testing.T) {
+	m, task, _ := p0Fixture(t, "force-"+uuid.NewString()+".example")
+	engine := NewEngine(m)
+	won, rep, err := engine.forceCompleteSrcTask(t.Context(), task, "人工确认接受剩余缺口")
+	if err != nil || !won {
+		t.Fatalf("force completion=%v %v", won, err)
+	}
+	_ = rep
+	row, err := m.pg.GetTask(parseIntDefault(task.ID))
+	if err != nil || row.Status != "done" || row.CompletedAt == nil {
+		t.Fatalf("task not completed: %+v %v", row, err)
+	}
+	var proof string
+	if err := m.pg.QueryRow(`SELECT proof::text FROM src_completion_proofs WHERE task_id=$1`, parseIntDefault(task.ID)).Scan(&proof); err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(proof), &parsed); err != nil {
+		t.Fatalf("override proof is not JSON: %v (%s)", err, proof)
+	}
+	if parsed["manual_override"] != true || parsed["reason"] != "人工确认接受剩余缺口" {
+		t.Fatalf("override proof missing marker/reason: %s", proof)
+	}
+	won, _, err = engine.forceCompleteSrcTask(t.Context(), task, "第二次")
+	if err != nil || won {
+		t.Fatalf("second force completion should lose CAS: won=%v err=%v", won, err)
+	}
+}

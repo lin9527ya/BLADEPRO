@@ -63,6 +63,8 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 			cellIndex[k] = c
 		}
 	}
+	staleCells, _ := t.srcStore.StaleInheritedCells(ctx, t.taskID)
+	staleChecks, _ := t.srcStore.StaleInheritedChecks(ctx, t.taskID)
 	matrix := make([]map[string]any, 0, len(assets))
 	for _, a := range assets {
 		areas := t.srcDoc.RequiredFor(a.Type)
@@ -90,6 +92,7 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 					}
 					if cell.InheritedFromTaskID > 0 {
 						entry["inherited_from_task_id"] = cell.InheritedFromTaskID
+						entry["inherited_stale"] = staleCells[srcCellKey(a.ID, area, item)]
 					}
 				}
 				row = append(row, entry)
@@ -134,6 +137,9 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 				entry["reason"] = c.Reason
 				entry["metrics"] = c.Metrics
 				entry["verification"] = c.Verification
+				if c.InheritedFromTaskID > 0 {
+					entry["inherited_stale"] = staleChecks[srcCellKey(a.ID, "", c.CheckKey)]
+				}
 				entry["review_note"] = c.ReviewNote
 				entry["probe_run_id"] = c.ProbeRunID
 				if c.ObservedAt != nil {
@@ -148,7 +154,7 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 				}
 				// 截图项把产物 id 一并给出，UI 可直接预览（不再只看到一个 fact 节点）。
 				if def.Key == "screenshots" && c.EvidenceNodeID > 0 {
-					if art, err := t.srcStore.ScreenshotArtifactForNode(ctx, t.taskID, c.EvidenceNodeID); err == nil && art != nil {
+					if art, err := t.srcStore.ScreenshotArtifactForNode(ctx, t.taskID, c.AssetID, c.EvidenceNodeID); err == nil && art != nil {
 						entry["artifact_id"] = art.ID
 					}
 				}

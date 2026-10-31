@@ -105,12 +105,14 @@ type Engine struct {
 
 	bc *Broadcaster // live activity pub/sub (SSE)
 
-	started  sync.Map // taskID -> bool, so Run is idempotent per task
-	lastAct  sync.Map // taskID -> int64 unix, last planner/worker activity (heartbeat)
-	llmCalls sync.Map // taskID -> *int64, actual planner/worker/main-agent LLM calls
-	paused   sync.Map // taskID -> bool, user-paused (planner + workers idle but loops alive)
-	deleting sync.Map // taskID -> bool, delete barrier (no new task-owned writes)
-	dropCnt  sync.Map // taskID -> *int64, running count of dropped (unpersistable) activity records
+	started     sync.Map // taskID -> bool, so Run is idempotent per task
+	taskWorkers sync.Map // taskID -> int: worker pool size snapshotted at Run
+	slotLocks   sync.Map // "taskID/work#N" -> *sync.Mutex: one run per worker slot
+	lastAct     sync.Map // taskID -> int64 unix, last planner/worker activity (heartbeat)
+	llmCalls    sync.Map // taskID -> *int64, actual planner/worker/main-agent LLM calls
+	paused      sync.Map // taskID -> bool, user-paused (planner + workers idle but loops alive)
+	deleting    sync.Map // taskID -> bool, delete barrier (no new task-owned writes)
+	dropCnt     sync.Map // taskID -> *int64, running count of dropped (unpersistable) activity records
 
 	// SRC 收尾门的防死循环状态：连续拒绝次数 + 上一份缺口的哈希（同一份缺口只提示一次）。
 	srcMu   sync.Mutex
@@ -323,6 +325,10 @@ func (e *Engine) StopTask(taskID string) {
 	e.runtimeMu.Unlock()
 
 	e.started.Delete(taskID)
+	e.taskWorkers.Delete(taskID)
+	// slotLocks are intentionally retained: a detached human-message run may still
+	// be unwinding its slot after the pool goroutines are gone. Deleting a locked
+	// mutex would let the next run create a second lock for the same transcript.
 	e.lastAct.Delete(taskID)
 	e.llmCalls.Delete(taskID)
 	e.paused.Delete(taskID)
@@ -391,6 +397,36 @@ func (e *Engine) execContextFor(parent context.Context, taskID string) context.C
 func (e *Engine) IsPaused(taskID string) bool {
 	v, ok := e.paused.Load(taskID)
 	return ok && v.(bool)
+}
+
+// TaskWorkers returns the worker-pool size this task was started with (0 if it
+// has not been started in this process). Planner queue backpressure uses it.
+func (e *Engine) TaskWorkers(taskID string) int {
+	if v, ok := e.taskWorkers.Load(taskID); ok {
+		if n, ok := v.(int); ok {
+			return n
+		}
+	}
+	return 0
+}
+
+// slotLock returns the per-task, per-worker-slot mutex. A pool worker and a
+// human-message detached run must never write the same slot transcript at once.
+func (e *Engine) slotLock(taskID, name string) *sync.Mutex {
+	key := taskID + "/" + name
+	v, _ := e.slotLocks.LoadOrStore(key, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
+
+func workerSlotFromOwner(owner string) int {
+	if !strings.HasPrefix(owner, "work#") {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimPrefix(owner, "work#"))
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
 }
 
 // Started reports whether the engine loops are running for a task.
@@ -845,6 +881,9 @@ func (e *Engine) ReadyFor(t *Task) bool {
 // automatically once LLM is set from the UI).
 func (e *Engine) Run(ctx context.Context, t *Task) {
 	workers := e.m.Workers()
+	// Snapshot the pool for this task: queue backpressure must use the capacity the
+	// task actually started with, not a settings change intended for later tasks.
+	e.taskWorkers.Store(t.ID, workers)
 	e.deleteMu.RLock()
 	if e.IsDeleting(t.ID) {
 		e.deleteMu.RUnlock()
@@ -1075,7 +1114,12 @@ func (e *Engine) workerLoop(ctx context.Context, t *Task, name string) {
 		if !e.beginTaskOperation(t.ID) {
 			return
 		}
+		// The slot transcript is shared across intents; a detached human-message
+		// run may temporarily own this slot, so serialize the pool worker around it.
+		lock := e.slotLock(t.ID, name)
+		lock.Lock()
 		claimed := e.runWorkerStep(ctx, t, name, worker)
+		lock.Unlock()
 		e.decInflight(t.ID)
 		if !claimed && sleepCtx(ctx, 800*time.Millisecond) {
 			return
@@ -1523,6 +1567,43 @@ func (e *Engine) runDetachedIntent(ctx context.Context, t *Task, intentID int64,
 	if node == nil || node.Kind != db.KindIntent {
 		return fmt.Errorf("intent not found")
 	}
+	// Prefer the slot that last ran this intent: its transcript (and the provider
+	// prefix cache) is what the human is continuing. If that slot is busy, use any
+	// idle slot; if none is free, fall back to the legacy per-intent "chat"
+	// session rather than rejecting the message.
+	runName := "chat"
+	workers := e.TaskWorkers(t.ID)
+	if workers <= 0 {
+		workers = e.m.Workers()
+	}
+	preferred := workerSlotFromOwner(node.Owner)
+	var slotMu *sync.Mutex
+	trySlot := func(i int) bool {
+		name := fmt.Sprintf("work#%d", i)
+		mu := e.slotLock(t.ID, name)
+		if mu.TryLock() {
+			runName, slotMu = name, mu
+			return true
+		}
+		return false
+	}
+	if node.Owner != "chat" { // a previous human turn already owns the per-intent session
+		if preferred > 0 && preferred <= workers && trySlot(preferred) {
+			// preferred slot acquired
+		} else {
+			for i := 1; i <= workers; i++ {
+				if i == preferred {
+					continue
+				}
+				if trySlot(i) {
+					break
+				}
+			}
+		}
+	}
+	if slotMu != nil {
+		defer slotMu.Unlock()
+	}
 	changed, err := t.Store.CompareAndSetIntentState(intentID, "paused", "running")
 	if err != nil {
 		return err
@@ -1530,8 +1611,8 @@ func (e *Engine) runDetachedIntent(ctx context.Context, t *Task, intentID int64,
 	if !changed {
 		return fmt.Errorf("%w: 意图不再是 paused 状态", db.ErrIntentStateConflict)
 	}
-	node.State, node.Owner = "running", "chat"
-	if _, err := t.Store.TouchIntentLease(intentID, "chat", db.IntentLeaseTTL); err != nil {
+	node.State, node.Owner = "running", runName
+	if _, err := t.Store.TouchIntentLease(intentID, runName, db.IntentLeaseTTL); err != nil {
 		log.Printf("[chat] 意图 #%d 租约盖章失败: %v", intentID, err)
 	}
 	// Record the human turn as a visible activity BEFORE the run starts, so it is
@@ -1543,7 +1624,7 @@ func (e *Engine) runDetachedIntent(ctx context.Context, t *Task, intentID int64,
 	release = false // ownership of the admission passes to the goroutine
 	goSafe("engine/run-intent-chat", nil, func() {
 		defer e.decInflight(t.ID)
-		e.runIntent(ctx, t, "chat", worker, node, requestID, agentMessage)
+		e.runIntent(ctx, t, runName, worker, node, requestID, agentMessage)
 	})
 	return nil
 }

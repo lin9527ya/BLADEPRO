@@ -69,8 +69,9 @@ type Config struct {
 	// unsupported_parameter;而多数兼容网关只认前者,故不做自动推断,交由用户按端点选。
 	MaxTokensField string
 	// SessionHeaderKey,非空时,让每次 LLM 请求带上一个自定义 HTTP 头,头名为该值、
-	// 头值为【当前会话的 session id】(chat 会话=conv-<id>,worker=exp<x>-worker-i<intent>
-	// 等,见 WorkerSessionID)。用于某些按 session-id 头做提示缓存/粘性路由的网关。
+	// 头值为【当前会话的 session id】(chat 会话=conv-<id>,worker=exp<x>-worker-slot<N>
+	// 等,见 WorkerSessionIDForSlot;旧会话仍可能是 exp<x>-worker-i<intent>)。
+	// 用于某些按 session-id 头做提示缓存/粘性路由的网关。
 	// 空 = 不发送。值由 transcript.WithSessionID 挂在请求 context 上,由 RoundTripper
 	// 读取填入,因此同一共享 provider 也能按会话发出不同的头值。
 	SessionHeaderKey string

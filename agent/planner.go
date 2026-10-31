@@ -65,6 +65,17 @@ type Planner struct {
 	maxTokensFn  func() int  // resolver: per-reply output cap (nil/0 = send no cap)
 	compactor    *Compactor  // cold-node compaction (§7); nil = disabled
 	roundSeconds int         // per-round wall clock; 0 = unlimited
+	// workersFn returns this task's worker-pool snapshot. Used for queue
+	// backpressure: growing the frontier faster than workers can drain it only
+	// creates stale directions. nil/0 = no cap (tests / plain pentest flows).
+	workersFn func() int
+	// lastRoundIntents is how many intents the latest round created.
+	lastRoundIntents int
+	// lastRoundNote carries the previous round's conclusion into the next round.
+	// Planner sessions are fresh each round; this bounded summary replaces resuming
+	// the whole transcript (which grows without bound and mostly repeats old graph
+	// snapshots).
+	lastRoundNote string
 
 	// todos keeps ONE plan-scratchpad per task (keyed by exploration id) so the
 	// planner's multi-step plan survives across wake-ups — each Plan() is a fresh
@@ -100,6 +111,22 @@ func (p *Planner) SetCompactor(c *Compactor) { p.compactor = c }
 // SetRoundSeconds bounds one planner wake-up independently of the whole task
 // deadline. A long stuck round must not consume the task's entire budget.
 func (p *Planner) SetRoundSeconds(seconds int) { p.roundSeconds = seconds }
+
+// SetWorkersResolver injects the task's runtime worker-pool size (queue
+// backpressure). Read through a resolver so a task picks up the pool it was
+// actually started with rather than a settings change intended for later tasks.
+func (p *Planner) SetWorkersResolver(fn func() int) { p.workersFn = fn }
+
+func (p *Planner) workers() int {
+	if p.workersFn == nil {
+		return 0
+	}
+	return p.workersFn()
+}
+
+// LastRoundIntents returns how many intents the latest round created (engine
+// observability / idle-slot diagnostics).
+func (p *Planner) LastRoundIntents() int { return p.lastRoundIntents }
 
 // SetNonStreaming wires a resolver deciding whether runs use the non-streaming
 // model path (true = non-streaming). nil/unset = streaming (default).
@@ -481,8 +508,9 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	tsx := NewToolSet(ts, "planner")
 	tsx.SetExecService(p.execService)
 	pol := p.policy()
-	tsx.SetPolicy(pol)       // 意图层硬门（add_intent）
-	tsx.SetPolicyAudit(emit) // 被拒留痕进时间线
+	tsx.SetPolicy(pol)            // 意图层硬门（add_intent）
+	tsx.SetPolicyAudit(emit)      // 被拒留痕进时间线
+	tsx.SetWorkerCap(p.workers()) // 队列背压：可领意图超过 2×workers 时拒收常规新方向
 	tsx.SetFindingRecorder(p.findingRecorder)
 	if as != nil {
 		tsx.SetAssetStore(as, as.Companies())
@@ -534,6 +562,9 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	}
 	// P20：探索策略段不受 wantConstraints 开关控制——它是操作者声明的硬边界。
 	sysBody += policyBlock(pol)
+	// 队列背压与 worker 数是本任务固定的容量信息；放在静态 system 里，跨轮/跨任务
+	// 前缀缓存不受影响，也避免模型每轮把"有 1 个 worker 在跑"误当成并行度已满。
+	sysBody += intentQueueBlock(p.workers())
 	// SRC 模式：让 planner 的目标函数从"打深"切到"补格"（静态段，不含本轮态势）。
 	if tsx.SrcMode() {
 		sysBody = srcmode.SrcPrecedenceNote() + srcmode.StripPentestOnly(sysBody)
@@ -639,14 +670,114 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	input := goalLine + lead + situational + "\n\n据上面的态势，判定目标。目标已【真正达成】（已拿到目标成果/已确认目标漏洞）时用 prove_goal 逐个标记。" +
 		policy.HardFloorText(derefPolicy(pol)) +
 		renderPlannerTodos(opts.Todos.List())
+	// 默认每轮新会话：只把上一轮的结论摘要带进来，不 resume 全量 transcript。
+	// 全量历史会重复旧态势、越滚越大；结论摘要足够承接"想清楚了什么、派了哪些活"。
+	if note := strings.TrimSpace(p.lastRoundNote); note != "" {
+		input = "【上一轮结论摘要（本轮是独立会话，只承接结论，不承接旧对话；态势以下方本轮快照为准）】\n" + note + "\n\n" + input
+	}
+	prevMaxIntentID := latestIntentID(ts)
+	lastText := ""
 	// MaxDuration 现在会在墙钟到点打断在跑工具并就地进收尾(在活 ctx 上),单轮卡死不再
 	// 绕过收尾,无需外部硬 ctx 兜底。ctx 只承载 pause / kill / shutdown。
 	_, _, err = captureRun(ctx, opts, input,
 		func(r db.Activity) {
+			if r.Kind == "text" && strings.TrimSpace(r.Summary) != "" {
+				lastText = r.Summary
+			}
 			if emit != nil {
 				r.Worker = "planner" // planner activity has no intent_id (it generates them)
 				emit(r)
 			}
 		})
+	p.lastRoundIntents = tsx.intentsRound
+	if err == nil {
+		p.rememberRound(ts, prevMaxIntentID, lastText)
+	}
+	// Make idle-slot underuse visible in the timeline. This is observation only:
+	// fewer intents is correct when the remaining directions are already covered;
+	// the operator should still be able to see which round left workers idle.
+	if emit != nil && err == nil && !tsx.GoalMet && p.workers() > 0 {
+		if states, serr := ts.IntentStateCounts(); serr == nil {
+			idle := p.workers() - states["running"]
+			if idle < 0 {
+				idle = 0
+			}
+			want := idle
+			if want > 4 {
+				want = 4
+			}
+			if idle >= 2 && p.lastRoundIntents < want {
+				emit(db.Activity{Worker: "planner", Kind: "text",
+					Summary: fmt.Sprintf("本轮派了 %d 条意图，收尾时仍有 %d 个 worker 空闲（在跑 %d / 共 %d）：按槽位利用率纪律应派 %d 条，未补齐时请说明哪条方向覆盖了它们",
+						p.lastRoundIntents, idle, states["running"], p.workers(), want)})
+			}
+		}
+	}
 	return tsx.GoalMet, tsx.Reason, err
+}
+
+// intentQueueBlock is code-owned queue discipline. It is static for a task (the
+// worker pool is fixed at Run), so it does not break the planner's prompt cache.
+// Without it the model sees "one worker running" and treats parallelism as full;
+// with it, idle_slots in graph_overview becomes actionable.
+func intentQueueBlock(workers int) string {
+	if workers <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("\n\n【队列背压（代码持有）】：本任务 worker 池 = %d；graph_overview 的 intent_queue 会给出 claimable / running / idle_slots / soft_limit。\n"+
+		"- claimable ≥ soft_limit（默认 2×workers）时，本轮**默认不再新增常规意图**——先让 worker 消化；确有材料性新发现驱动的跟进，才加，且一次最多 1 条并把 priority 提到 8 以上绕过上限。\n"+
+		"- idle_slots ≥ 2 且队列未饱和时，若有未覆盖的新方向，本轮应至少补 min(idle_slots, 4) 条，别让 worker 空转。\n"+
+		"- 被队列上限拒收的方向不等于丢弃：把 summary 写进 TodoWrite 并注明「等队列消化后再派」；已过时的排队方向用 drop_intent 清掉。", workers)
+}
+
+// latestIntentID returns the newest intent id (0 = none), used to identify the
+// intents a round added.
+func latestIntentID(ts *db.ExplorationStore) int64 {
+	if ts == nil {
+		return 0
+	}
+	nodes, err := ts.ListByKind(db.KindIntent, 1)
+	if err != nil || len(nodes) == 0 {
+		return 0
+	}
+	return nodes[0].ID
+}
+
+// rememberRound builds the next round's bridge note: last conclusion + intents
+// added this round + fact ids they yielded. Only conclusion-level data — never
+// tool output or old graph snapshots.
+func (p *Planner) rememberRound(ts *db.ExplorationStore, prevMaxID int64, lastText string) {
+	if ts == nil {
+		p.lastRoundNote = ""
+		return
+	}
+	nodes, _ := ts.ListByKind(db.KindIntent, 30)
+	intentions := make([]string, 0, 8)
+	factIDs := make([]string, 0, 6)
+	for _, n := range nodes {
+		if n.ID <= prevMaxID || len(intentions) >= 8 {
+			continue
+		}
+		var payload map[string]any
+		_ = json.Unmarshal(n.Payload, &payload)
+		summary, _ := payload["summary"].(string)
+		intentions = append(intentions, fmt.Sprintf("#%d %s", n.ID, clipLine(summary, 90)))
+		if fids := factIDsYielded(ts, n.ID); fids != "" {
+			factIDs = append(factIDs, fids)
+		}
+	}
+	var b strings.Builder
+	if t := clipLine(strings.TrimSpace(lastText), 500); t != "" {
+		b.WriteString("- 上一轮结论：" + t + "\n")
+	}
+	if len(intentions) > 0 {
+		b.WriteString("- 上一轮新增意图：" + strings.Join(intentions, "；") + "\n")
+	}
+	if len(factIDs) > 0 {
+		b.WriteString("- 上一轮产出的事实 id：" + strings.Join(factIDs, "、") + "\n")
+	}
+	if b.Len() == 0 {
+		b.WriteString("- 上一轮没有新增意图/结论。\n")
+	}
+	p.lastRoundNote = b.String()
 }

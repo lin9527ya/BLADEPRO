@@ -52,3 +52,15 @@ func containsUnsupported(err error) bool {
 	return err != nil && !errors.Is(err, errWorkControlConflict) &&
 		strings.Contains(err.Error(), "unsupported work action")
 }
+
+// The human-message continuation prefers the slot that last ran the intent, so
+// its slot transcript (and prompt cache) is resumed. Keep the owner parsing exact:
+// "chat" and malformed values must fall through to an idle slot / legacy session.
+func TestWorkerSlotFromOwner(t *testing.T) {
+	cases := map[string]int{"work#1": 1, "work#12": 12, "chat": 0, "work#": 0, "work#x": 0, "work#0": 0, "": 0}
+	for owner, want := range cases {
+		if got := workerSlotFromOwner(owner); got != want {
+			t.Errorf("workerSlotFromOwner(%q)=%d, want %d", owner, got, want)
+		}
+	}
+}

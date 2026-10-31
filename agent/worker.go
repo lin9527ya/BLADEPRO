@@ -115,12 +115,82 @@ type Worker struct {
 	maxTokensFn func() int
 }
 
-// WorkerSessionID returns the stable transcript key used by a worker intent.
-// Worker slots are reusable, so the intent id (rather than work#N) is the
-// session identity. Keep this helper public so the Worker message API and UI
-// can refer to exactly the conversation that will be resumed.
+// WorkerSessionID is the legacy per-intent transcript key. Slot runs use
+// WorkerSessionIDForSlot; this stays for detached/manual runs and old transcripts.
 func WorkerSessionID(explorationID, intentID int64) string {
 	return fmt.Sprintf("exp%d-worker-i%d", explorationID, intentID)
+}
+
+// WorkerSessionIDForSlot is the persistent transcript key for a worker slot. The
+// slot is reused across intents, so the transcript and the provider's prefix
+// cache accumulate instead of starting cold for every intent. Keep the exp<exp>-
+// prefix (archive/delete and llmrec.parseSession rely on it).
+func WorkerSessionIDForSlot(explorationID int64, slot int) string {
+	return fmt.Sprintf("exp%d-worker-slot%d", explorationID, slot)
+}
+
+func workerSlotNumber(name string) int {
+	if !strings.HasPrefix(name, "work#") {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimPrefix(name, "work#"))
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
+}
+
+const workerIntentMarkerPrefix = "<!-- BLADEPRO_WORKER_INTENT:"
+
+func workerIntentMarker(intentID int64) string {
+	return workerIntentMarkerPrefix + strconv.FormatInt(intentID, 10) + " -->"
+}
+
+// workerIntentIDIn parses the marker anywhere in a message (the launch turn is
+// "overview + intent block", so it is not at the start).
+func workerIntentIDIn(text string) (int64, bool) {
+	start := strings.Index(text, workerIntentMarkerPrefix)
+	if start < 0 {
+		return 0, false
+	}
+	rest := text[start+len(workerIntentMarkerPrefix):]
+	end := strings.Index(rest, " -->")
+	if end < 0 {
+		return 0, false
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(rest[:end]), 10, 64)
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
+}
+
+func hasWorkerIntentMessage(messages []llm.Message, intentID int64) bool {
+	for _, message := range messages {
+		if message.Role != llm.RoleUser {
+			continue
+		}
+		if id, ok := workerIntentIDIn(message.Text()); ok && id == intentID {
+			return true
+		}
+	}
+	return false
+}
+
+// lastWorkerIntentID returns the newest intent marker in the transcript (0 if
+// none). A retry only counts as "same intent" when the LATEST marker matches:
+// a paused intent may be revived into a slot that has since run other intents,
+// and continuing that unrelated tail would be wrong.
+func lastWorkerIntentID(messages []llm.Message) int64 {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != llm.RoleUser {
+			continue
+		}
+		if id, ok := workerIntentIDIn(messages[i].Text()); ok {
+			return id
+		}
+	}
+	return 0
 }
 
 const workerChatMarkerPrefix = "<!-- BLADEPRO_WORKER_CHAT:"
@@ -402,6 +472,15 @@ func ensureRunDir(base string, taskID, intentID int64) string {
 	return dir
 }
 
+// ensureSlotDir is the stable per-slot directory for compaction/noa artifacts.
+// It is separate from the per-intent runDir because the transcript and its
+// summaries outlive one intent.
+func ensureSlotDir(base string, taskID int64, slot int) string {
+	dir := filepath.Join(base, "tasks", strconv.FormatInt(taskID, 10), "worker-slot"+strconv.Itoa(slot))
+	_ = os.MkdirAll(dir, 0o775)
+	return dir
+}
+
 // cmdOutDir is the SDK large-tool-output spill dir under an agent's run dir.
 func cmdOutDir(dir string) string { return filepath.Join(dir, "cmd-output") }
 
@@ -416,9 +495,9 @@ func workerSystem(proxyAddr, caCert, dataDir, runDir, workerName string) string 
 }
 
 // workerStaticSystem is the part of the worker system prompt that is identical
-// across intents of the same task. Keep it free of per-intent values (run dir,
-// intent payload, asset JSON): those are appended as a final dynamic segment so
-// DeepSeek's prefix cache can reuse the whole static prompt across intents.
+// across intents of the same task/slot. Keep it free of per-intent values (run
+// dir, intent payload, asset JSON): those ride in the launch user turn, so the
+// provider's prefix cache can reuse this whole static prefix across intents.
 func workerStaticSystem(proxyAddr, caCert, dataDir, workerName string) string {
 	body := renderSystem("worker", workerDefaultTmpl, WorkerVars{
 		ProxyAddr: proxyAddr, WorkerName: workerName, DataDir: dataDir, Now: nowStr(),
@@ -442,10 +521,30 @@ func workerExecSpec() string {
 		"- 要收掉一条执行用 cancel_execution 并写明理由（理由记进台账，会回传给模型和审计）；不要用 kill/pkill 直接杀进程——那会绕过台账。"
 }
 
-// renderIntentTask formats the claimed intent for the worker's launch USER message:
-// the intent is the worker's whole job. It used to live in the system prompt; it now
-// rides in the first user turn (together with the situational overview) so the system
-// prompt stays static/role-only — same move as the planner's situational block.
+// renderWorkerIntentTurn builds the per-intent USER turn. It deliberately stays out
+// of the system prompt: a slot transcript is resumed across intents, and a changing
+// system prompt would invalidate the provider's prefix cache before the first message.
+// The marker lets a retried run avoid appending the same intent twice.
+func renderWorkerIntentTurn(intent *db.Node, assetBlock, runDir string, slot int) string {
+	var b strings.Builder
+	b.WriteString(workerIntentMarker(intent.ID))
+	b.WriteString("\n【当前意图（本次唯一任务：只做这一条、只产生事实、做完即停）】：\n")
+	b.WriteString("以下历史对话属于此前已经结束的意图，仅作背景参考；不要继续旧目标，也不要把旧 intent id/旧工作目录用于本条写回。\n")
+	b.WriteString("本条写回（record_fact / report_finding / src_mark_cell 等）必须使用意图 id：")
+	b.WriteString(strconv.FormatInt(intent.ID, 10))
+	b.WriteString("\n\n")
+	b.WriteString(string(intent.Payload))
+	if slot > 0 {
+		b.WriteString(fmt.Sprintf("\n执行槽位: Worker #%d（本槽位会话跨意图复用）", slot))
+	}
+	if strings.TrimSpace(assetBlock) != "" {
+		b.WriteString(assetBlock)
+	}
+	b.WriteString(workerArtifactSpec(runDir))
+	b.WriteString("\n\n开始执行当前意图：只做它、只产生事实、assets、finding、做完即停。")
+	return b.String()
+}
+
 // intentAssetIDs pulls the intent's target asset ids out of its payload
 // (planner's add_intent stores them as a numeric asset_ids array). nil on absence
 // or malformed payload.
@@ -460,10 +559,6 @@ func intentAssetIDs(intent *db.Node) []int64 {
 		return nil
 	}
 	return p.AssetIDs
-}
-
-func renderIntentTask(intent *db.Node) string {
-	return fmt.Sprintf("\n\n【你领到的意图（本次唯一任务：只做这一条、只产生事实、做完即停）】：\n%s\n意图 id: %d（写回 record_fact / report_finding 时传它）", string(intent.Payload), intent.ID)
 }
 
 // renderWorkerGraphOverview folds the global situational snapshot into the worker's
@@ -545,14 +640,18 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	tools, def, cleanup := AugmentTools(ctx, "worker", base)
 	defer cleanup()
 
-	// 意图是 worker 的【唯一职责、贯穿整个 run 的不变量】→ 连同启动指令、意图锚定的目标资产
-	// 原始数据一起放进 system prompt：system 每次 run 都重新拼一遍、绝不会被 compaction 压掉，
-	// 长 run 里意图永远在场，续跑时也不依赖 transcript 历史是否留住那条首消息。代价是 system
-	// 混入 per-intent 易变数据、失去跨意图缓存复用；这是刻意的取舍（意图丢失比省 token 严重得多）。
-	// 与 planner「态势块放 user turn」分叉是有意的：planner 本身是产意图的那个、没有单一 mandate，
-	// worker 有。仅【全局态势 overview】留在启动 user 消息里——它可降级、容忍 stale，压掉无碍。
 	// 本次意图的专属工作目录 <workDir>/tasks/<taskID>/i<intentID>，引擎侧先建好。
 	runDir := ensureRunDir(w.workDir, taskID, intent.ID)
+	// 槽位会话：worker 名字即 work#N。同一槽位跨意图复用 transcript，provider 的前缀
+	// 缓存才能从"只有 system 命中"变成"整段历史 + system 都命中"。compaction/noa 的
+	// 归档也放槽位目录（与 transcript 同寿命），但 Bash 产物仍按意图隔离。
+	slot := workerSlotNumber(name)
+	sessionID := WorkerSessionID(ts.ID(), intent.ID)
+	ctxDir := runDir
+	if slot > 0 {
+		sessionID = WorkerSessionIDForSlot(ts.ID(), slot)
+		ctxDir = ensureSlotDir(w.workDir, taskID, slot)
+	}
 	// The run-wide intent is not the current tool action. Do not forward it or
 	// inherit a parent run's background into the action reviewer.
 	ctx = intercept.WithReviewContext(ctx, runDir, intercept.ReviewBackground{})
@@ -606,9 +705,9 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 		// blocks. With none, our own static segment is still cacheable.
 		boundary = staticCount
 	}
-	system = append(system, renderIntentTask(intent)+assetBlock+
-		"\n\n开始执行上面这条意图：只做它、只产生事实、assets、finding、做完即停。"+
-		workerArtifactSpec(runDir))
+	// 意图块、资产与产物目录不进 system：同一槽位的 system 必须跨意图逐字节稳定，
+	// 否则每次换意图都会击穿整个前缀缓存。它们随本轮 user 消息下发。
+	intentTurn := renderWorkerIntentTurn(intent, assetBlock, runDir, slot)
 	// 任务级 deadline(经 ctx 注入)夹逼本 run 的墙钟预算 + 决定收尾词(见 taskclock.go)。
 	tc := taskClockFrom(ctx)
 	maxDur, clamped := clampMaxDuration(tc.DeadlineUnix, w.runTimeout)
@@ -672,9 +771,9 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	if hooks != nil { // typed-nil guard: only set when concrete (avoids harness panic)
 		opts.Hooks = hooks
 	}
-	if w.tx != nil { // persist raw LLM conversation; one file per worked intent
+	if w.tx != nil { // persist raw LLM conversation; slot transcript spans intents
 		opts.Transcript = w.tx
-		opts.SessionID = WorkerSessionID(ts.ID(), intent.ID)
+		opts.SessionID = sessionID
 	}
 	intentID := intent.ID
 	emitWrap := func(r db.Activity) {
@@ -683,39 +782,40 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 			emit(r)
 		}
 	}
-	// 意图 / 启动指令 / 意图锚定资产已随 system prompt 下发（见上方 sysBody 组装）。
-	// 这条启动 user 消息只承载【全局态势 overview】——可降级的了解大局信息，压掉无碍。
-	// overview 罕见地 marshal 失败为空时，回退一句启动词，避免首轮出现空 user 消息。
+	// 启动 user 消息 = 可降级的全局态势 + 当前意图块（带 marker）。槽位历史属于
+	// 此前已结束的意图，intentTurn 会明确要求只作背景、不得沿用旧 intent id/旧目录。
 	input := overview
 	if strings.TrimSpace(input) == "" {
-		input = "开始执行 system 里领到的意图：只做它、只产生事实、assets、finding、做完即停。"
+		input = "开始执行下面这条意图：只做它、只产生事实、assets、finding、做完即停。"
 	}
+	input += "\n\n" + intentTurn
 
 	// 实验功能:开启后由 noa 接管上下文压缩(归档集中在 <workDir>/noa/<SessionID> 下,持久)。
-	noaSession := WorkerSessionID(ts.ID(), intent.ID)
-	enableNoa(&opts, w.noaEnabledFn, w.workDir, noaSession, noaWarn(noaSession))
+	enableNoa(&opts, w.noaEnabledFn, w.workDir, sessionID, noaWarn(sessionID))
 	// P14 领域上下文：领域化摘要（7 段 + 原文落盘回读）+ 每请求附常驻索引（目标/约束/
 	// 活跃方向/发现一行式）。noa 开启时它已占 Compactor 槽位，这里自动让位（互斥）。
-	InstallContextManagerWithSummarizer(&opts, w.compactionWindow(), runDir, func() string {
+	// 槽位目录让压缩归档与 transcript 同寿命；索引仍只投影当前意图。
+	InstallContextManagerWithSummarizer(&opts, w.compactionWindow(), ctxDir, func() string {
 		return BuildContextIndex(ContextIndexVars{Store: ts, Intent: intent, CompanyLines: tsx.companyKnowledgeLines()})
 	}, w.summaryProvider)
 	ctx = attachSideCapture(ctx, &opts)
 	s := agentcore.NewSession(opts)
 	defer s.Close() // release the session's background-task manager (temp dir + processes)
 
-	// Resume prior conversation if this intent was paused/blocked/exhausted and is
-	// being re-run. The transcript ID is deterministic per intent, so if a prior
-	// session exists the worker continues from where it left off instead of
-	// restarting from scratch.
+	// Resume the slot transcript. A new intent still gets its own marker + intent
+	// turn; only a retry of the SAME intent (marker already present) collapses to
+	// "continue", so a resumed run does not duplicate the intent block.
 	alreadyRecorded := false
+	hasIntentTurn := false
 	if w.tx != nil {
 		_ = s.Resume(opts.SessionID)
 		alreadyRecorded = requestID != "" && hasWorkerChatMessage(s.Messages(), requestID)
-		if len(s.Messages()) > 0 && message == "" {
+		hasIntentTurn = lastWorkerIntentID(s.Messages()) == intent.ID
+		if len(s.Messages()) > 0 {
 			seedUnlockFromHistory(s.Messages(), def.UnlockSkill)
-			input = "继续执行。"
-		} else if len(s.Messages()) > 0 {
-			seedUnlockFromHistory(s.Messages(), def.UnlockSkill)
+		}
+		if hasIntentTurn && message == "" {
+			input = fmt.Sprintf("继续执行当前意图 #%d。只做它、只产生事实、assets、finding、做完即停。", intent.ID)
 		}
 	}
 	if message != "" {

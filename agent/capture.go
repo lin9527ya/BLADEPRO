@@ -35,7 +35,15 @@ func captureRun(ctx context.Context, opts agentcore.Options, input string, emit 
 // multiple prompts on the SAME conversation (e.g. a settlement round that reuses
 // the worker's accumulated context after the main run hit max_turns).
 func captureRunSession(ctx context.Context, s *agentcore.Session, input string, emit func(db.Activity)) (string, harness.TerminalReason, error) {
-	ctx, auditTrace := intercept.WithTrace(ctx, input, approvalHistory(s.Messages()))
+	prior := approvalHistory(s.Messages())
+	// A new worker intent owns a fresh audit context. Slot transcripts contain
+	// earlier intents; their tool calls must not be presented to the judge as
+	// context for this intent. Continuation turns have no new marker and keep the
+	// current intent's history.
+	if _, ok := workerIntentIDIn(input); ok {
+		prior = nil
+	}
+	ctx, auditTrace := intercept.WithTrace(ctx, input, prior)
 	defer auditTrace.Finish()
 	var reason harness.TerminalReason
 	rec := func(r db.Activity) {
@@ -201,6 +209,9 @@ func firstLine(s string, max int) string {
 // This is audit context; the judge receives only bounded, paired execution
 // evidence selected from it, never assistant prose or thinking blocks.
 func approvalHistory(messages []llm.Message) []db.InterceptContextEntry {
+	// Slot transcripts contain earlier intents. Their tool calls/approvals must not
+	// leak into the current intent's approval context.
+	messages = messagesSinceWorkerIntent(messages)
 	var entries []db.InterceptContextEntry
 	for _, message := range messages {
 		for _, block := range message.Content {
@@ -219,4 +230,21 @@ func approvalHistory(messages []llm.Message) []db.InterceptContextEntry {
 		}
 	}
 	return entries
+}
+
+// messagesSinceWorkerIntent drops history before the latest worker intent marker.
+// The marker sits after the overview in the launch turn, so match it anywhere in a
+// text block. Non-worker sessions have no marker and are returned unchanged.
+func messagesSinceWorkerIntent(messages []llm.Message) []llm.Message {
+	for i := len(messages) - 1; i >= 0; i-- {
+		for _, block := range messages[i].Content {
+			if block.Type != llm.BlockText {
+				continue
+			}
+			if _, ok := workerIntentIDIn(block.Text); ok {
+				return messages[i:]
+			}
+		}
+	}
+	return messages
 }

@@ -1438,6 +1438,22 @@ ORDER BY priority DESC, id ASC LIMIT $2`, s.expID, limit)
 	return scanNodes(rows)
 }
 
+// CountClaimableIntents counts open intents whose depends_on are all satisfied —
+// exactly the rows Frontier can hand to a worker right now. Queue backpressure uses
+// this instead of CountOpenIntents: a blocked serial-chain step consumes no worker.
+func (s *ExplorationStore) CountClaimableIntents() (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT count(*) FROM exploration_nodes
+WHERE exploration_id=$1 AND kind='intent' AND state='open'
+  AND NOT EXISTS (
+      SELECT 1 FROM jsonb_array_elements_text(COALESCE(payload->'depends_on','[]'::jsonb)) dep
+      JOIN exploration_nodes dn ON dn.id = dep.value::bigint
+      WHERE dn.exploration_id=$1
+        AND dn.state NOT IN ('done','negative','out-of-scope','stopped','deleted')
+  )`, s.expID).Scan(&n)
+	return n, err
+}
+
 // HasActiveIntent reports whether this exploration has any intent still in play
 // (state open OR running). Used to decide whether to kick the FIRST planner round:
 // a seeded task's intent may already have been claimed (open→running) by a worker

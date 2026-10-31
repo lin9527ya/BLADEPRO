@@ -96,6 +96,9 @@ type ToolSet struct {
 	// intentsRound 计本 ToolSet 生命周期内成功创建的意图数 —— planner 每轮新建一个
 	// ToolSet，所以它天然是"本轮已用额度"。
 	intentsRound int
+	// workerCap 是本任务的 worker 池大小（0 = 未知/不启用）。队列背压用：可领意图
+	// 超过 2×workerCap 时拒收低优先级新意图，避免 frontier 涨得比 worker 消化快。
+	workerCap int
 	// emitPolicy 是"意图被策略拒绝"的留痕通道（引擎的 emitActivity）。
 	// nil 时退回直接写库 + 日志，保证不静默丢。
 	emitPolicy func(db.Activity)
@@ -346,16 +349,26 @@ func (t *ToolSet) SetPolicy(p *policy.Effective) { t.pol = p }
 // SetPolicyAudit 注入"意图被策略拒绝"的留痕通道（引擎活动流）。
 func (t *ToolSet) SetPolicyAudit(fn func(db.Activity)) { t.emitPolicy = fn }
 
+// SetWorkerCap injects this task's worker-pool size for queue backpressure
+// (0 = no cap).
+func (t *ToolSet) SetWorkerCap(n int) { t.workerCap = n }
+
 // beginIntentQuota 在一次 add_intent 调用开始时取额度快照：库存量各查一次库，
 // 本轮用量从 ToolSet 计数起算并在批量循环里累加（一批 4 条不该打 8 次库）。
 func (t *ToolSet) beginIntentQuota() *intentQuota {
 	q := &intentQuota{round: t.intentsRound}
-	if t.pol != nil && !t.pol.IsZero() && t.ts != nil {
+	if t.ts != nil && (t.workerCap > 0 || (t.pol != nil && !t.pol.IsZero())) {
 		if n, err := t.ts.CountOpenIntents(); err == nil {
 			q.open = n
 		}
 		if n, err := t.ts.CountIntents(); err == nil {
 			q.total = n
+		}
+	}
+	// 队列背压只看可领数：被前置挡住的链路步骤不消耗 worker，也不该占额度。
+	if t.ts != nil && t.workerCap > 0 {
+		if n, err := t.ts.CountClaimableIntents(); err == nil {
+			q.claimable = n
 		}
 	}
 	return q
@@ -366,7 +379,14 @@ type intentQuota struct {
 	open  int
 	total int
 	round int
+	// claimable 是"现在就能被 worker 领走"的条数（不含 depends_on 未满足的）。
+	claimable int
 }
+
+const (
+	intentQueueFactor         = 2
+	intentQueueUrgentPriority = 8
+)
 
 // reportPolicyReject 把一次拒绝写进时间线：模型想做什么、被哪条策略拦、命中什么。
 // 图里不落这条意图（刻意——不污染探索与去重），但人必须看得见。
@@ -654,6 +674,28 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 		out["frontier_open"] = fo
 	} else {
 		out["frontier_open"] = len(fr)
+	}
+	// claimable_intents 才是 planner 判断"还能不能再派"的依据：frontier_open 含被
+	// 前置挡住的串行步骤，拿它排队会误以为 worker 有活可干。
+	if claimable, err := t.ts.CountClaimableIntents(); err == nil {
+		out["claimable_intents"] = claimable
+	}
+	if t.workerCap > 0 {
+		idle := t.workerCap - len(running)
+		if idle < 0 {
+			idle = 0
+		}
+		q := map[string]any{
+			"workers": t.workerCap, "soft_limit": intentQueueFactor * t.workerCap,
+			"running": len(running), "idle_slots": idle,
+		}
+		if v, ok := out["claimable_intents"].(int); ok {
+			q["claimable"] = v
+			if v >= intentQueueFactor*t.workerCap {
+				q["saturated"] = true
+			}
+		}
+		out["intent_queue"] = q
 	}
 	// findings (confirmed vulns) and facts (worker exploration results) are
 	// now distinct node kinds. recent_facts surfaces fact summaries (esp.
@@ -1691,6 +1733,26 @@ func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, er
 	if priority == 0 {
 		priority = 5
 	}
+	// 队列背压（软上限）：按可领数算，被前置挡住的链路步骤不占额度；已满足前置的
+	// 本条会立刻进 frontier，必须受上限约束。priority≥8 是材料性新发现的逃生口。
+	depSatisfied := true
+	for _, dep := range dependsOn {
+		n, err := t.ts.GetNode(dep)
+		if err != nil || n == nil {
+			continue
+		}
+		switch n.State {
+		case "done", "negative", "out-of-scope":
+		default:
+			depSatisfied = false
+		}
+	}
+	if t.workerCap > 0 && depSatisfied && priority < intentQueueUrgentPriority && q.claimable >= intentQueueFactor*t.workerCap {
+		return 0, "", fmt.Errorf("队列里已有 %d 条可领方向（worker %d 个，上限 %d）：本轮先让 worker 消化，不再接常规新方向。"+
+			"确有材料性新发现驱动的跟进，把 priority 提到 %d 以上再提交；已过时的排队方向用 drop_intent 清掉。"+
+			"这个方向本身不必丢：写进 TodoWrite（注明为什么先不派），等 worker 消化后再派",
+			q.claimable, t.workerCap, intentQueueFactor*t.workerCap, intentQueueUrgentPriority)
+	}
 	anchors := pidList(it.AssetIDs)
 	// 资产拦截：意图绑定的资产若命中系统资产拦截规则，则禁止下发该意图。
 	if t.as != nil && len(anchors) > 0 {
@@ -1826,6 +1888,9 @@ func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, er
 	q.round++
 	q.open++
 	q.total++
+	if depSatisfied {
+		q.claimable++
+	}
 	t.intentsRound++
 	return id, note, nil
 }

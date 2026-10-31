@@ -981,9 +981,12 @@ func accP14(t *testing.T, e *accEnv) {
 	}
 	// noa 已占槽位时不得被覆盖（互斥而非静默覆盖）。
 	noaOwned := &agentcore.Options{Provider: prov, Compactor: opts.Compactor}
-	agent.InstallContextManager(noaOwned, 200000, dumpDir, nil)
-	if noaOwned.Compactor != harness.Compactor(opts.Compactor) {
-		t.Fatal("已占用的 Compactor 槽位被静默覆盖")
+	agent.InstallContextManager(noaOwned, 200000, dumpDir, func() string { return "index-visible" })
+	if noaOwned.Compactor == harness.Compactor(opts.Compactor) {
+		t.Fatal("已占用的 Compactor 槽位应被索引投影包装，而不是原样返回")
+	}
+	if view, ok := noaOwned.Compactor.(harness.ContextView); !ok || len(view.View(ctx, []llm.Message{llm.UserText("x")})) == 0 {
+		t.Fatal("noa 占用时仍应保留职责索引投影")
 	}
 
 	view, ok := opts.Compactor.(harness.ContextView)

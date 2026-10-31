@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+### 优化：剩余 P2（ROI/可见性/compaction/provider）
+
+- ROI 分母改用真实实测格数（tested_found/tested_clear，排除继承/NA/budget_stop），
+  无台账产出的方向不再被视为零成本；冷资产改用实测格而非行政终态判定。
+- SRC 快照新增 `intent_states`（含 no_output）、`pending_dependencies` 与
+  `identity_diffs`；工作台显示未就绪依赖和只读身份对照，benchmark manifest 记录
+  no_output。
+- 已有自定义 compactor（如 noa）时，仍包一层常驻职责索引，压缩策略不被覆盖；
+  冷图摘要输入附带证据/细节摘录。
+- LLM HTTP transport 禁用透明 gzip，避免代理缓冲 SSE；仅原始录制才复制请求正文，
+  usage-only 捕获不再承担大请求体拷贝。
+- 宿主 Overrides（prompt/tool/wrapup 等）读写加锁，消除启动注入与在跑 Planner 的
+  并发竞态；已有自定义 compactor 的验收改为主张“压缩器保留 + 索引投影”。
+
+
 ### 新增：P2 评测与 SRC 工作台
 
 - 前端统一任务终态合同 `taskIsTerminal`（含 policy_blocked），详情/概览不再手写终态；

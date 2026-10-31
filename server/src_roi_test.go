@@ -24,6 +24,15 @@ func TestSrcAreaForVulnClass(t *testing.T) {
 	}
 }
 
+func TestSrcAreaROIInvestmentChangesDenominator(t *testing.T) {
+	counts := []db.SrcClassStatus{{VulnClass: "sql_injection", Status: "accepted", Count: 1}}
+	ledgerOnly := srcAreaROIFromCounts(counts)
+	withCells := srcAreaROIFromCountsWithInvestment(counts, []db.SrcAreaInvestment{{Area: "injection", Measured: 10, Attempts: 30}})
+	if withCells["injection"] >= ledgerOnly["injection"] {
+		t.Fatalf("real investment must lower ROI: cells=%v ledger=%v", withCells, ledgerOnly)
+	}
+}
+
 func TestSrcAreaROIFromCounts(t *testing.T) {
 	counts := []db.SrcClassStatus{
 		{VulnClass: "SQL注入", Status: "accepted", Count: 3},

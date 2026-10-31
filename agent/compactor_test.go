@@ -223,9 +223,13 @@ func TestBladeproSummarizerStripsAnalysis(t *testing.T) {
 func TestInstallContextManagerYieldsToNoa(t *testing.T) {
 	noa := &DomainCompactor{}
 	opts := &agentcore.Options{Compactor: noa}
-	InstallContextManager(opts, 200000, t.TempDir(), nil)
-	if opts.Compactor != harness.Compactor(noa) {
-		t.Fatal("noa 已占用 Compactor 槽位时不得被覆盖")
+	InstallContextManager(opts, 200000, t.TempDir(), func() string { return "index-visible" })
+	view, ok := opts.Compactor.(*indexView)
+	if !ok || view.inner != harness.Compactor(noa) {
+		t.Fatalf("noa 压缩器应保留并被索引投影包装: %T", opts.Compactor)
+	}
+	if got := view.View(context.Background(), nil); len(got) == 0 {
+		t.Fatal("noa 占用时仍应投影常驻索引")
 	}
 	opts2 := &agentcore.Options{}
 	InstallContextManager(opts2, 200000, t.TempDir(), func() string { return "x" })

@@ -16,7 +16,8 @@ const findingIDGuidance = "\n\n**漏洞编号约定**：finding_id 是独立漏�
 var FindingTrafficBindingEnabled func() bool
 
 func findingTrafficBindingEnabled() bool {
-	return FindingTrafficBindingEnabled != nil && FindingTrafficBindingEnabled()
+	ov := currentOverrides()
+	return ov.FindingTrafficBindingEnabled != nil && ov.FindingTrafficBindingEnabled()
 }
 
 // Applied after ToolResolve: user descriptions and prompts remain intact, while

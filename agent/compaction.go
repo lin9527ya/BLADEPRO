@@ -452,6 +452,31 @@ func nodeConfidence(n *db.Node) string {
 	return ""
 }
 
+// nodeEvidenceExcerpt returns a bounded evidence/detail excerpt so a folded
+// cold node does not lose the raw observation that justified it.
+func nodeEvidenceExcerpt(n *db.Node, max int) string {
+	if n == nil {
+		return ""
+	}
+	var p map[string]any
+	if json.Unmarshal(n.Payload, &p) != nil {
+		return ""
+	}
+	text, _ := p["evidence"].(string)
+	if strings.TrimSpace(text) == "" {
+		text, _ = p["detail"].(string)
+	}
+	text = strings.Join(strings.Fields(text), " ")
+	if text == "" {
+		return ""
+	}
+	r := []rune(text)
+	if len(r) > max {
+		return string(r[:max]) + "…"
+	}
+	return text
+}
+
 // buildCompressionInput renders the connected sub-graph for the §4 prompt:
 // member nodes (summary + id + kind + state + confidence), the internal blood
 // edges among members, and — for a §3.1 shared-parent group — the anchor parents
@@ -476,6 +501,9 @@ func buildCompressionInput(g *coldGraph, b block, nodeByID map[int64]*db.Node) s
 		line := fmt.Sprintf("- #%d [%s/%s] %s", m, kind, state, nodeSummary(n))
 		if conf := nodeConfidence(n); conf != "" {
 			line += fmt.Sprintf(" (confidence=%s)", conf)
+		}
+		if ev := nodeEvidenceExcerpt(n, 200); ev != "" {
+			line += " | 证据：" + ev
 		}
 		sb.WriteString(line)
 		sb.WriteByte('\n')

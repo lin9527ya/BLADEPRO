@@ -100,7 +100,9 @@ while :; do
 done
 jq -s '.' "$run_dir/findings.json" > "$run_dir/findings.array.json"
 
-api "$BASE/api/tasks/$task_id/src" | jq '.summary' > "$run_dir/src.json"
+api "$BASE/api/tasks/$task_id/src" > "$run_dir/src-full.json"
+jq '.summary' "$run_dir/src-full.json" > "$run_dir/src.json"
+no_output="$(jq -r '.intent_states.no_output // 0' "$run_dir/src-full.json")"
 tokens="$(jq -r '((.tokens.input_tokens // 0) + (.tokens.output_tokens // 0))' <<<"$task_json")"
 cache_tokens="$(jq -r '((.tokens.cache_read_tokens // 0) + (.tokens.cache_write_tokens // 0))' <<<"$task_json")"
 
@@ -109,8 +111,8 @@ jq -n \
   --arg target_name "$TARGET_NAME" --arg model "$MODEL" \
   --arg task_id "$task_id" --arg status "$status" \
   --argjson tokens "$tokens" --argjson cache_tokens "$cache_tokens" \
-  --argjson mode_doc "$mode_doc" --arg git_rev "$(git rev-parse HEAD 2>/dev/null || echo unknown)" \
-  '{base_url:$base,target_url:$target,golden:$golden,target_name:$target_name,model:$model,task_id:$task_id,status:$status,tokens:$tokens,cache_tokens:$cache_tokens,mode_doc:$mode_doc,created_at:(now|todate),git_rev:$git_rev}' \
+  --argjson mode_doc "$mode_doc" --argjson no_output "$no_output" --arg git_rev "$(git rev-parse HEAD 2>/dev/null || echo unknown)" \
+  '{base_url:$base,target_url:$target,golden:$golden,target_name:$target_name,model:$model,task_id:$task_id,status:$status,tokens:$tokens,cache_tokens:$cache_tokens,no_output:$no_output,mode_doc:$mode_doc,created_at:(now|todate),git_rev:$git_rev}' \
   > "$run_dir/manifest.json"
 
 go run ./srcbench/score \

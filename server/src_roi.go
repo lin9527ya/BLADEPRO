@@ -45,6 +45,17 @@ func srcAreaForVulnClass(class string) string {
 // srcAreaROIFromCounts 是纯判定核：accepted/paid 记 1 分、ready 记 0.5、
 // rejected/duplicate 记 -0.25；按已结算台账求产出率，再映射到 0.5–1.5 乘子。
 func srcAreaROIFromCounts(counts []db.SrcClassStatus) map[string]float64 {
+	return srcAreaROIFromCountsWithInvestment(counts, nil)
+}
+
+// srcAreaROIFromCountsWithInvestment uses actual measured cells as the
+// denominator when available, so directions that consumed testing but produced
+// no ledger entry are not treated as free.
+func srcAreaROIFromCountsWithInvestment(counts []db.SrcClassStatus, investment []db.SrcAreaInvestment) map[string]float64 {
+	measured := map[string]int{}
+	for _, i := range investment {
+		measured[i.Area] = i.Measured
+	}
 	type acc struct {
 		total, accepted, ready, bad int
 	}
@@ -81,7 +92,11 @@ func srcAreaROIFromCounts(counts []db.SrcClassStatus) map[string]float64 {
 		if score < 0 {
 			score = 0
 		}
-		mult := 0.5 + score/float64(a.total)
+		denom := a.total
+		if measured[area] > 0 {
+			denom = measured[area]
+		}
+		mult := 0.5 + score/float64(denom)
 		if mult < 0.5 {
 			mult = 0.5
 		}
@@ -100,15 +115,22 @@ func (s *Server) srcAreaROI(ctx context.Context, programID int64) map[string]flo
 	if err != nil {
 		return nil
 	}
+	investment, err := store.ListSrcAreaInvestment(ctx, programID)
+	if err != nil {
+		investment = nil
+	}
 	if programID > 0 && srcSettledTotal(counts) < 5 {
 		if global, gerr := store.ListSrcClassStatusCounts(ctx, 0); gerr == nil {
 			counts = global
+			if inv, ierr := store.ListSrcAreaInvestment(ctx, 0); ierr == nil {
+				investment = inv
+			}
 		}
 	}
 	if srcSettledTotal(counts) == 0 {
 		return nil
 	}
-	return srcAreaROIFromCounts(counts)
+	return srcAreaROIFromCountsWithInvestment(counts, investment)
 }
 
 func srcSettledTotal(counts []db.SrcClassStatus) int {

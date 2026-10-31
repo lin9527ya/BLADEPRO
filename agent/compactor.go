@@ -284,8 +284,8 @@ var CompactionPromptOverride func() (string, bool)
 // compactionPromptTemplate 解析最终使用的模板（DB 覆盖优先，渲染失败回退内置）。
 func compactionPromptTemplate(dumpPath string) string {
 	tmpl := domainCompactPrompt
-	if CompactionPromptOverride != nil {
-		if t, ok := CompactionPromptOverride(); ok && strings.TrimSpace(t) != "" {
+	if ov := currentOverrides(); ov.CompactionPromptOverride != nil {
+		if t, ok := ov.CompactionPromptOverride(); ok && strings.TrimSpace(t) != "" {
 			tmpl = t
 		}
 	}
@@ -475,6 +475,60 @@ var _ iter.Seq2[llm.StreamEvent, error]
 
 // --- 装配 ---
 
+// indexView wraps an already-installed compactor (e.g. noa) with the per-request
+// responsibility projection. Compression strategy still belongs to the inner
+// compactor; the index (goal/constraints/current intent) must never disappear
+// just because another compressor owns the slot.
+type indexView struct {
+	inner harness.Compactor
+	index func() string
+
+	mu     sync.Mutex
+	cached string
+	at     time.Time
+	ttl    time.Duration
+}
+
+var (
+	_ harness.Compactor   = (*indexView)(nil)
+	_ harness.ContextView = (*indexView)(nil)
+)
+
+func (v *indexView) Pre(ctx context.Context, msgs []llm.Message, lastInputTokens int) []llm.Message {
+	return v.inner.Pre(ctx, msgs, lastInputTokens)
+}
+func (v *indexView) Reactive(ctx context.Context, msgs []llm.Message) ([]llm.Message, bool) {
+	return v.inner.Reactive(ctx, msgs)
+}
+func (v *indexView) IsOverflow(err error) bool { return v.inner.IsOverflow(err) }
+func (v *indexView) View(ctx context.Context, msgs []llm.Message) []llm.Message {
+	base := llm.MessagesForAPI(msgs)
+	if cv, ok := v.inner.(harness.ContextView); ok {
+		base = cv.View(ctx, msgs)
+	}
+	block := v.indexBlock()
+	if block == "" {
+		return base
+	}
+	out := make([]llm.Message, 0, len(base)+1)
+	out = append(out, base...)
+	out = append(out, llm.UserText(block))
+	return out
+}
+func (v *indexView) indexBlock() string {
+	if v.index == nil {
+		return ""
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.ttl > 0 && v.cached != "" && time.Since(v.at) < v.ttl {
+		return v.cached
+	}
+	v.cached = strings.TrimSpace(v.index())
+	v.at = time.Now()
+	return v.cached
+}
+
 // InstallContextManager 在 opts 上装 P14 领域上下文管理器。调用点必须在 enableNoa 之后：
 // noa 与它抢同一个 Options.Compactor 槽位，noa 已占用时本函数不动它（互斥而非静默覆盖）。
 func InstallContextManager(opts *agentcore.Options, windowTokens int, dumpDir string, index func() string) {
@@ -489,7 +543,9 @@ func InstallContextManagerWithSummarizer(opts *agentcore.Options, windowTokens i
 		return
 	}
 	if opts.Compactor != nil {
-		return // noa 已接管
+		// Keep the compression owner, but still project the responsibility index.
+		opts.Compactor = &indexView{inner: opts.Compactor, index: index, ttl: contextIndexTTL}
+		return
 	}
 	cfg := compactionConfig(windowTokens)
 	if cfg == nil {

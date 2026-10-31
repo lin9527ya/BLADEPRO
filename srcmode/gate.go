@@ -104,6 +104,7 @@ type AssetYield struct {
 	AssetID  int64  `json:"asset_id"`
 	Asset    string `json:"asset"`
 	Terminal int    `json:"terminal"`
+	Measured int    `json:"measured,omitempty"` // tested_found + tested_clear only
 	Found    int    `json:"found"`
 	Tier     string `json:"tier,omitempty"`
 	Cold     bool   `json:"cold,omitempty"`
@@ -119,12 +120,16 @@ func assetYield(asset db.SrcAsset, cells []db.SrcCell) AssetYield {
 		switch c.State {
 		case db.SrcStateFound:
 			st.Terminal++
+			st.Measured++
 			st.Found++
-		case db.SrcStateClear, db.SrcStateNA, db.SrcStateBudgetStop:
+		case db.SrcStateClear:
+			st.Terminal++
+			st.Measured++
+		case db.SrcStateNA, db.SrcStateBudgetStop:
 			st.Terminal++
 		}
 	}
-	st.Cold = st.Terminal >= coldAssetTerminal && st.Found == 0
+	st.Cold = st.Measured >= coldAssetTerminal && st.Found == 0
 	return st
 }
 

@@ -47,10 +47,11 @@ func AugmentTools(ctx context.Context, agentKey string, base []actool.CoreTool) 
 		cleanup = func() {}
 		out     = base
 	)
-	if ToolAugment != nil {
+	ov := currentOverrides()
+	if ov.ToolAugment != nil {
 		var extra []actool.CoreTool
 		var cl func()
-		extra, def, cl = ToolAugment(ctx, agentKey)
+		extra, def, cl = ov.ToolAugment(ctx, agentKey)
 		if cl != nil {
 			cleanup = cl
 		}
@@ -62,8 +63,8 @@ func AugmentTools(ctx context.Context, agentKey string, base []actool.CoreTool) 
 	// agent isn't bound to (or that are disabled) and swap in overridden
 	// descriptions/schemas + default injection. MCP/skill/host tools have no row
 	// and pass through untouched, so deferred/unlock wiring stays consistent.
-	if ToolResolve != nil {
-		out = ToolResolve(ctx, agentKey, out)
+	if ov.ToolResolve != nil {
+		out = ov.ToolResolve(ctx, agentKey, out)
 	}
 	out, def.FindingGuidance = findingWorkflowTools(agentKey, out)
 	for i, t := range out {

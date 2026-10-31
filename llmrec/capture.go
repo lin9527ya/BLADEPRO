@@ -88,6 +88,11 @@ func (c *Capture) SetRequest(body string) {
 	}
 }
 
+// WantsRequest reports whether this capture stores raw request bodies.
+// Usage-only captures still need response tails for vendor cache counters, but
+// must not pay for copying a potentially large request body.
+func (c *Capture) WantsRequest() bool { return c != nil && !c.usageOnly }
+
 // TeeResponse opens a new attempt and wraps rc so everything read from it is
 // mirrored into that attempt. It tees rather than reads because a successful
 // response is an SSE stream that must keep streaming to the caller.

@@ -24,7 +24,8 @@ var ArtifactLanguage func() string
 // artifactLanguageBlock 渲染"面向目标的产物语言"规约段；**zh/未设时返回空串**——
 // 不约束就是不加一个字，而不是加一段"你可以用中文"的废话来占提示词。
 func artifactLanguageBlock() string {
-	if ArtifactLanguage == nil {
+	ov := currentOverrides()
+	if ov.ArtifactLanguage == nil {
 		return ""
 	}
 	if strings.TrimSpace(ArtifactLanguage()) != ArtifactLangEn {

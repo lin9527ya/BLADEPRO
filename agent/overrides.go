@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"sync"
 
 	actool "github.com/lin9527ya/Norma/tool"
 )
@@ -40,7 +41,11 @@ type Overrides struct {
 // 启动时这项能力分两处接上（prompt 类在 server.New，工具类在 assembly 的 wire 函数），
 // 所以后接的一方请用 CurrentOverrides 读出、改自己那几个字段、再 SetOverrides 写回，
 // 否则会把先接上的清掉。
+var overridesMu sync.RWMutex
+
 func SetOverrides(o Overrides) {
+	overridesMu.Lock()
+	defer overridesMu.Unlock()
 	PromptOverride = o.PromptOverride
 	CompactionPromptOverride = o.CompactionPromptOverride
 	ArtifactLanguage = o.ArtifactLanguage
@@ -55,6 +60,15 @@ func SetOverrides(o Overrides) {
 
 // CurrentOverrides 返回当前生效的一整套 hook（读取 / 保存 / 恢复用）。
 func CurrentOverrides() Overrides {
+	return currentOverrides()
+}
+
+// currentOverrides takes a consistent snapshot. Agents read overrides on every
+// run while a new Server may install them; locking the read side prevents the
+// race between startup injection and in-flight planner/worker runs.
+func currentOverrides() Overrides {
+	overridesMu.RLock()
+	defer overridesMu.RUnlock()
 	return Overrides{
 		PromptOverride:                 PromptOverride,
 		CompactionPromptOverride:       CompactionPromptOverride,

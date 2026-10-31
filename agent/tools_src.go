@@ -300,6 +300,9 @@ func (t *ToolSet) srcOverviewBlock(ctx context.Context) (map[string]any, error) 
 		out["prior_coverage"] = prior
 		out["prior_coverage_note"] = "其他任务在相同资产 × 风险面上的最近结论；tested_clear/na 可直接复用（建任务时开启覆盖继承会自动带入），tested_found 先确认是否已交付。"
 	}
+	if states, err := t.ts.IntentStateCounts(); err == nil {
+		out["intent_states"] = states
+	}
 	if negatives := t.srcNegativeBriefs(ctx, t.taskID, 20); len(negatives) > 0 {
 		out["negative_knowledge"] = negatives
 		out["negative_note"] = "本任务范围内资产已确认走不通的打法（含其他任务留下的）。不要重复试同键组合；有新证据时用 src_negative 覆盖。"
@@ -316,6 +319,26 @@ func (t *ToolSet) srcOverviewBlock(ctx context.Context) (map[string]any, error) 
 			out["asset_token_budget"] = t.srcDoc.AssetTokenBudget
 			out["asset_token_usage"] = usage
 		}
+	}
+	if diffs, err := t.ts.IdentityDiffFacts(10); err == nil && len(diffs) > 0 {
+		rows := make([]map[string]any, 0, len(diffs))
+		for _, n := range diffs {
+			var payload map[string]any
+			if json.Unmarshal(n.Payload, &payload) != nil {
+				continue
+			}
+			rows = append(rows, map[string]any{
+				"node_id": n.ID, "summary": payload["summary"],
+				"a": payload["identity_a"], "b": payload["identity_b"],
+				"distinct": payload["distinct"],
+			})
+		}
+		if len(rows) > 0 {
+			out["identity_diffs"] = rows
+		}
+	}
+	if deps, err := t.ts.PendingIntentDependencies(20); err == nil && len(deps) > 0 {
+		out["pending_dependencies"] = deps
 	}
 	return out, nil
 }

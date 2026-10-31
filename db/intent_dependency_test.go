@@ -39,8 +39,15 @@ func TestDependencyReadyFrontierAndClaim(t *testing.T) {
 	if ok, err := store.ClaimIntent(second, "worker", IntentLeaseTTL); err != nil || ok {
 		t.Fatalf("blocked intent was claimable: %v %v", ok, err)
 	}
+	deps, err := store.PendingIntentDependencies(10)
+	if err != nil || len(deps) != 1 || deps[0].IntentID != second || len(deps[0].DependsOn) != 1 || deps[0].DependsOn[0] != first {
+		t.Fatalf("pending dependencies=%+v %v", deps, err)
+	}
 	if err := store.SetNodeState(first, "done"); err != nil {
 		t.Fatal(err)
+	}
+	if deps, err := store.PendingIntentDependencies(10); err != nil || len(deps) != 0 {
+		t.Fatalf("resolved dependency still pending: %+v %v", deps, err)
 	}
 	if ok, err := store.ClaimIntent(second, "worker", IntentLeaseTTL); err != nil || !ok {
 		t.Fatalf("ready intent was not claimable: %v %v", ok, err)

@@ -1232,6 +1232,16 @@ export interface SrcTaskState {
   submissions?: SrcSubmission[];
   /** 资产级 token 预算的用量（仅在开启预算时返回，最多 50 个资产）。 */
   asset_token_usage?: { asset_id: number; tokens: number }[];
+  /** 依赖未完成的排队意图（不会出现在可领取视图里）。 */
+  pending_dependencies?: { intent_id: number; summary: string; depends_on: number[] }[];
+  /** 只读身份对照事实（src_identity_diff）。 */
+  identity_diffs?: {
+    node_id: number;
+    summary?: string;
+    distinct?: boolean;
+    a?: { label?: string; role?: string; status?: number; length?: number };
+    b?: { label?: string; role?: string; status?: number; length?: number };
+  }[];
   /** 跨任务复用：同一资产在其他 SRC 任务里的最近终态（只读提示）。 */
   prior_coverage?: {
     asset_id: number;

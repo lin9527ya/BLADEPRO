@@ -551,6 +551,46 @@ export function SrcTab({ taskId }: { taskId: string }) {
             </div>
           ) : null}
 
+          {data?.pending_dependencies?.length ? (
+            <Card className="gap-0 border-amber-500/40 py-0">
+              <CardHeader className="border-b py-3">
+                <CardTitle className="text-sm">未就绪依赖</CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-1.5 py-3">
+                {data.pending_dependencies.slice(0, 20).map((item) => (
+                  <div key={item.intent_id} className="flex flex-wrap items-center gap-2 text-xs">
+                    <Badge variant="outline">#{item.intent_id}</Badge>
+                    <span className="truncate">{item.summary}</span>
+                    <span className="text-muted-foreground">等待 {item.depends_on.map((id) => `#${id}`).join("、")}</span>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {data?.identity_diffs?.length ? (
+            <Card className="gap-0 py-0">
+              <CardHeader className="border-b py-3">
+                <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+                  身份对照
+                  <span className="text-muted-foreground text-xs font-normal">只读状态/长度差异；distinct 只是线索，需结合对象归属与独立复验</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-1.5 py-3">
+                {data.identity_diffs.slice(0, 10).map((row) => (
+                  <div key={row.node_id} className="flex flex-wrap items-center gap-2 text-xs">
+                    <Badge variant="outline">{row.distinct ? "有差异" : "无差异"}</Badge>
+                    <span className="truncate">{row.summary ?? `证据 #${row.node_id}`}</span>
+                    <span className="text-muted-foreground">
+                      {row.a?.label ?? "A"} {row.a?.status ?? "—"}/{row.a?.length ?? "—"} vs {row.b?.label ?? "B"}{" "}
+                      {row.b?.status ?? "—"}/{row.b?.length ?? "—"}
+                    </span>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          ) : null}
+
           <Card className="gap-0 py-0">
             <CardHeader className="border-b py-3">
               <CardTitle className="flex flex-wrap items-center gap-2 text-sm">

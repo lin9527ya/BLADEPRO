@@ -288,11 +288,15 @@ func TestAssetYieldCold(t *testing.T) {
 	asset := db.SrcAsset{ID: 9, Type: "app", Label: "api.example"}
 	cells := []db.SrcCell{
 		{State: db.SrcStateClear}, {State: db.SrcStateClear},
-		{State: db.SrcStateNA}, {State: db.SrcStateBudgetStop},
+		{State: db.SrcStateClear}, {State: db.SrcStateClear},
 	}
 	st := assetYield(asset, cells)
-	if !st.Cold || st.Terminal != 4 || st.Found != 0 || st.AssetID != 9 {
+	if !st.Cold || st.Terminal != 4 || st.Measured != 4 || st.Found != 0 || st.AssetID != 9 {
 		t.Fatalf("应判为冷资产：%+v", st)
+	}
+	// NA/budget_stop 是行政终态，不是实测投入；不能用来把资产判成冷。
+	if st := assetYield(asset, []db.SrcCell{{State: db.SrcStateNA}, {State: db.SrcStateNA}, {State: db.SrcStateNA}, {State: db.SrcStateBudgetStop}}); st.Cold {
+		t.Fatalf("NA/budget_stop 不该计入实测冷资产：%+v", st)
 	}
 	cells[0].State = db.SrcStateFound
 	if st := assetYield(asset, cells); st.Cold || st.Found != 1 {

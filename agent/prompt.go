@@ -69,7 +69,7 @@ func assetSummaryForTask(as *db.AssetStore, taskID int64) string {
 // 输出规约) AFTER this, so those can't be edited away via the DB body.
 func renderSystem(agentKey, def string, vars any) string {
 	tmpl := def
-	if PromptOverride != nil {
+	if ov := currentOverrides(); ov.PromptOverride != nil {
 		if t, ok := PromptOverride(agentKey); ok && t != "" {
 			tmpl = t
 		}

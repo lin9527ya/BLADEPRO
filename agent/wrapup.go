@@ -68,8 +68,9 @@ func WrapupTurnsDefault(agentKey string) int {
 // resolveWrapup returns the effective wrap-up prompt: the DB override (if set and
 // non-empty) over the built-in default.
 func resolveWrapup(agentKey string) string {
-	if WrapupOverride != nil {
-		if t, ok := WrapupOverride(agentKey); ok && strings.TrimSpace(t) != "" {
+	ov := currentOverrides()
+	if ov.WrapupOverride != nil {
+		if t, ok := ov.WrapupOverride(agentKey); ok && strings.TrimSpace(t) != "" {
 			return t
 		}
 	}
@@ -79,8 +80,9 @@ func resolveWrapup(agentKey string) string {
 // resolveWrapupTurns returns the effective wrap-up turn budget: a positive DB
 // override over the built-in per-agent default.
 func resolveWrapupTurns(agentKey string) int {
-	if WrapupMaxTurnsOverride != nil {
-		if v, ok := WrapupMaxTurnsOverride(agentKey); ok && v > 0 {
+	ov := currentOverrides()
+	if ov.WrapupMaxTurnsOverride != nil {
+		if v, ok := ov.WrapupMaxTurnsOverride(agentKey); ok && v > 0 {
 			return v
 		}
 	}
@@ -129,8 +131,9 @@ func TaskTimeoutWrapupDefault(agentKey string) string {
 // resolveTaskTimeoutWrapup：DB 覆盖(非空) > 内置默认。空串表示该 agent 无任务超时词
 // （非 worker/planner），此时调用方应回退 per-run 词。
 func resolveTaskTimeoutWrapup(agentKey string) string {
-	if WrapupTaskTimeoutOverride != nil {
-		if t, ok := WrapupTaskTimeoutOverride(agentKey); ok && strings.TrimSpace(t) != "" {
+	ov := currentOverrides()
+	if ov.WrapupTaskTimeoutOverride != nil {
+		if t, ok := ov.WrapupTaskTimeoutOverride(agentKey); ok && strings.TrimSpace(t) != "" {
 			return t
 		}
 	}
@@ -138,8 +141,9 @@ func resolveTaskTimeoutWrapup(agentKey string) string {
 }
 
 func resolveTaskTimeoutTurns(agentKey string) int {
-	if WrapupTaskTimeoutTurnsOverride != nil {
-		if v, ok := WrapupTaskTimeoutTurnsOverride(agentKey); ok && v > 0 {
+	ov := currentOverrides()
+	if ov.WrapupTaskTimeoutTurnsOverride != nil {
+		if v, ok := ov.WrapupTaskTimeoutTurnsOverride(agentKey); ok && v > 0 {
 			return v
 		}
 	}

@@ -1052,6 +1052,27 @@ WHERE exploration_id=$1 AND kind='intent' AND state='open'`, s.expID).Scan(&n)
 	return n, err
 }
 
+// IntentStateCounts returns intent totals by state (including no_output), used
+// by the SRC snapshot and external benchmarks without paging every intent.
+func (s *ExplorationStore) IntentStateCounts() (map[string]int, error) {
+	rows, err := s.db.Query(`SELECT state, count(*) FROM exploration_nodes
+WHERE exploration_id=$1 AND kind='intent' GROUP BY state`, s.expID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var state string
+		var n int
+		if err := rows.Scan(&state, &n); err != nil {
+			return nil, err
+		}
+		out[state] = n
+	}
+	return out, rows.Err()
+}
+
 // CountByKind counts this exploration's nodes of one kind. graph_overview 的
 // findings_total / facts 用它：ListByKind 有行数上限，取 len() 会在任务超过上限后
 // 把「截断的窗口大小」当成总数报出去，而 findings_total 是目标判定的依据。
@@ -2613,4 +2634,63 @@ func (s *ExplorationStore) ActivityByIDsForTerminalIntents(ids []int64) ([]Activ
 // exploration node is deleted). taskID and nodeID may be 0 (stored as NULL).
 func (s *ExplorationStore) AddStandaloneFinding(taskID, nodeID int64, vulnclass, name, severity, summary, evidence, worker string, assetIDs []int64) (int64, error) {
 	return s.db.AddFinding(taskID, nodeID, vulnclass, name, severity, summary, evidence, worker, assetIDs)
+}
+
+// PendingIntentDependency is one open intent whose prerequisites are unfinished.
+// The planner needs to see these explicitly; otherwise they look like ordinary
+// queued work that simply never gets claimed.
+type PendingIntentDependency struct {
+	IntentID  int64   `json:"intent_id"`
+	Summary   string  `json:"summary"`
+	DependsOn []int64 `json:"depends_on"`
+}
+
+// PendingIntentDependencies lists open intents blocked by unfinished prerequisites.
+func (s *ExplorationStore) PendingIntentDependencies(limit int) ([]PendingIntentDependency, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	rows, err := s.db.Query(`
+SELECT n.id, COALESCE(n.payload->>'summary',''), n.payload->'depends_on'
+FROM exploration_nodes n
+WHERE n.exploration_id=$1 AND n.kind='intent' AND n.state='open'
+  AND n.payload ? 'depends_on'
+  AND EXISTS (
+    SELECT 1 FROM jsonb_array_elements_text(COALESCE(n.payload->'depends_on','[]'::jsonb)) dep
+    JOIN exploration_nodes dn ON dn.id = dep.value::bigint
+    WHERE dn.exploration_id=$1
+      AND dn.state NOT IN ('done','negative','out-of-scope','stopped','deleted')
+  )
+ORDER BY n.id LIMIT $2`, s.expID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []PendingIntentDependency{}
+	for rows.Next() {
+		var item PendingIntentDependency
+		var deps []byte
+		if err := rows.Scan(&item.IntentID, &item.Summary, &deps); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal(deps, &item.DependsOn)
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+// IdentityDiffFacts returns recent read-only identity comparisons recorded by
+// src_identity_diff, for the SRC workbench.
+func (s *ExplorationStore) IdentityDiffFacts(limit int) ([]*Node, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	rows, err := s.db.Query(`SELECT `+nodeCols+` FROM exploration_nodes
+WHERE exploration_id=$1 AND kind='fact' AND origin='src_identity'
+ORDER BY id DESC LIMIT $2`, s.expID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanNodes(rows)
 }

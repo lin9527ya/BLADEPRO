@@ -186,13 +186,16 @@ func scanSrcSubmission(sc interface{ Scan(...any) error }) (*SrcSubmission, erro
 
 // SrcSubmissionInput is what a caller must decide before the ledger row is written.
 // ReportReady/Compliance are judgments made by the caller (srcmode), not user input.
+const SrcEvidenceValidity = 7 * 24 * time.Hour
+
 type SrcSubmissionInput struct {
-	TaskID      int64
-	FindingID   int64
-	Platform    string
-	Title       string
-	Severity    string
-	Fingerprint string
+	ExpectedEvidenceVersion *int64
+	TaskID                  int64
+	FindingID               int64
+	Platform                string
+	Title                   string
+	Severity                string
+	Fingerprint             string
 	// DegradedFingerprint 见 SrcFindingMeta；空 = 没有可用的降级指纹。
 	DegradedFingerprint string
 	Description         string
@@ -236,6 +239,28 @@ func (s *SrcStore) PrepareSrcSubmission(ctx context.Context, in SrcSubmissionInp
 	}
 	defer tx.Rollback()
 
+	var currentVersion int64
+	if err := tx.QueryRowContext(ctx, `SELECT evidence_version FROM findings WHERE id=$1 AND task_id=$2 FOR UPDATE`, in.FindingID, in.TaskID).Scan(&currentVersion); err != nil {
+		return nil, nil, err
+	}
+	if in.ExpectedEvidenceVersion != nil && *in.ExpectedEvidenceVersion != currentVersion {
+		return nil, nil, fmt.Errorf("证据版本已变化，请重新准备交付件")
+	}
+	if in.ReportReady {
+		var requiresRetest bool
+		if err := tx.QueryRowContext(ctx, `SELECT t.mode='src' AND f.severity IN ('medium','high','critical') AND COALESCE((t.mode_doc->>'require_retest')::boolean,true) FROM findings f JOIN tasks t ON t.id=f.task_id WHERE f.id=$1`, in.FindingID).Scan(&requiresRetest); err != nil {
+			return nil, nil, err
+		}
+		if requiresRetest {
+			r, err := scanRetest(tx.QueryRowContext(ctx, `SELECT `+retestCols+` FROM finding_retests WHERE finding_id=$1 ORDER BY id DESC LIMIT 1`, in.FindingID))
+			if err != nil {
+				return nil, nil, err
+			}
+			if r == nil || r.SourceTaskID != in.TaskID || r.EvidenceVersion != currentVersion || r.Status != "completed" || r.Verdict != "reproduced" || r.FinishedAt == nil || r.FinishedAt.After(time.Now()) || time.Since(*r.FinishedAt) > SrcEvidenceValidity {
+				return nil, nil, fmt.Errorf("当前证据版本没有有效的独立复验，不能标记为可提交")
+			}
+		}
+	}
 	var rowID int64
 	var programID any
 	if in.ProgramID > 0 {
@@ -268,16 +293,18 @@ RETURNING id, status`,
 		return nil, nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `
-INSERT INTO src_finding_meta(finding_id, task_id, fingerprint, degraded_fingerprint, compliance, report_ready)
-VALUES ($1,$2,$3,$4,$5,$6)
+INSERT INTO src_finding_meta(finding_id, task_id, fingerprint, degraded_fingerprint, compliance, report_ready, prepared_evidence_version, prepared_valid_until)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 ON CONFLICT (finding_id) DO UPDATE SET
     task_id              = EXCLUDED.task_id,
     fingerprint          = EXCLUDED.fingerprint,
     degraded_fingerprint = EXCLUDED.degraded_fingerprint,
     compliance           = EXCLUDED.compliance,
     report_ready         = EXCLUDED.report_ready,
+ prepared_evidence_version = EXCLUDED.prepared_evidence_version,
+ prepared_valid_until = EXCLUDED.prepared_valid_until,
     updated_at           = now()`,
-		in.FindingID, in.TaskID, in.Fingerprint, in.DegradedFingerprint, string(compliance), in.ReportReady); err != nil {
+		in.FindingID, in.TaskID, in.Fingerprint, in.DegradedFingerprint, string(compliance), in.ReportReady, currentVersion, time.Now().Add(SrcEvidenceValidity)); err != nil {
 		return nil, nil, err
 	}
 	if oldStatus == "" || oldStatus != committedStatus {
@@ -413,6 +440,19 @@ func (s *SrcStore) UpdateSrcSubmission(ctx context.Context, id int64, patch SrcS
 	if cur == nil {
 		return nil, fmt.Errorf("台账 #%d 不存在", id)
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var owner int64
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM findings WHERE id=$1 FOR UPDATE`, cur.FindingID).Scan(&owner); err != nil {
+		return nil, err
+	}
+	cur, err = scanSrcSubmission(tx.QueryRowContext(ctx, `SELECT `+srcSubmissionCols+` FROM src_submissions WHERE id=$1 FOR UPDATE`, id))
+	if err != nil {
+		return nil, err
+	}
 	nextStatus := cur.Status
 	if patch.Status != nil {
 		nextStatus = strings.TrimSpace(*patch.Status)
@@ -476,11 +516,6 @@ func (s *SrcStore) UpdateSrcSubmission(ctx context.Context, id int64, patch SrcS
 	changed := nextStatus != cur.Status || externalID != cur.ExternalID ||
 		platformLevel != cur.PlatformLevel || reward != cur.Reward ||
 		note != cur.Note || verdictReason != cur.VerdictReason
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
 	if _, err = tx.ExecContext(ctx, `
 UPDATE src_submissions SET
     status         = $2,
@@ -570,7 +605,8 @@ func (s *SrcStore) GetSrcFindingMeta(ctx context.Context, findingID int64) (*Src
 	var dedupe sql.NullInt64
 	var compliance []byte
 	err := s.db.QueryRowContext(ctx, `
-SELECT finding_id, COALESCE(task_id,0), fingerprint, degraded_fingerprint, compliance, report_ready, dedupe_of, updated_at
+SELECT finding_id, COALESCE(task_id,0), fingerprint, degraded_fingerprint, compliance,
+ (report_ready AND (SELECT status FROM findings WHERE id=$1) NOT IN ('fixed','false_positive','duplicate','retracted','ruled_out','open_proof_gap','ignored','risk_accepted') AND prepared_evidence_version=(SELECT evidence_version FROM findings WHERE id=$1) AND prepared_valid_until>now()), dedupe_of, updated_at
 FROM src_finding_meta WHERE finding_id=$1`, findingID).
 		Scan(&m.FindingID, &m.TaskID, &m.Fingerprint, &m.DegradedFingerprint, &compliance, &m.ReportReady, &dedupe, &m.UpdatedAt)
 	if err == sql.ErrNoRows {
@@ -647,7 +683,7 @@ func (s *SrcStore) SrcDeliveryFindings(ctx context.Context, taskID int64) ([]Src
 	}
 	rows, err := s.db.QueryContext(ctx, `
 SELECT f.id, COALESCE(f.task_id,0), f.severity, f.status, COALESCE(NULLIF(f.name,''), f.vulnclass),
-       COALESCE(m.fingerprint,''), COALESCE(m.report_ready,false), COALESCE(m.dedupe_of,0),
+       COALESCE(m.fingerprint,''), COALESCE(m.report_ready AND m.prepared_evidence_version=f.evidence_version AND m.prepared_valid_until>now(),false), COALESCE(m.dedupe_of,0),
        COALESCE(s.id,0), COALESCE(s.status,'')
 FROM findings f
 LEFT JOIN src_finding_meta m ON m.finding_id = f.id
@@ -717,6 +753,21 @@ func (s *SrcStore) SrcHostInScope(ctx context.Context, taskID int64, host string
 	host = strings.ToLower(strings.TrimSpace(host))
 	if s == nil || s.db == nil || taskID <= 0 || host == "" {
 		return false, false, nil
+	}
+	var mode string
+	if err := s.db.QueryRowContext(ctx, `SELECT mode FROM tasks WHERE id=$1 AND deleted_at IS NULL`, taskID).Scan(&mode); err != nil {
+		return false, true, err
+	}
+	if mode == "src" {
+		auth, err := s.db.srcAuthorization(ctx, taskID)
+		if err != nil {
+			return false, true, err
+		}
+		excluded, err := s.db.TaskHostExcluded(ctx, taskID, host)
+		if err != nil {
+			return false, true, err
+		}
+		return !excluded && auth.AllowsHost(host), true, nil
 	}
 	// 排除项优先：host 明确被 program out 范围排除时直接判越界，不再看包含项。
 	excluded, err := s.db.TaskHostExcluded(ctx, taskID, host)

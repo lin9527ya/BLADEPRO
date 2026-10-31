@@ -823,6 +823,9 @@ func (s *Server) pgListTools(w http.ResponseWriter, r *http.Request) {
 			tool.Calls = counts[tool.Key]
 		}
 	}
+	for i, t := range ts {
+		ts[i] = maskToolForUI(t)
+	}
 	writeJSON(w, 200, map[string]any{"tools": ts})
 }
 
@@ -922,6 +925,9 @@ func (s *Server) pgListMCP(w http.ResponseWriter, r *http.Request) {
 	for _, st := range mcphttp.GuardStatuses() {
 		guards[st.Server] = st
 	}
+	for i, m := range ms {
+		ms[i] = maskMCPForUI(m)
+	}
 	writeJSON(w, 200, map[string]any{"servers": ms, "guards": guards})
 }
 
@@ -964,6 +970,22 @@ func (s *Server) pgSaveMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	isNew := m.ID == 0
+	if !isNew {
+		old, err := pg.GetMCP(m.ID)
+		if err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		if old == nil {
+			writeErr(w, 404, "MCP 不存在")
+			return
+		}
+		if err := prepareMaskedMCPUpdate(old, &m); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
 	id, err := pg.SaveMCP(&m)
 	if err != nil {
 		writeErr(w, 500, err.Error())

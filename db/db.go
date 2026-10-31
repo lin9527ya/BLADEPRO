@@ -132,12 +132,15 @@ func coordinateWithSchemaMigration(tx *sql.Tx) error {
 // Precedence: env BLADEPRO_PG_DSN > config file (config.json). There is no
 // built-in default — it errors if neither source is configured.
 func DSN() (dsn, source string, err error) {
-	return config.PostgresDSN()
+	return resolveDatabaseDSN()
 }
 
 // DB wraps the shared *sql.DB. PG handles its own connection pool + concurrency
 // (MVCC), so unlike the old SQLite store there is no process-wide write mutex.
-type DB struct{ *sql.DB }
+type DB struct {
+	*sql.DB
+	tx *sql.Tx
+}
 
 // ensureDatabase connects to the postgres system database and creates the target
 // database if it does not exist. dsn must be a postgres:// URL.
@@ -173,6 +176,9 @@ func ensureDatabase(dsn string) error {
 
 // Open connects, applies the schema (idempotent), and seeds builtin rows.
 func Open(dsn string) (*DB, error) {
+	if err := guardDatabaseForTests(dsn); err != nil {
+		return nil, err
+	}
 	if err := ensureDatabase(dsn); err != nil {
 		return nil, err
 	}
@@ -194,7 +200,7 @@ func Open(dsn string) (*DB, error) {
 		sqlDB.Close()
 		return nil, fmt.Errorf("ping postgres (%s): %w", config.Redact(dsn), err)
 	}
-	d := &DB{sqlDB}
+	d := &DB{DB: sqlDB}
 	// pgx runs multi-statement Exec via the simple protocol when there are no args.
 	// Keep the dedicated lock connection checked out until both DDL and seeding
 	// finish so concurrent application instances cannot initialize out of order.

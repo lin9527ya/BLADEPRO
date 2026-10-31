@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -116,6 +117,9 @@ VALUES ($1,'IDOR','复核测试发现','high','pending') RETURNING id`, task.ID)
 
 	// 已裁决项不再出现（即使发现仍是 report_ready=false / 格仍是 budget_stop）。
 	code, out = do("GET", "/api/review/queue", nil)
+	if code != http.StatusOK {
+		t.Fatalf("review queue status=%d body=%v", code, out)
+	}
 	if code != 200 {
 		t.Fatalf("queue2: %d", code)
 	}
@@ -137,6 +141,9 @@ VALUES ($1,$2,'','ready','待提交超时','medium', now()-interval '10 days', n
 		t.Fatalf("stale submission: %v", err)
 	}
 	code, out = do("GET", "/api/review/queue", nil)
+	if code != http.StatusOK {
+		t.Fatalf("review queue status=%d body=%v", code, out)
+	}
 	var staleItem map[string]any
 	for _, raw := range out["items"].([]any) {
 		item := raw.(map[string]any)
@@ -170,6 +177,9 @@ VALUES ($1,$2,'','ready','待提交超时','medium', now()-interval '10 days', n
 		t.Fatalf("cell2: %v", err)
 	}
 	code, out = do("GET", "/api/review/queue", nil)
+	if code != http.StatusOK {
+		t.Fatalf("review queue status=%d body=%v", code, out)
+	}
 	var retestItem map[string]any
 	for _, raw := range out["items"].([]any) {
 		item := raw.(map[string]any)

@@ -81,6 +81,19 @@ type storageUnit struct {
 	RetentionDays int `json:"retention_days,omitempty"`
 }
 
+// Only explicit update residue names may be removed from the executable directory.
+var binaryResidueNames = map[string]bool{
+	"bladepro.old": true, "bladepro.failed": true,
+	"bladepro.new": true, "bladepro.upgrade.json": true,
+}
+
+func isBinaryResidue(name string) bool {
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\\`) {
+		return false
+	}
+	return binaryResidueNames[name] || (strings.HasSuffix(name, ".exe") && binaryResidueNames[strings.TrimSuffix(name, ".exe")])
+}
+
 type storageCategoryReport struct {
 	Key           string        `json:"key"`
 	Label         string        `json:"label"`
@@ -478,6 +491,9 @@ func (s *Server) scanStorageCategory(spec storageCategorySpec, days int, protect
 			bytes, mod = info.Size(), info.ModTime()
 		}
 		u := storageUnit{Name: e.Name(), Path: p, Bytes: bytes, ModTime: mod}
+		if spec.Key == "binary" && (!isBinaryResidue(e.Name()) || e.IsDir() || e.Type()&os.ModeSymlink != 0) {
+			u.Protected = "非更新残留文件，不允许清理"
+		}
 		if spec.Key == "tasks" && protected[e.Name()] {
 			u.Protected = "任务未到终态（在跑/排队/暂停）"
 		}
@@ -627,6 +643,12 @@ func (s *Server) cleanStorage(w http.ResponseWriter, r *http.Request) {
 		}
 		root := s.storageCategoryRoot(cat.Key)
 		for _, u := range cat.Items {
+			if cat.Key == "binary" {
+				info, err := os.Lstat(u.Path)
+				if err != nil || !isBinaryResidue(filepath.Base(u.Path)) || !info.Mode().IsRegular() {
+					continue
+				}
+			}
 			if !storageUnitExpired(u, cat.RetentionDays, now) {
 				continue
 			}

@@ -34,7 +34,7 @@ type srcGateState struct {
 }
 
 // srcFinishGate 为 SRC 任务判定"现在能不能落 done"。
-// 返回 true 表示放行（非 SRC 任务、门通过、或门查不动时不让任务卡死）。
+// 返回 true 表示放行（非 SRC 任务或门通过）；查询失败保留任务等待重试。
 // 返回 false 表示已拒绝 done，调用方必须不落状态。
 func (e *Engine) srcFinishGate(ctx context.Context, t *Task, taskID int64) bool {
 	if t == nil || t.Mode != srcmode.ModeSrc {
@@ -43,11 +43,11 @@ func (e *Engine) srcFinishGate(ctx context.Context, t *Task, taskID int64) bool 
 	doc := srcmode.Parse(t.ModeDoc)
 	rep, err := srcmode.CheckFinish(ctx, e.m.PG().Src(), taskID, doc)
 	if err != nil {
-		// 查不动不等于完成：但要避免把任务永久卡在 running，所以记一条显眼的活动后放行。
-		log.Printf("[src-gate] task %s 收尾门查询失败，按放行处理: %v", t.ID, err)
+		// 基础设施错误不是完成，也不计入重复缺口拒绝次数。
+		log.Printf("[src-gate] task %s 收尾门查询失败，拒绝本次完成: %v", t.ID, err)
 		e.emitActivity(t, db.Activity{Worker: "system", Kind: "src_gate", IsError: true,
-			Summary: "SRC 收尾门查询失败，本次按放行处理：" + err.Error()})
-		return true
+			Summary: "SRC 收尾门查询失败，保留未完成状态等待重试：" + err.Error()})
+		return false
 	}
 	// 列表页读的是这次判定的快照（tasks.src_*），不是实时重算；写库失败只记录，
 	// 不影响门本身。

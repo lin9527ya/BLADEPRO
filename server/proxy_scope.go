@@ -52,8 +52,14 @@ func (s *Server) checkProxyTarget(taskID int64, host string) error {
 		return nil
 	}
 	host = strings.ToLower(strings.TrimSpace(host))
-	if host == "" || isLocalProxyHost(host) {
+	if host == "" {
 		return nil
+	}
+	if isLocalProxyHost(host) && !s.srcDocForTask(taskID).IsSrc() {
+		return nil
+	}
+	if doc := s.srcDocForTask(taskID); doc.TimeWindow != "" && !doc.InWindow(time.Now()) {
+		return fmt.Errorf("当前不在授权作业时间窗内")
 	}
 	key := fmt.Sprintf("%d|%s", taskID, host)
 	now := time.Now()
@@ -88,7 +94,13 @@ func (s *Server) resolveProxyTarget(taskID int64, host string) (bool, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	inScope, decidable, err := s.m.PG().Src().SrcHostInScope(ctx, taskID, host)
-	if err != nil || !decidable {
+	if err != nil {
+		return false, "无法读取任务授权范围"
+	}
+	if !decidable {
+		if s.srcDocForTask(taskID).IsSrc() {
+			return false, "无法核验 SRC 授权范围"
+		}
 		// 判不了/查不动 -> 放行：与 RoE 范围门的 fail-open 语义一致，命令门仍有一层。
 		return true, ""
 	}

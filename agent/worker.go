@@ -69,13 +69,14 @@ type Worker struct {
 	// srcVerifier 由宿主注入：从流量核验收尾项指标（nil = 不核验）。
 	srcVerifier SrcVerifier
 	// srcProber 由宿主注入：确定性只读探针（nil = src_probe 报未接线）。
-	srcProber        SrcProber
-	srcScreenshotter SrcScreenshotter
-	prov             llm.Provider
-	model            string
-	workDir          string
-	proxyAddr        string
-	proxyCACert      string // recording proxy's CA cert path (for WebFetch HTTPS verify)
+	srcProber         SrcProber
+	srcScreenshotter  SrcScreenshotter
+	srcIdentityDiffer SrcIdentityDiffer
+	prov              llm.Provider
+	model             string
+	workDir           string
+	proxyAddr         string
+	proxyCACert       string // recording proxy's CA cert path (for WebFetch HTTPS verify)
 	// 模型分层（可选）：tierProviders 按 cheap/standard/strong 提供 provider，
 	// 由意图 payload 的 worker_tier 选择；summaryProvider 专门用于上下文压缩，
 	// 与执行模型解耦（压缩是低价值重复劳动，用便宜档即可）。
@@ -527,7 +528,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	if as != nil {
 		tsx.SetAssetStore(as, as.Companies())
 	}
-	tsx.SetOwnerNode(intent.ID)       // assets this worker discovers anchor to its intent → visible to the task
+	tsx.SetOwnerIntent(intent.ID)     // assets this worker discovers anchor to its intent → visible to the task
 	tsx.SetExecService(w.execService) // P13：长任务执行（进程活过本次 run）
 	pol := w.policy()
 	tsx.SetPolicy(pol)                  // P20：worker 本身不派意图，但策略段要进它的 system（见下）

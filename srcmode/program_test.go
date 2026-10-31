@@ -335,3 +335,16 @@ func TestProgramRateLimitCompiled(t *testing.T) {
 		t.Fatalf("rate_limit 未编译进 mode_doc：%d", doc.RateLimit)
 	}
 }
+
+func TestProgramDeliveryReserveCompilesAndValidates(t *testing.T) {
+	doc := DefaultDoc()
+	p := Program{Name: "reserve", Platform: "x", Rules: ProgramRules{DeliveryReservePct: 20}}
+	out := p.ApplyToModeDoc(doc)
+	if out.DeliveryReservePct != 20 {
+		t.Fatalf("reserve=%d", out.DeliveryReservePct)
+	}
+	bad := Program{Name: "reserve", Platform: "x", Rules: ProgramRules{DeliveryReservePct: 80}}
+	if err := bad.Validate(); err == nil {
+		t.Fatal("invalid reserve accepted")
+	}
+}

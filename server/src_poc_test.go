@@ -69,3 +69,17 @@ func TestRenderSrcPocShellQuote(t *testing.T) {
 		t.Fatalf("单引号没有正确转义：\n%s", script)
 	}
 }
+
+func TestSrcPocFlagsMutatingSteps(t *testing.T) {
+	steps := []srcPocStep{{Method: "GET", URL: "https://x/"}, {Method: "POST", URL: "https://x/api"}}
+	if !srcPocMutating(steps) {
+		t.Fatal("POST must mark PoC as mutating")
+	}
+	if srcPocMutating([]srcPocStep{{Method: "GET"}, {Method: "HEAD"}, {Method: "OPTIONS"}}) {
+		t.Fatal("read-only methods must not be marked mutating")
+	}
+	readme := renderSrcPocReadme(&db.DBFinding{ID: 1}, "x", steps, nil)
+	if !strings.Contains(readme, "状态变更请求") || !strings.Contains(readme, "默认不要自动执行") {
+		t.Fatalf("mutating warning missing:\n%s", readme)
+	}
+}

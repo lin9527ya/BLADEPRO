@@ -25,6 +25,46 @@ type agentIsoState struct {
 
 var agentIso agentIsoState
 
+var fileGuard struct {
+	installed bool
+	roots     []string
+	protected []string
+}
+
+// File tools have a default boundary even when OS privilege dropping is disabled.
+func InstallFileRootGuard(dataDir, keyDir, skillDir string) error {
+	roots, err := agentAllowedRoots(dataDir, skillDir, os.Getenv("BLADEPRO_AGENT_READ_ROOTS"))
+	if err != nil {
+		return err
+	}
+	key, err := filepath.Abs(keyDir)
+	if err != nil {
+		return err
+	}
+	if real, err := filepath.EvalSymlinks(key); err == nil {
+		key = real
+	}
+	for _, root := range roots {
+		if root == key || strings.HasPrefix(key, root+string(os.PathSeparator)) {
+			return fmt.Errorf("文件工具允许根 %s 包含密钥/配置目录 %s", root, key)
+		}
+	}
+	fileGuard.installed = true
+	fileGuard.roots = roots
+	dataRoot, err := filepath.Abs(dataDir)
+	if err != nil {
+		return err
+	}
+	dataRoot, err = filepath.EvalSymlinks(dataRoot)
+	if err != nil {
+		return err
+	}
+	fileGuard.protected = []string{filepath.Join(dataRoot, "evidence"), filepath.Join(dataRoot, "traffic")}
+	actool.SetPathGuard(agentPathGuard)
+	log.Printf("[file-guard] 文件工具限制在 %s（工具边界不是 OS/网络沙箱）", strings.Join(roots, "、"))
+	return nil
+}
+
 // agentEnvDenyPrefixes / agentEnvDenyFragments 是子进程环境的"疑似凭据"判定。
 //
 // 刻意用**黑名单**而不是白名单：白名单会悄悄弄坏 agent 依赖的一堆工具变量
@@ -99,25 +139,66 @@ func InstallAgentIsolation(dataDir, keyDir, skillDir string) error {
 // InstallAgentIsolation 的前置检查排除在 dataDir 之外，这里碰不到它们。
 // 用 Lchown 而不是 Chown——工作区里可能有 agent 建的软链，跟着软链 chown 会改到树外文件。
 func prepareAgentStateDirs(dataDir string) error {
-	uid, gid := agentIso.uid, agentIso.gid
-	return filepath.WalkDir(dataDir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
+	// Only workspaces are writable by the agent. Owning the data root would let it
+	// replace evidence/SQLite directories and forge the source before binding.
+	if err := os.Lchown(dataDir, os.Geteuid(), int(agentIso.gid)); err != nil {
+		return err
+	}
+	if err := os.Chmod(dataDir, 0o750|os.ModeSetgid); err != nil {
+		return err
+	}
+	for _, name := range []string{"tasks", "sessions", "drafts", "noa"} {
+		root := filepath.Join(dataDir, name)
+		if err := os.MkdirAll(root, 0o775); err != nil {
 			return err
 		}
-		if err := os.Lchown(p, int(uid), int(gid)); err != nil {
-			return err
-		}
-		if d.IsDir() {
-			// setgid + 组可写：之后服务端在这个目录下新建的子目录继承 worker 组，
-			// 配合 0775 的创建模式，降权后的 agent 才写得进去。
-			// 注意 setgid 必须用 os.ModeSetgid 表达：os.Chmod 只认低 9 位权限，
-			// 写成 0o2775 的 02000 位会被丢掉（文件既不报错也不生效）。
-			if err := os.Chmod(p, 0o775|os.ModeSetgid); err != nil {
+		if err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
 				return err
 			}
+			if err := os.Lchown(p, int(agentIso.uid), int(agentIso.gid)); err != nil {
+				return err
+			}
+			if d.IsDir() {
+				return os.Chmod(p, 0o775|os.ModeSetgid)
+			}
+			return nil
+		}); err != nil {
+			return err
 		}
-		return nil
-	})
+	}
+	for _, name := range []string{"evidence", "traffic"} {
+		root := filepath.Join(dataDir, name)
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			return err
+		}
+		if err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if err := os.Lchown(p, os.Geteuid(), int(agentIso.gid)); err != nil {
+				return err
+			}
+			if d.Type()&os.ModeSymlink != 0 {
+				return nil
+			}
+			if d.IsDir() {
+				mode := os.FileMode(0o700)
+				if name == "traffic" && (p == root || p == filepath.Join(root, "_ca")) {
+					mode = 0o750
+				}
+				return os.Chmod(p, mode)
+			}
+			mode := os.FileMode(0o600)
+			if name == "traffic" && filepath.Base(p) == "mitmproxy-ca-cert.pem" {
+				mode = 0o640
+			}
+			return os.Chmod(p, mode)
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // hardenAgentCmd 把一条即将执行的命令收敛到 agent 身份：降权 + 环境清洗。
@@ -182,16 +263,25 @@ func agentEnvDenied(key string) bool {
 // agentPathGuard 是隔离模式下文件工具的允许面：只放行配置的根（含其子路径）。
 // 它收到的是 Norma 解析过软链的真实路径，所以软链绕不过去。
 func agentPathGuard(abs string) error {
-	if !agentIso.enabled {
+	if !agentIso.enabled && !fileGuard.installed {
 		return nil
 	}
-	for _, root := range agentIso.roots {
+	roots := agentIso.roots
+	if fileGuard.installed {
+		roots = fileGuard.roots
+	}
+	for _, root := range fileGuard.protected {
+		if abs == root || strings.HasPrefix(abs, root+string(os.PathSeparator)) {
+			return fmt.Errorf("拒绝直接访问服务端证据存储；请使用已校验的证据/流量工具")
+		}
+	}
+	for _, root := range roots {
 		if abs == root || strings.HasPrefix(abs, root+string(os.PathSeparator)) {
 			return nil
 		}
 	}
-	return fmt.Errorf("拒绝访问 %s：隔离模式下文件工具只允许访问 %s；其它路径请用 Bash 在任务目录内处理",
-		abs, strings.Join(agentIso.roots, "、"))
+	return fmt.Errorf("拒绝访问 %s：隔离模式下文件工具只允许访问 %s；其它路径需要由操作者显式配置允许根",
+		abs, strings.Join(roots, "、"))
 }
 
 // agentAllowedRoots 解析允许根为真实路径。dataDir / skillDir 必须存在；额外根来自

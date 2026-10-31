@@ -3,7 +3,6 @@ package llmrec
 import (
 	"context"
 	"iter"
-	"os"
 	"testing"
 
 	"github.com/google/uuid"
@@ -84,8 +83,8 @@ func (meteredStreamProvider) Stream(context.Context, llm.CompletionRequest) iter
 }
 
 func TestSideUsageRecordedOnceOnConsumerCancellation(t *testing.T) {
-	dsn := os.Getenv("BLADEPRO_PG_DSN")
-	if dsn == "" {
+	dsn, _, err := db.DSN()
+	if err != nil {
 		t.Skip("requires isolated BLADEPRO_PG_DSN")
 	}
 	pg, err := db.Open(dsn)

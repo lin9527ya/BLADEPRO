@@ -85,6 +85,9 @@ func (s *Server) prepareSrcSubmission(ctx context.Context, req agent.SrcPrepareR
 	if f.TaskID == nil || *f.TaskID != req.TaskID {
 		return nil, fmt.Errorf("发现 #%d 不属于任务 #%d，不能在本任务的台账里准备交付", req.FindingID, req.TaskID)
 	}
+	if srcRetestExemptStatuses[f.Status] || f.Status == db.FindingFixed {
+		return nil, fmt.Errorf("当前发现状态 %s 不能准备可提交件", f.Status)
+	}
 	store := s.m.PG().Src()
 	traffic, err := store.SrcFindingTraffic(ctx, f.ID)
 	if err != nil {
@@ -199,7 +202,8 @@ func (s *Server) prepareSrcSubmission(ctx context.Context, req agent.SrcPrepareR
 		DegradedFingerprint: degradedFP,
 		Description:         description, Impact: impact, Fix: fix, ReportMD: markdown,
 		Status: status, ReportReady: ready, Compliance: complianceJSON,
-		ProgramID: programID, PlatformLevel: platformLevel,
+		ExpectedEvidenceVersion: &f.EvidenceVersion,
+		ProgramID:               programID, PlatformLevel: platformLevel,
 		Actor: firstNonEmpty(req.Actor, "agent"),
 	})
 	if err != nil {

@@ -26,6 +26,7 @@ import type { ReviewKind, ReviewQueue, ReviewQueueItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const KIND_LABEL: Record<ReviewKind, string> = {
+  check_unverified: "收尾待核验",
   report_missing: "报告缺段",
   retest_inconclusive: "复验存疑",
   dedupe_pending: "疑似重复",
@@ -37,6 +38,7 @@ const KIND_LABEL: Record<ReviewKind, string> = {
 };
 
 const KIND_TONE: Record<ReviewKind, string> = {
+  check_unverified: "border-amber-500/40 text-amber-600 dark:text-amber-400",
   report_missing: "border-sky-500/40 text-sky-600 dark:text-sky-400",
   retest_inconclusive: "border-amber-500/40 text-amber-600 dark:text-amber-400",
   dedupe_pending: "border-violet-500/40 text-violet-600 dark:text-violet-400",
@@ -61,6 +63,7 @@ function itemLabel(item: ReviewQueueItem): string {
  * 退回重测=启动独立复测或把格删回空白。
  */
 export function ReviewQueueDialog({ onChanged }: { onChanged?: () => void }) {
+  const checkboxPrefix = React.useId();
   const [open, setOpen] = React.useState(false);
   const [data, setData] = React.useState<ReviewQueue | null>(null);
   const [loading, setLoading] = React.useState(false);
@@ -107,6 +110,10 @@ export function ReviewQueueDialog({ onChanged }: { onChanged?: () => void }) {
   async function run(action: "accept" | "reject" | "retest") {
     if (selectedItems.length === 0) {
       toast.error("先选择要处理的复核项");
+      return;
+    }
+    if (action === "accept" && selectedItems.some((i) => i.kind === "check_unverified") && !note.trim()) {
+      toast.error("人工核验收尾项必须填写实际核对依据");
       return;
     }
     setBusy(true);
@@ -157,8 +164,9 @@ export function ReviewQueueDialog({ onChanged }: { onChanged?: () => void }) {
 
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4">
           <div className="flex flex-wrap items-center gap-3 text-sm">
-            <label className="flex items-center gap-2">
+            <label htmlFor={`${checkboxPrefix}-all`} className="flex items-center gap-2">
               <Checkbox
+                id={`${checkboxPrefix}-all`}
                 checked={items.length > 0 && selectedItems.length === items.length}
                 onCheckedChange={(v) => toggleAll(v === true)}
                 aria-label="全选"
@@ -187,12 +195,14 @@ export function ReviewQueueDialog({ onChanged }: { onChanged?: () => void }) {
               {items.map((item) => (
                 <label
                   key={item.ref_key}
+                  htmlFor={`${checkboxPrefix}-${item.ref_key}`}
                   className={cn(
                     "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors hover:bg-muted/40",
                     selected.has(item.ref_key) && "border-primary/40 bg-primary/5",
                   )}
                 >
                   <Checkbox
+                    id={`${checkboxPrefix}-${item.ref_key}`}
                     className="mt-0.5"
                     checked={selected.has(item.ref_key)}
                     onCheckedChange={(v) => toggle(item.ref_key, v === true)}

@@ -4,6 +4,100 @@
 
 ## [Unreleased]
 
+### 新增：P2 评测与 SRC 工作台
+
+- 前端统一任务终态合同 `taskIsTerminal`（含 policy_blocked），详情/概览不再手写终态；
+  新建任务默认 SRC，普通渗透保留显式入口；SRC 详情首次默认 SRC 页签且不抢回用户选择。
+- 两个 SRC 页面共用提交状态/流转/驳回原因合同；SRC 收尾项展示核验状态与继承原始观察日。
+- 交付包拆分：默认审计包保留全部发现；`submission=1` 只收当前证据版本可提交、
+  去重已定案且未关闭的发现，并写明未进包原因。前端新增“下载可提交包”。
+- PoC 对 POST/PUT/PATCH/DELETE 等状态变更步骤显式标注“默认不要自动执行”，不再
+  声称脚本只读。
+- 发现导出新增 `endpoints`（"METHOD URL"）与 `endpoint_details`，便于外部评测按端点
+  匹配；分页 `task=` 导出仍是本任务原生发现。
+- 新增 `srcbench/run-benchmark.sh`：健康检查 → 固定预算 SRC 任务 → 等终态 →
+  分页导出 → `/src` 摘要 → scorer；产物含任务、发现、摘要、manifest、评分。
+  只允许 loopback/私网靶场，token 取输入+输出并单列缓存；README 修正 `.tokens`
+  对象用法并说明标签匹配不等于漏洞复验。
+
+
+### 新增：P1 可靠调度与 SRC 复用/双身份契约
+
+- 意图结算新增 `no_output`：正常返回但本次与历史均无写回不再记为 done；SRC 覆盖格、
+  收尾项、探针凭据/截图都计入产出。续跑以开跑前的历史产出为准，SDK 的 result 行
+  不会把空跑伪装成有产出。
+- 意图节点、资产锚点与目标/血缘/战果边在一个事务内提交；批量创建成功后累加
+  open/total/round 额度，同批不再越过策略上限。
+- `add_intent` 支持 `idempotency_key`（数据库唯一约束）与 `depends_on`：前置未了结
+  的意图不进入 frontier、不能被领取；领取时再取 SRC 单元格租约，失败退回 open。
+  新增 `unblock_intent` 与 `drop_intent`，概览展示依赖。
+- Planner 增加单轮墙钟上限（默认 15 分钟，`planner_round_seconds` 可调）；失败轮次
+  恢复未消费的 triggers 并延迟重试。新增 `consume_hint`，概览只列 active hints。
+- Bash/run_execution 失败结果追加可执行建议；`get_worker_output` 从活动尾部读取，
+  附最近步骤，长运行不再丢最终结论。
+- 探针清单：JS 记录 discovered/fetched/failed，非 404 记录候选/逐条复测路由，方法
+  矩阵记录安全方法可用数（不再为凑 7 种发送状态变更请求）；缓存键加入规则/档位
+  hash。继承与负知识记录原始 observed_at，30 天外的证据不自动继承/复用；继承收尾项
+  在有效期内作为 `inherited` 核验通过，过期需重测。
+- 结构化测试身份：Program/ModeDoc 保存 label/role/tenant/credential_env/header，凭据
+  只从部署环境读取；新增只读 `src_identity_diff`（同 host GET，两个授权身份，比较
+  状态/长度/正文摘要并落事实证据，不返回凭据或正文）。
+- `src_cells` 增加 revision_count，与历史 attempts 分开记账。
+- Program 可配置 `delivery_reserve_pct`（0–50）：探索预算在任务 token 上限前收口，
+  给复验、补证与交付留出额度；`planner_round_seconds` 可从设置读取/保存。
+
+
+
+### 修复：剩余 P0——可信核验、原子收官与秘密/生命周期边界
+
+- 新增 `src_probe_runs`：宿主记录执行请求 ID、方法/URL/状态、实际读取长度及正文 hash，
+  参数与结果 hash、完成/截断状态；创建对应资产 fact。`src_mark_check` 引用同一
+  `probe_run_id/evidence_node_id`，跨任务/资产、过期、类型不符或指标篡改均拒绝。
+- 缓存结果仅作历史提示，不返回可复用的当前任务凭据；人工 `done` 进入“收尾待核验”
+  队列，必须由已认证复核接口填写依据才转人工核验。检查缺口与完成计数不再只看 done。
+- 原子收官在一个事务内锁任务、读取全部覆盖/交付/目标/意图证明并保存
+  `src_completion_proofs` 后落 done；同一锁约束证明写入。迟到的新目标/意图拒绝，
+  完结后影响证明的修改使任务暂停，历史收官证明保留。
+- 管理接口遮盖 MCP env / HTTP 自定义工具 headers；掩码保存恢复旧值，修改凭据
+  目的地时必须重新填写真实凭据，防止把隐藏凭据转发到新地址。
+- 所有 MCP/自定义执行类及配置动作受停机与时间窗约束；SRC 冻结授权不能被普通
+  scope_mode=off 绕过；内部读图与结算写回仍可用。
+- 后台周期循环由 Server 所有并登记；Shutdown 取消源上下文、在共享截止时间内
+  等待执行回收、Agent、周期循环、归档、旁路写入及日志排空，再关数据库。日志写入
+  可取消，并记录丢弃/失败；订阅关闭与发送不再竞争。
+- 流量正文落盘失败显式 partial，不能绑定为完整证据；大正文原子落盘，已有 blob
+  验证 hash/长度。截图必须是真实且尺寸受限的图片，附件下载前验证实际字节。
+- 降权只授予 workspace 写权限，data 根和 evidence/traffic 由服务端持有；文件工具
+  禁止直接触碰原始证据存储，公开 CA 证书保留可读。
+- Worker 事实/发现写回限制当前意图；高危/严重发现无证明拒绝且不建议降级；
+  正式报告按人工确认或当前独立复验区分候选，关闭项退出确认正文，读库错误/截断显式告警。
+
+
+### 修复：SRC 可信边界与执行治理（优化第一批）
+
+- SRC 授权在 Agent 动作前冻结：范围细化不能扩权，企业归属不覆盖显式 in；
+  归档恢复保留授权快照，代理核验失败拒绝放行。
+- Worker/Planner 接入现有截图宿主；浏览器使用任务绑定的本机代理，导航、
+  子资源与 CONNECT 同样受范围门约束；托管执行也带任务代理身份。
+- 独立复验保留干净会话，但继承源任务 Guard、代理身份、时间窗与隔离要求；
+  不再修改共享 ChatAgent。
+- 复验冻结 evidence_version，最新 fixed/failed/active 不被旧 reproduced 覆盖；
+  可提交资格绑定证据版本和七天有效期，证据变化/新复验失效旧准备状态，
+  已提交平台历史不回退。
+- 收尾查询失败拒绝 done；完成前复查目标并用受保护状态更新；收尾/非404
+  流量查询在数据库层按任务过滤。内建探针遵守 no_automation，任务限速超时拒绝。
+- 更新残留清理只允许明确文件名；默认文件工具根限制独立于是否降权；
+  测试 DSN 和直接 DB.Open 拒绝应用库/非测试库。
+- MCP HTTP/SSE 增加最终拨号地址、同源 endpoint/重定向守卫和握手超时；
+  本机 MCP 需显式 BLADEPRO_MCP_ALLOW_LOCAL=1，环境代理不再绕过拨号守卫。
+  Norma 升级到 0.5.6，并回归 stdio 子进程的宿主 exec hook。
+- 托管执行原子占并发槽，增加默认硬寿命、WaitDelay、后代进程组回收和停机收尾；
+  流量 ID 不再秒级截断，写入碰撞失败而不覆盖历史证据。
+- 容器 API 监听容器网卡，宿主仍仅发布 loopback；代理不再默认发布给宿主。
+- 补授权/版本失效/截图装配/浏览器代理/执行并发/测试库/MCP 安全回归；
+  校正已有验收中的 CRLF 与正文合格断言。
+
+
 ### 新增：台账闭环——状态历史与 SLA 提醒（P2）
 
 - 新表 `src_submission_events`：台账新建、状态推进、平台编号/等级/回报/驳回原因/

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lin9527ya/bladepro/db"
@@ -39,8 +40,11 @@ type logSinkT struct {
 	subs map[chan LogLine]struct{}
 	out  io.Writer // passthrough (stderr)
 
-	dbOnce sync.Once
-	dbCh   chan dbWriteReq // buffered async channel; nil until SetDB is called
+	dbDone        chan struct{}
+	dbCancel      context.CancelFunc
+	dbDropped     atomic.Int64
+	dbWriteFailed atomic.Int64
+	dbCh          chan dbWriteReq // buffered async channel; nil until SetDB is called
 }
 
 var logSink = &logSinkT{cap: 3000, subs: map[chan LogLine]struct{}{}, out: os.Stderr}
@@ -64,67 +68,103 @@ func (s *logSinkT) emit(level, tag, text string) {
 //     shows history immediately after restart.
 //  2. Starts an async goroutine that persists every subsequent log line to DB.
 func (s *logSinkT) SetDB(ctx context.Context, pg *db.DB) {
-	if pg == nil {
+	if pg == nil || ctx.Err() != nil {
 		return
 	}
-	s.dbOnce.Do(func() {
-		ch := make(chan dbWriteReq, 2000)
-		s.mu.Lock()
-		s.dbCh = ch
-		s.mu.Unlock()
-
-		// Restore last 100 rows from DB → prepend to ring as history context.
-		if logs, err := pg.RecentLogs(100); err == nil && len(logs) > 0 {
-			s.mu.Lock()
-			restored := make([]LogLine, 0, len(logs))
-			for _, l := range logs {
-				s.seq++
-				restored = append(restored, LogLine{
-					Seq:   s.seq,
-					DBID:  l.ID,
-					TS:    l.CreatedAt.Format(time.RFC3339),
-					Level: l.Level,
-					Tag:   l.Tag,
-					Text:  l.Text,
-				})
+	ch := make(chan dbWriteReq, 2000)
+	done := make(chan struct{})
+	writeCtx, cancel := context.WithCancel(context.Background())
+	s.mu.Lock()
+	oldCh, oldDone, oldCancel := s.dbCh, s.dbDone, s.dbCancel
+	if oldCh != nil {
+		close(oldCh)
+	}
+	s.dbCh = ch
+	s.dbDone = done
+	s.dbCancel = cancel
+	s.mu.Unlock()
+	goSafe("logsink/writer", nil, func() {
+		defer close(done)
+		defer cancel()
+		for req := range ch {
+			if writeCtx.Err() != nil {
+				s.dbDropped.Add(int64(len(ch)) + 1)
+				return
 			}
-			// Prepend history before any in-memory startup logs already in ring.
-			s.ring = append(restored, s.ring...)
-			if len(s.ring) > s.cap {
-				s.ring = s.ring[len(s.ring)-s.cap:]
+			qctx, qcancel := context.WithTimeout(writeCtx, 2*time.Second)
+			id, err := pg.InsertLogContext(qctx, req.ll.Level, req.ll.Tag, req.ll.Text)
+			qcancel()
+			if err != nil {
+				s.dbWriteFailed.Add(1)
+				_, _ = os.Stderr.Write([]byte("[logsink] db write failed\n"))
+				continue
+			}
+			s.mu.Lock()
+			for i := range s.ring {
+				if s.ring[i].Seq == req.seq {
+					s.ring[i].DBID = id
+					break
+				}
 			}
 			s.mu.Unlock()
 		}
-
-		// Async writer: picks from channel and inserts into server_logs.
-		// Uses os.Stderr directly to report errors and avoids recursive log calls.
-		goSafe("logsink/writer", nil, func() {
-			for {
-				select {
-				case req, ok := <-ch:
-					if !ok {
-						return
-					}
-					id, err := pg.InsertLog(req.ll.Level, req.ll.Tag, req.ll.Text)
-					if err != nil {
-						_, _ = os.Stderr.Write([]byte("[logsink] db write: " + err.Error() + "\n"))
-						continue
-					}
-					// Stamp DBID back into the ring entry so history pagination works.
-					s.mu.Lock()
-					for i := range s.ring {
-						if s.ring[i].Seq == req.seq {
-							s.ring[i].DBID = id
-							break
-						}
-					}
-					s.mu.Unlock()
-				case <-ctx.Done():
-					return
-				}
-			}
-		})
 	})
+	if oldDone != nil {
+		stopCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		select {
+		case <-oldDone:
+		case <-stopCtx.Done():
+			if oldCancel != nil {
+				oldCancel()
+			}
+		}
+		stop()
+	}
+	restoreCtx, restoreCancel := context.WithTimeout(writeCtx, 2*time.Second)
+	defer restoreCancel()
+	if logs, err := pg.RecentLogsContext(restoreCtx, 100); err == nil {
+		s.mu.Lock()
+		for _, l := range logs {
+			s.seq++
+			s.ring = append(s.ring, LogLine{Seq: s.seq, DBID: l.ID, TS: l.CreatedAt.Format(time.RFC3339), Level: l.Level, Tag: l.Tag, Text: l.Text})
+		}
+		if len(s.ring) > s.cap {
+			s.ring = s.ring[len(s.ring)-s.cap:]
+		}
+		s.mu.Unlock()
+	}
+
+}
+
+// CloseDB detaches producers, drains queued rows and cancels writes at the shared
+// shutdown deadline. The caller must invoke it before closing the database pool.
+func (s *logSinkT) CloseDB(ctx context.Context) bool {
+	s.mu.Lock()
+	ch, done, cancel := s.dbCh, s.dbDone, s.dbCancel
+	s.dbCh = nil
+	if ch != nil {
+		close(ch)
+	}
+	s.mu.Unlock()
+	if done == nil {
+		return true
+	}
+	select {
+	case <-done:
+		if cancel != nil {
+			cancel()
+		}
+		return true
+	case <-ctx.Done():
+		if cancel != nil {
+			cancel()
+		}
+		return false
+	}
+}
+
+func (s *logSinkT) DBLoss() (dropped, failed int64) {
+	return s.dbDropped.Load(), s.dbWriteFailed.Load()
 }
 
 // Write implements io.Writer for the log package: one call per log.Printf line.
@@ -139,28 +179,23 @@ func (s *logSinkT) Write(p []byte) (int, error) {
 
 func (s *logSinkT) add(l LogLine) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.seq++
 	l.Seq = s.seq
 	s.ring = append(s.ring, l)
 	if len(s.ring) > s.cap {
 		s.ring = s.ring[len(s.ring)-s.cap:]
 	}
-	ch := s.dbCh
-	subs := make([]chan LogLine, 0, len(s.subs))
-	for sub := range s.subs {
-		subs = append(subs, sub)
-	}
-	s.mu.Unlock()
-
-	// Async DB write (non-blocking; drops if channel is full under extreme load).
-	if ch != nil {
+	if s.dbCh != nil {
 		select {
-		case ch <- dbWriteReq{seq: l.Seq, ll: l}:
+		case s.dbCh <- dbWriteReq{seq: l.Seq, ll: l}:
 		default:
+			s.dbDropped.Add(1)
 		}
 	}
-
-	for _, sub := range subs {
+	// Sending and unsubscribe/close share the lock, so no stale subscriber can be
+	// closed between taking a snapshot and delivering a live frame.
+	for sub := range s.subs {
 		select {
 		case sub <- l:
 		default:
@@ -190,6 +225,9 @@ func (s *logSinkT) recent(since int64, limit int) (lines []LogLine, cursor int64
 func (s *logSinkT) subscribe() (<-chan LogLine, func()) {
 	ch := make(chan LogLine, 256)
 	s.mu.Lock()
+	if s.subs == nil {
+		s.subs = map[chan LogLine]struct{}{}
+	}
 	s.subs[ch] = struct{}{}
 	s.mu.Unlock()
 	var once sync.Once

@@ -368,3 +368,72 @@ cat /etc/passwd                # Bash 下仍可（shell 本来就是全盘读）
 **注意**：开启后不能再用 `sudo`/`apt` 等需要 root 的命令操作宿主机——agent 的扫描本身
 （nmap/nuclei/ffuf）不需要 root；确实需要高权限工具时，把那台机器作为独立执行节点，
 而不是放宽 worker 的权限。
+
+
+## SRC 可信边界（优化第一批）
+
+- SRC 创建入口冻结授权包络；修改平台项目不会扩大既有任务。Agent 只能细化
+  已授权的目标，不能通过公司/根域范围工具扩大授权。旧的直接创建路径在首次
+  受管动作前冻结，生产任务建议统一从任务创建 API/模板入口建立。
+- `src_require_isolation` 在创建时写入任务快照；恢复、截图、探针与独立复验继续
+  核验隔离。文件工具根限制默认生效，但它不是 Bash/网络沙箱。
+- 需要本机 HTTP/SSE MCP 时显式设置 `BLADEPRO_MCP_ALLOW_LOCAL=1`；默认拒绝
+  环回/链路本地/元数据地址，SSE endpoint 与重定向必须同源。MCP 使用受控直接
+  拨号，不继承未校验的环境代理；RFC1918 内部 MCP 仍允许。
+- 测试请配置 `BLADEPRO_TEST_PG_DSN`（或 CI 的 `BLADEPRO_PG_DSN`）指向独立
+  测试数据库与专用账户，例如 `bladepro_test`。测试拒绝配置文件中的应用库，
+  不提供不安全绕过开关；不要在生产数据库执行测试。
+- 已准备的 SRC 交付件默认七天有效，且只对其 evidence_version 有效。变更报文
+  或发起新复验后重新准备；无版本的旧资格视为未核验，平台提交历史保持不变。
+- 容器 HTTP API 在容器内监听 `:9898`，Compose 仅发布宿主 `127.0.0.1:9898`。
+  录制代理默认仅供容器内部使用；确需宿主访问时单独配置并核验身份/范围。
+
+
+## 剩余 P0 的兼容变化
+
+- 自动登记收尾项需要 `src_probe` 返回的 `probe_run_id` 与 `evidence_node_id`，指标
+  必须与同一次完整执行一致。查看明细：`GET /api/tasks/{id}/src/probes/{probe}`。
+  缓存、截断或失败执行不能冒充本轮已验证完成；方法探针仍只发 GET/HEAD/OPTIONS，
+  不会为凑默认方法数量发送状态变更请求，平台应明确设置适用阈值或走人工核验。
+- 没有可信凭据的手工 done 进入复核队列；接受“收尾待核验”必须填写实际核对依据。
+  修改后需要重新核验，旧自报/继承的完成行不会自动升级为可信证明。
+- 完结后的证明修改会暂停 SRC 任务，原收官快照留在历史中；新增目标/意图前请先
+  恢复或建立后续任务。平台 submitted/accepted/paid 的纯账务推进不抹掉历史。
+- 隐藏 MCP env/HTTP headers 可以原样保存；换凭据目的地时不能沿用掩码。不要在
+  command/script 正文中嵌入秘密，它们是可编辑的工具逻辑而不是秘密存储。
+- 使用 `Server` 库的嵌入方应在关库前调用 `Shutdown(ctx)`；CLI 已接入。截止时间
+  内未退出或未落库的工作会明确报告，不将有界等待宣称为无损保证。
+- Agent 只能写工作目录；原始 evidence/traffic 不再归 Agent 所有，使用 host 的证据
+  和流量接口读取，不要给 Agent 数据库凭据或把证据目录追加到允许根。
+
+
+## P1 行为说明
+
+- 新增意图终态 `no_output`：正常跑完但没有任何写回。它不等于已覆盖，Planner 应重派
+  或换打法；不会自动无限重领。
+- 依赖意图在全部前置了结前不会进入 frontier；领取时才会占用 SRC 单元格租约。
+  前置失败/不再等待时用 `unblock_intent` 拆链，或 `drop_intent` 丢弃排队项。
+- Planner 单轮默认 15 分钟；可通过设置 `planner_round_seconds` 调整（0 = 不限）。
+  失败的规划轮会恢复本轮 triggers，并在 30 秒后补一次唤醒。
+- Program 的 `test_identities` 只保存 `credential_env`（环境变量名），不保存凭据。
+  部署时由运维提供 `BLADEPRO_...` 环境变量；`src_identity_diff` 只做同 host GET，
+  不返回凭据/正文，结果需结合对象归属和独立复验。平台 `no_automation` 时该工具拒绝。
+- 继承的 tested_clear/done 只在原始观察时间 30 天内有效；链式继承不会刷新寿命。
+  跨任务负知识同样按 30 天过期。过期的收尾项需要在本任务重测。
+- 方法矩阵不会为了凑数量发送状态变更请求；探针只报告 GET/HEAD/OPTIONS 的安全方法
+  可用数，门槛会按该上限收敛。
+- Program 的 `delivery_reserve_pct` 可用于给复验/交付预留任务 token；设置
+  `planner_round_seconds` 控制单轮规划时延（0=不限，默认 900 秒）。
+
+
+## P2 工作台与评测
+
+- 新建任务默认 SRC；普通渗透仍可在模式选择中显式切换。SRC 任务详情首次打开进入
+  SRC 页签，用户手动切换后不会被轮询改回。
+- 任务终态统一含 `policy_blocked`；继续运行/归档等入口与服务端口径一致。
+- 交付包有两种：默认审计包（保留全部发现，便于复盘）与“可提交包”
+  （`?submission=1`，只收当前证据版本 ready、去重已定案且未关闭的发现）。PoC 若含
+  写方法会明确标注，默认不要自动执行。
+- 端到端基准：先启动本地靶场，再设置 `BLADEPRO_TOKEN`（或用户名/密码）和
+  `TARGET_URL`，运行 `srcbench/run-benchmark.sh`。默认拒绝非本机/私网目标；
+  runner 产物在 `srcbench/runs/<时间>/`。评分是标签匹配，不是漏洞复验。

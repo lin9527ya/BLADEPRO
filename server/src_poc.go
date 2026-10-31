@@ -29,12 +29,13 @@ const (
 
 // srcPocBundle 是一份发现的 PoC 产物（Paths 是相对交付包根目录的路径）。
 type srcPocBundle struct {
-	Dir     string
-	Script  string
-	HTTP    string
-	Readme  string
-	Bodies  map[string][]byte
-	Omitted []string // 生成时放弃的内容（过大/读不到），写进 README
+	Dir      string
+	Script   string
+	HTTP     string
+	Readme   string
+	Bodies   map[string][]byte
+	Omitted  []string // 生成时放弃的内容（过大/读不到），写进 README
+	Mutating bool     // 任一步骤使用非只读 HTTP 方法：默认不要自动执行
 }
 
 type srcPocStep struct {
@@ -95,14 +96,27 @@ func (s *Server) buildSrcPoc(ctx context.Context, f *db.DBFinding) (*srcPocBundl
 	slug := srcFileSlug(report.FindingTitle(f), "finding-"+itoa64(f.ID))
 	dir := fmt.Sprintf("attachments/%d-%s", f.ID, slug)
 	title := report.FindingTitle(f)
+	mutating := srcPocMutating(steps)
 	return &srcPocBundle{
-		Dir:     dir,
-		Script:  renderSrcPocScript(f, title, steps, omitted),
-		HTTP:    renderSrcPocHTTP(title, steps),
-		Readme:  renderSrcPocReadme(f, title, steps, omitted),
-		Bodies:  srcPocBodies(steps),
-		Omitted: omitted,
+		Dir:      dir,
+		Mutating: mutating,
+		Script:   renderSrcPocScript(f, title, steps, omitted),
+		HTTP:     renderSrcPocHTTP(title, steps),
+		Readme:   renderSrcPocReadme(f, title, steps, omitted),
+		Bodies:   srcPocBodies(steps),
+		Omitted:  omitted,
 	}, nil
+}
+
+func srcPocMutating(steps []srcPocStep) bool {
+	for _, st := range steps {
+		switch strings.ToUpper(strings.TrimSpace(st.Method)) {
+		case "GET", "HEAD", "OPTIONS":
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 // readSrcPocBody 读取原始请求正文（不做二进制过滤：PoC 需要原字节）。超过 2MB
@@ -167,6 +181,9 @@ func renderSrcPocScript(f *db.DBFinding, title string, steps []srcPocStep, omitt
 	b.WriteString("#!/usr/bin/env bash\n")
 	fmt.Fprintf(&b, "# SRC PoC — finding #%d %s\n", f.ID, oneLine(title))
 	b.WriteString("# 由绑定证据生成。签名/时间戳/一次性 token 可能已过期；只在授权范围内执行并遵守限速。\n")
+	if srcPocMutating(steps) {
+		b.WriteString("# ⚠ 含状态变更方法：默认不要自动执行；确认副作用/清理后再手动运行。\n")
+	}
 	b.WriteString("# 用法：bash poc.sh   （响应头由 curl -D - 打印）\n")
 	b.WriteString("set -euo pipefail\n")
 	b.WriteString("cd \"$(dirname \"$0\")\"\n")
@@ -234,7 +251,13 @@ func renderSrcPocReadme(f *db.DBFinding, title string, steps []srcPocStep, omitt
 	b.WriteString("执行前：\n")
 	b.WriteString("  - 只在授权范围（program scope）内执行，并遵守平台限速与作业时间窗。\n")
 	b.WriteString("  - 签名、时间戳、一次性 token 可能已过期；必要时先重新登录/重新抓包。\n")
-	b.WriteString("  - poc.sh 只发请求、不修改目标状态；响应头由 curl -D - 打印。\n\n")
+	if srcPocMutating(steps) {
+		b.WriteString("  - ⚠ 本 PoC 含状态变更请求（POST/PUT/PATCH/DELETE 等）：默认不要自动执行；\n")
+		b.WriteString("    先在测试账号/授权范围内确认副作用与清理方案，再手动运行。\n")
+	} else {
+		b.WriteString("  - poc.sh 只发只读请求（GET/HEAD/OPTIONS）；响应头由 curl -D - 打印。\n")
+	}
+	b.WriteString("\n")
 	for i, st := range steps {
 		fmt.Fprintf(&b, "step %d: %s %s（角色 %s", i+1, st.Method, st.URL, st.Role)
 		if st.Note != "" {

@@ -165,6 +165,7 @@ GET /api/tasks/{id}/scope	server.(*Server).taskScopeList-fm
 GET /api/tasks/{id}/src	server.(*Server).getTaskSrc-fm
 GET /api/tasks/{id}/src-batch	server.(*Server).getTaskSrcBatch-fm
 GET /api/tasks/{id}/src-report.zip	server.(*Server).getTaskSrcReportZip-fm
+GET /api/tasks/{id}/src/probes/{probe}	server.(*Server).getSrcProbeRun-fm
 GET /api/tasks/{id}/timeline	server.(*Server).taskTimeline-fm
 GET /api/tasks/{id}/timeline.md	server.(*Server).taskTimelineExport-fm
 GET /api/tokens/conversations	server.(*Server).conversationTokens-fm

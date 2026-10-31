@@ -5,6 +5,7 @@ package srcmode
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -30,6 +31,7 @@ func TestCheckFinishChecksGate(t *testing.T) {
 	doc.AllowReasonOnlyClear = true
 	task, err := d.CreateTaskWithOptions("src-checks-test", "收尾闸闭环", db.TaskCreateOptions{
 		Mode: ModeSrc, ModeDoc: raw,
+		ScopeRows: []db.TaskScopeInput{{Kind: "subdomain", Domain: "cdn.src-checks-test.example", Reason: "人工声明测试范围"}},
 	})
 	if err != nil {
 		t.Fatalf("create task: %v", err)
@@ -111,8 +113,8 @@ func TestCheckFinishChecksGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("check finish: %v", err)
 	}
-	if rep.ChecksDone != 1 {
-		t.Fatalf("checks_done = %d, want 1", rep.ChecksDone)
+	if rep.ChecksDone != 0 {
+		t.Fatalf("未经核验的数字不能记为完成，got %d", rep.ChecksDone)
 	}
 	if rep.Finishable {
 		t.Fatal("数字不达标不该 finishable")
@@ -128,12 +130,25 @@ func TestCheckFinishChecksGate(t *testing.T) {
 	}
 
 	// 3) 补齐数字 → 缺口清零，可收尾。
+	nodeID, err := d.Exploration(expID).AddNode(db.KindFact, map[string]any{"summary": "人工核对了不可达证明的两个出口及两个 DNS 结果"}, 1, "confirmed", "test", []int64{assetID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if _, err := store.UpsertSrcCheck(ctx, &db.SrcCheck{
 		TaskID: task.ID, AssetID: assetID, CheckKey: "unreachable_proof",
 		State: db.SrcCheckDone, UpdatedBy: "test",
-		Metrics: map[string]int{"local_unreachable": 1, "external_exits": 2, "dns_resolvers": 2},
+		EvidenceNodeID: nodeID,
+		Metrics:        map[string]int{"local_unreachable": 1, "external_exits": 2, "dns_resolvers": 2},
 	}); err != nil {
 		t.Fatalf("upsert check: %v", err)
+	}
+	pending, err := store.GetSrcCheck(ctx, task.ID, assetID, "unreachable_proof")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ApproveSrcCheck(ctx, task.ID, assetID, "unreachable_proof", fmt.Sprintf("check_unverified:%d:%d", pending.ID, pending.UpdatedAt.UnixNano()), "人工核对出口与 DNS 原始结果"); err != nil {
+		t.Fatal(err)
 	}
 	rep, err = CheckFinish(ctx, store, task.ID, doc)
 	if err != nil {

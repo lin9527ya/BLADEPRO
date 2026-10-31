@@ -24,6 +24,10 @@ func fixture(t *testing.T) *httptest.Server {
 		w.Header().Set("Content-Type", "application/javascript")
 		_, _ = io.WriteString(w, "//# sourceMappingURL=app.js.map\nconsole.log(1)\n")
 	})
+	mux.HandleFunc("/app.js.map", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"version":3}`)
+	})
 	mux.HandleFunc("/api/users/1", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"id":1}`)

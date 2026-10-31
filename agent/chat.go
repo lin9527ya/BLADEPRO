@@ -110,6 +110,14 @@ type chatVars struct{ DataDir, Now string }
 // but each agent decides on/off). emit receives each execution step (thinking /
 // tool_use / tool_result / text / result), tagged with the agent key as the
 // worker lane.
+type chatGuardKey struct{}
+
+// WithChatTaskGuard binds only this run; shared profile ChatAgent instances are
+// never mutated when a retest executes under its source task's authorization.
+func WithChatTaskGuard(ctx context.Context, ri RunInfo, g *guard.Guard) context.Context {
+	return context.WithValue(WithRunInfo(ctx, ri), chatGuardKey{}, g)
+}
+
 func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message string, maxTurns int, maxDuration time.Duration, webSearch bool, emit func(db.Activity)) (string, error) {
 	// gate the global web-search opts by this agent's own flag.
 	ws := c.webSearch
@@ -127,7 +135,9 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 	// visible skills/MCP and lets the DB tools table filter/override. DefaultTools
 	// have no tools-table rows, so they always pass through.
 	base := actool.DefaultTools()
-	ctx = WithRunInfo(ctx, RunInfo{SessionID: sessionID})
+	ri := RunInfoFrom(ctx)
+	ri.SessionID = sessionID
+	ctx = WithRunInfo(ctx, ri)
 	tools, def, cleanup := AugmentTools(ctx, agentKey, base)
 	defer cleanup()
 
@@ -148,7 +158,7 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 		UnlockSet:       def.Unlock,
 		PermissionMode:  permission.ModeBypass,
 		EnableWebFetch:  true, // 走记录代理留痕；载入代理 CA 验证 MITM 重签的 HTTPS 证书
-		WebFetchProxy:   c.proxyAddr,
+		WebFetchProxy:   ProxyURLForTask(c.proxyAddr, ri.TaskID),
 		WebFetchCACert:  c.proxyCACert,
 		// 联网搜索(可选)。ddgs 无需 key；brave-free 需 BraveKey；tavily 需 TavilyKey。
 		// WebSearchProxy 是独立出口代理(http/https/socks5)，与记录流量的 MITM 代理无关；空则直连。
@@ -160,7 +170,7 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 		DeepSeekSearchAPIKey: ws.DeepSeekAPIKey,
 		DeepSeekSearchModel:  ws.DeepSeekModel,
 		WebSearchProxy:       ws.Proxy,
-		BashEnv:              proxyEnv(c.proxyAddr, c.proxyCACert), // Bash 子命令默认走代理+信任 CA
+		BashEnv:              ProxyEnvForTask(c.proxyAddr, c.proxyCACert, ri.TaskID), // Bash 子命令默认走代理+信任 CA
 		WorkingDir:           sessionWorkDir,
 		MaxTurns:             maxTurns,
 		MaxDuration:          maxDuration,
@@ -175,8 +185,12 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 		NonStreaming: c.nonStreaming(), // 该 profile 选非流式时走 Provider.Complete
 		MaxTokens:    c.maxTokens(),    // 0 = 不发上限,由服务端默认值决定
 	}
-	if c.guard != nil {
-		opts.Hooks = c.guard.Hooks()
+	runGuard := c.guard
+	if g, ok := ctx.Value(chatGuardKey{}).(*guard.Guard); ok {
+		runGuard = g
+	}
+	if runGuard != nil {
+		opts.Hooks = runGuard.Hooks()
 	}
 	if c.tx != nil { // persist raw human↔AI conversation; one accumulating file per thread
 		opts.Transcript = c.tx

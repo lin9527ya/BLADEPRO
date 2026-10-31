@@ -17,6 +17,7 @@ import (
 	"github.com/lin9527ya/bladepro/db"
 	"github.com/lin9527ya/bladepro/intercept"
 	"github.com/lin9527ya/bladepro/sidequestion"
+	"github.com/lin9527ya/bladepro/srcmode"
 )
 
 const (
@@ -534,6 +535,29 @@ func (s *Server) runConversationTurn(ctx context.Context, cancel context.CancelC
 			if !started {
 				return
 			}
+		}
+		if r != nil {
+			pt, err := s.m.pg.GetTask(r.SourceTaskID)
+			if err != nil || pt == nil {
+				finishReason = "复验源任务不存在或无法读取，拒绝无范围执行"
+				return
+			}
+			task := taskFromPG(pt, s.m.pg.Exploration(pt.ExplorationID), s.m.interceptor)
+			if pt.Mode == "src" {
+				doc := srcmode.Parse(pt.ModeDoc)
+				if (doc.RequireIsolation || s.srcRequireIsolation()) && !AgentIsolationEnabled() {
+					finishReason = "复验要求隔离运行，但当前实例未启用隔离"
+					return
+				}
+				if err := s.m.pg.SealSrcAuthorization(ctx, pt.ID); err != nil {
+					finishReason = err.Error()
+					return
+				}
+				if tr := s.m.Traffic(); tr != nil && doc.RateLimit > 0 {
+					tr.SetTaskQPS(pt.ID, float64(doc.RateLimit))
+				}
+			}
+			ctx = agent.WithChatTaskGuard(ctx, agent.RunInfo{TaskID: pt.ID, ExplorationID: pt.ExplorationID}, task.Guard)
 		}
 	}
 	if ctx.Err() != nil {

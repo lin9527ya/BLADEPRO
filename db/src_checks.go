@@ -28,6 +28,9 @@ func IsSrcCheckState(s string) bool {
 
 // SrcCheck is one (asset × closure item) terminal row of a task.
 type SrcCheck struct {
+	ProbeRunID     string         `json:"probe_run_id,omitempty"`
+	Verification   string         `json:"verification"`
+	ReviewNote     string         `json:"review_note,omitempty"`
 	ID             int64          `json:"id"`
 	TaskID         int64          `json:"task_id"`
 	AssetID        int64          `json:"asset_id"`
@@ -41,22 +44,23 @@ type SrcCheck struct {
 	Metrics        map[string]int `json:"metrics,omitempty"`
 	UpdatedBy      string         `json:"updated_by,omitempty"`
 	// InheritedFromTaskID >0 表示这项 done 数字继承自该任务；重做并覆盖后归零。
-	InheritedFromTaskID int64     `json:"inherited_from_task_id,omitempty"`
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
+	InheritedFromTaskID int64      `json:"inherited_from_task_id,omitempty"`
+	ObservedAt          *time.Time `json:"observed_at,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
 }
 
 const srcCheckCols = `c.id, c.task_id, c.asset_id,
 COALESCE(a.url, a.domain, a.ip, a.app_name, a.root_domain, ''), COALESCE(a.type,''),
 c.check_key, c.state, c.na_code, c.reason,
-COALESCE(c.evidence_node_id,0), c.metrics, c.updated_by, COALESCE(c.inherited_from_task_id,0), c.created_at, c.updated_at`
+COALESCE(c.evidence_node_id,0), c.metrics, c.updated_by, COALESCE(c.inherited_from_task_id,0), c.created_at, c.updated_at,c.probe_run_id,c.verification,c.review_note`
 
 func scanSrcCheck(sc interface{ Scan(...any) error }) (*SrcCheck, error) {
 	var c SrcCheck
 	var metrics []byte
 	if err := sc.Scan(&c.ID, &c.TaskID, &c.AssetID, &c.Asset, &c.AssetType,
 		&c.CheckKey, &c.State, &c.NACode, &c.Reason,
-		&c.EvidenceNodeID, &metrics, &c.UpdatedBy, &c.InheritedFromTaskID, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		&c.EvidenceNodeID, &metrics, &c.UpdatedBy, &c.InheritedFromTaskID, &c.CreatedAt, &c.UpdatedAt, &c.ProbeRunID, &c.Verification, &c.ReviewNote); err != nil {
 		return nil, err
 	}
 	if len(metrics) > 0 {
@@ -73,6 +77,23 @@ func (s *SrcStore) UpsertSrcCheck(ctx context.Context, c *SrcCheck) (*SrcCheck, 
 	if c == nil || c.TaskID <= 0 || c.AssetID <= 0 || c.CheckKey == "" || !IsSrcCheckState(c.State) {
 		return nil, fmt.Errorf("invalid src check")
 	}
+	c.Verification = "manual_unverified"
+	c.ReviewNote = ""
+	if c.State == SrcCheckDone && c.ProbeRunID != "" {
+		if err := s.ValidateProbeCheck(ctx, *c); err != nil {
+			return nil, err
+		}
+		c.Verification = "probe_verified"
+	}
+	if c.State == SrcCheckDone && c.CheckKey == "screenshots" {
+		a, err := s.ScreenshotArtifactForNode(ctx, c.TaskID, c.EvidenceNodeID)
+		if err != nil {
+			return nil, err
+		}
+		if a != nil {
+			c.Verification = "artifact_verified"
+		}
+	}
 	metrics := c.Metrics
 	if metrics == nil {
 		metrics = map[string]int{}
@@ -87,10 +108,12 @@ func (s *SrcStore) UpsertSrcCheck(ctx context.Context, c *SrcCheck) (*SrcCheck, 
 	}
 	var id int64
 	err = s.db.QueryRowContext(ctx, `
-INSERT INTO src_checks(task_id, asset_id, check_key, state, na_code, reason, evidence_node_id, metrics, updated_by, inherited_from_task_id)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+INSERT INTO src_checks(task_id, asset_id, check_key, state, na_code, reason, evidence_node_id, metrics, updated_by, inherited_from_task_id,probe_run_id,verification,review_note,observed_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'',now())
 ON CONFLICT (task_id, asset_id, check_key) DO UPDATE SET
     state            = EXCLUDED.state,
+ probe_run_id=EXCLUDED.probe_run_id,verification=EXCLUDED.verification,review_note='',
+ observed_at=now(),
     na_code          = EXCLUDED.na_code,
     reason           = EXCLUDED.reason,
     evidence_node_id = COALESCE(EXCLUDED.evidence_node_id, src_checks.evidence_node_id),
@@ -99,7 +122,7 @@ ON CONFLICT (task_id, asset_id, check_key) DO UPDATE SET
     -- 重做收尾项即本轮新结论，继承标记清零。
     inherited_from_task_id = EXCLUDED.inherited_from_task_id
 RETURNING id`,
-		c.TaskID, c.AssetID, c.CheckKey, c.State, c.NACode, c.Reason, ev, string(raw), c.UpdatedBy, c.InheritedFromTaskID).Scan(&id)
+		c.TaskID, c.AssetID, c.CheckKey, c.State, c.NACode, c.Reason, ev, string(raw), c.UpdatedBy, c.InheritedFromTaskID, c.ProbeRunID, c.Verification).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
@@ -160,4 +183,13 @@ func (s *SrcStore) SrcChecksByAsset(ctx context.Context, taskID int64) (map[int6
 		out[c.AssetID][c.CheckKey] = c
 	}
 	return out, nil
+}
+
+func (s *SrcStore) DeleteUnverifiedSrcCheck(ctx context.Context, c SrcCheck) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM src_checks WHERE task_id=$1 AND asset_id=$2 AND check_key=$3 AND updated_at=$4 AND verification='manual_unverified'`, c.TaskID, c.AssetID, c.CheckKey, c.UpdatedAt)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }

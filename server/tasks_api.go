@@ -160,6 +160,18 @@ func (s *Server) resolvedTaskStatus(t *Task) string {
 	if t == nil {
 		return "created"
 	}
+	if t.Mode == "src" && s.m != nil && s.m.pg != nil {
+		s.m.taskStateMu.Lock()
+		if row, err := s.m.pg.GetTask(parseIntDefault(t.ID)); err == nil && row != nil {
+			t.updateLifecycle(func(state *taskLifecycleState) {
+				state.Status = row.Status
+				state.Paused = row.Paused
+				state.Queued = row.Queued
+				state.CompletedAt = unixOrZero(row.CompletedAt)
+			})
+		}
+		s.m.taskStateMu.Unlock()
+	}
 	lifecycle := t.lifecycleSnapshot()
 	switch {
 	case isTerminalStatus(lifecycle.Status):

@@ -10,7 +10,6 @@ package server
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -234,8 +233,13 @@ func captureWithCDP(ctx context.Context, browser, target, outPath string, width,
 		return err
 	}
 	defer os.RemoveAll(profile)
+	if agentIso.enabled {
+		if err := os.Chown(profile, int(agentIso.uid), int(agentIso.gid)); err != nil {
+			return err
+		}
+	}
 	args := []string{
-		"--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run",
+		"--proxy-bypass-list=<-loopback>", "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run",
 		"--no-default-browser-check", "--disable-dev-shm-usage", "--disable-extensions",
 		"--remote-debugging-port=0", "--user-data-dir=" + profile,
 		fmt.Sprintf("--window-size=%d,%d", width, height),
@@ -251,16 +255,20 @@ func captureWithCDP(ctx context.Context, browser, target, outPath string, width,
 		}
 		args = append(args, "--proxy-server="+proxy, "--ignore-certificate-errors")
 	}
-	var stderr bytes.Buffer
+	stderr := newTailRing(execTailBytes)
 	cmd := exec.CommandContext(ctx, browser, args...)
-	cmd.Stdout = &stderr
-	cmd.Stderr = &stderr
+	hardenAgentCmd(cmd)
+	startDetached(cmd)
+	cmd.WaitDelay = execWaitDelay
+	cmd.Cancel = func() error { killGroup(cmd); return nil }
+	cmd.Stdout = stderr
+	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("启动 Chromium 失败：%w", err)
 	}
 	defer func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
+		hardKillGroup(cmd)
+		_ = cmd.Wait()
 	}()
 
 	port, wsPath, err := waitDevToolsPort(profile, cdpStartupTimeout)

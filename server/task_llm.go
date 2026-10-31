@@ -605,7 +605,9 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	wk.SetFindingRecorder(s.evidenceStore())
 	wk.SetSrcPreparer(s.prepareSrcSubmission)  // SRC 交付准备（与 HTTP 面同一实现）
 	wk.SetSrcVerifier(s.verifySrcCheckMetrics) // P0-7：收尾项指标自报 vs 流量实测
-	wk.SetSrcProber(s.runSrcProbe)             // P2：确定性只读探针
+	wk.SetSrcScreenshotter(s.runSrcScreenshot)
+	wk.SetSrcIdentityDiffer(s.runSrcIdentityDiff)
+	wk.SetSrcProber(s.runSrcProbe) // P2：确定性只读探针
 	wk.SetCompactionWindowResolver(workerRuntime.CompactionWindow)
 	wk.SetNonStreaming(workerRuntime.nonStreaming) // 按任务当前激活 profile 的流式开关(每轮读)
 	wk.SetMaxTokens(workerRuntime.maxTokens)       // 同上,输出上限也跟随当前激活 profile
@@ -636,7 +638,9 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	pl.SetFindingRecorder(s.evidenceStore())
 	pl.SetSrcPreparer(s.prepareSrcSubmission)  // SRC 交付准备：覆盖格清完后把中危以上发现收口成可提交件
 	pl.SetSrcVerifier(s.verifySrcCheckMetrics) // P0-7：收尾项指标自报 vs 流量实测
-	pl.SetSrcProber(s.runSrcProbe)             // P2：确定性只读探针
+	pl.SetSrcScreenshotter(s.runSrcScreenshot)
+	pl.SetSrcIdentityDiffer(s.runSrcIdentityDiff)
+	pl.SetSrcProber(s.runSrcProbe) // P2：确定性只读探针
 	pl.SetCompactionWindowResolver(plannerRuntime.CompactionWindow)
 	pl.SetNonStreaming(plannerRuntime.nonStreaming)
 	pl.SetMaxTokens(plannerRuntime.maxTokens)
@@ -652,6 +656,7 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	// (agentsForTask),Compactor 必须接在这里。走任务路由的 planner provider(§4:与 agent
 	// 同模型,随任务 LLM 链解析),压缩用 Complete 一次性生成 body。
 	pl.SetCompactor(agent.NewCompactor(plannerRuntime, "task-router"))
+	pl.SetRoundSeconds(s.plannerRoundSeconds())
 	main := agent.NewMainAgent(mainRuntime, "task-router", s.m.dir, tx, mainRuntime.CompactionWindow(), s.agentMaxTurns("mainagent"))
 	main.SetFindingRecorder(s.evidenceStore())
 	main.SetSrcPreparer(s.prepareSrcSubmission)  // 人机对话里也能替一条发现准备交付件

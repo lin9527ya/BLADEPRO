@@ -33,7 +33,6 @@ services:
       # 只映射到宿主 loopback（P42）：公网访问请走 Cloudflare Tunnel 或 SSH 隧道（见 deploy/）。
       # 真要直连公网，也请配合防火墙只放行 Cloudflare 来源段，别裸奔。
       - "127.0.0.1:9898:9898"
-      - "127.0.0.1:9899:9899"
     volumes:
       # 把数据目录（含 jwt.key、SQLite 等）绑定到项目根目录的 data/，
       # 方便在宿主机直接查看/备份，容器重建也不丢。

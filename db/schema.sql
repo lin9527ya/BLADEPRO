@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS exploration_nodes (
     CONSTRAINT ck_node_kind CHECK (kind IN ('begin','goal','intent','fact','finding','hint','digest','foothold','credential','detection','ad_object','cloud_object')),
     CONSTRAINT ck_node_state CHECK (
         (kind='begin'   AND state IN ('open')) OR
-        (kind='intent'  AND state IN ('open','running','paused','done','negative','out-of-scope','blocked','exhausted','stopped','deleted')) OR
+        (kind='intent'  AND state IN ('open','running','paused','done','negative','out-of-scope','blocked','exhausted','stopped','no_output','deleted')) OR
         (kind='goal'    AND state IN ('open','met','abandoned')) OR
         (kind='fact'    AND state IN ('confirmed','dismissed','origin')) OR
         (kind='finding' AND state IN ('confirmed','dismissed','ruled_out','open_proof_gap')) OR
@@ -263,12 +263,13 @@ BEGIN
                OR pg_get_constraintdef(oid) NOT LIKE '%not_triggered%'
                OR pg_get_constraintdef(oid) NOT LIKE '%removed%'
                OR pg_get_constraintdef(oid) NOT LIKE '%ad_object%'
-               OR pg_get_constraintdef(oid) NOT LIKE '%cloud_object%')
+               OR pg_get_constraintdef(oid) NOT LIKE '%cloud_object%'
+               OR pg_get_constraintdef(oid) NOT LIKE '%no_output%')
     ) THEN
         ALTER TABLE exploration_nodes DROP CONSTRAINT ck_node_state;
         ALTER TABLE exploration_nodes ADD CONSTRAINT ck_node_state CHECK (
             (kind='begin'   AND state IN ('open')) OR
-            (kind='intent'  AND state IN ('open','running','paused','done','negative','out-of-scope','blocked','exhausted','stopped','deleted')) OR
+            (kind='intent'  AND state IN ('open','running','paused','done','negative','out-of-scope','blocked','exhausted','stopped','no_output','deleted')) OR
             (kind='goal'    AND state IN ('open','met','abandoned')) OR
             (kind='fact'    AND state IN ('confirmed','dismissed','origin')) OR
             (kind='finding' AND state IN ('confirmed','dismissed','ruled_out','open_proof_gap')) OR
@@ -2070,3 +2071,83 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS src_cells_done   INT NOT NULL DEFAULT
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS src_checks_total INT NOT NULL DEFAULT 0;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS src_checks_done  INT NOT NULL DEFAULT 0;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS src_gaps_total   INT NOT NULL DEFAULT 0;
+
+-- SRC evidence and preparation validity: legacy records remain unverified.
+ALTER TABLE finding_retests ADD COLUMN IF NOT EXISTS evidence_version BIGINT NOT NULL DEFAULT -1;
+ALTER TABLE finding_retests ADD COLUMN IF NOT EXISTS source_task_id BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE src_finding_meta ADD COLUMN IF NOT EXISTS prepared_evidence_version BIGINT NOT NULL DEFAULT -1;
+ALTER TABLE src_finding_meta ADD COLUMN IF NOT EXISTS prepared_valid_until TIMESTAMPTZ;
+
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS src_authorization JSONB;
+
+CREATE TABLE IF NOT EXISTS src_probe_runs (
+ id TEXT PRIMARY KEY,task_id BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+ asset_id BIGINT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,node_id BIGINT NOT NULL REFERENCES exploration_nodes(id) ON DELETE CASCADE,
+ kind TEXT NOT NULL,target TEXT NOT NULL,params JSONB NOT NULL,params_hash TEXT NOT NULL,result_hash TEXT NOT NULL,
+ metrics JSONB NOT NULL,complete BOOLEAN NOT NULL,truncated BOOLEAN NOT NULL,result JSONB NOT NULL,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now(),expires_at TIMESTAMPTZ NOT NULL DEFAULT now()+interval '12 hours'
+);
+ALTER TABLE src_checks ADD COLUMN IF NOT EXISTS probe_run_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE src_checks ADD COLUMN IF NOT EXISTS verification TEXT NOT NULL DEFAULT 'manual_unverified';
+ALTER TABLE src_checks ADD COLUMN IF NOT EXISTS review_note TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS src_completion_revision BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS src_completed_revision BIGINT;
+CREATE TABLE IF NOT EXISTS src_completion_proofs(
+ id BIGSERIAL PRIMARY KEY,task_id BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+ revision BIGINT NOT NULL,proof JSONB NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE OR REPLACE FUNCTION fence_src_proof_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE data JSONB; parent_task BIGINT; parent_exp BIGINT; parent_status TEXT; ids BIGINT[];
+BEGIN
+ IF TG_OP='UPDATE' AND (to_jsonb(OLD)-'updated_at')=(to_jsonb(NEW)-'updated_at') THEN RETURN NEW; END IF;
+ IF TG_OP='DELETE' THEN data:=to_jsonb(OLD); ELSE data:=to_jsonb(NEW); END IF;
+ IF TG_TABLE_NAME='assets' THEN
+  SELECT array_agg(DISTINCT value::bigint ORDER BY value::bigint) INTO ids
+  FROM jsonb_array_elements_text(COALESCE(data->'task_ids','[]'::jsonb)) value;
+ ELSE
+  parent_task:=NULLIF(data->>'task_id','')::bigint;
+  IF parent_task IS NULL THEN
+   parent_exp:=NULLIF(data->>'exploration_id','')::bigint;
+   IF parent_exp IS NULL THEN SELECT exploration_id INTO parent_exp FROM exploration_nodes WHERE id=COALESCE(NULLIF(data->>'node_id','')::bigint,NULLIF(data->>'src','')::bigint); END IF;
+   SELECT id INTO parent_task FROM tasks WHERE exploration_id=parent_exp;
+  END IF;
+  ids:=ARRAY[parent_task];
+ END IF;
+ FOREACH parent_task IN ARRAY COALESCE(ids,ARRAY[]::bigint[]) LOOP
+  parent_status:=NULL;
+  SELECT status INTO parent_status FROM tasks WHERE id=parent_task AND mode='src' AND deleted_at IS NULL AND archived_at IS NULL FOR UPDATE;
+  IF parent_status IS NULL THEN CONTINUE; END IF;
+  IF TG_TABLE_NAME='exploration_nodes' AND TG_OP='INSERT' AND data->>'kind' IN ('goal','intent') AND parent_status='done' THEN
+   RAISE EXCEPTION 'SRC task completed; resume or create a follow-up task before adding goals/intents' USING ERRCODE='55000';
+  END IF;
+  -- Platform bookkeeping does not invalidate an already verified assessment.
+  IF TG_TABLE_NAME='src_submissions' AND TG_OP='UPDATE' AND to_jsonb(OLD)->>'status' IN ('submitted','accepted','paid','rejected') AND to_jsonb(NEW)->>'status' IN ('submitted','accepted','paid','rejected') THEN CONTINUE; END IF;
+  UPDATE tasks SET src_completion_revision=src_completion_revision+1,
+   status=CASE WHEN status='done' THEN 'paused' ELSE status END,
+   paused=CASE WHEN status='done' THEN true ELSE paused END,
+   completed_at=CASE WHEN status='done' THEN NULL ELSE completed_at END WHERE id=parent_task;
+ END LOOP;
+ IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+END $$;
+DO $$ DECLARE tab TEXT; BEGIN
+ FOREACH tab IN ARRAY ARRAY['exploration_nodes','exploration_edges','exploration_anchors','task_constraints','task_scope','task_scope_exclusions','task_asset_links','src_cells','src_checks','findings','src_finding_meta','src_submissions','assets'] LOOP
+  EXECUTE format('DROP TRIGGER IF EXISTS trg_src_proof_fence ON %I',tab);
+  EXECUTE format('CREATE TRIGGER trg_src_proof_fence BEFORE INSERT OR UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION fence_src_proof_mutation()',tab);
+ END LOOP;
+END $$;
+
+-- Intent idempotency: a repeated add_intent with the same key returns the same
+-- intent instead of creating a second worker for the same direction.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_intent_idempotency
+  ON exploration_nodes(exploration_id, (payload->>'idempotency_key'))
+  WHERE kind='intent' AND payload ? 'idempotency_key'
+    AND COALESCE(payload->>'idempotency_key','') <> '';
+
+-- Evidence age is the original observation time, not the inheritance/copy time.
+ALTER TABLE src_cells ADD COLUMN IF NOT EXISTS observed_at TIMESTAMPTZ;
+ALTER TABLE src_checks ADD COLUMN IF NOT EXISTS observed_at TIMESTAMPTZ;
+ALTER TABLE src_negative_knowledge ADD COLUMN IF NOT EXISTS observed_at TIMESTAMPTZ;
+
+ALTER TABLE src_cells ADD COLUMN IF NOT EXISTS revision_count INTEGER NOT NULL DEFAULT 0;

@@ -163,6 +163,7 @@ func (s *Server) settingsPayload() map[string]any {
 		"exec_memory_mb":                execLimitsFromSettings(s.m.pg).MemoryMB,
 		"exec_max_procs":                execLimitsFromSettings(s.m.pg).MaxProcs,
 		"exec_max_active":               execMaxActiveFromSettings(s.m.pg),
+		"planner_round_seconds":         s.plannerRoundSeconds(),
 		"mcp_max_concurrent_per_server": s.mcpGuardSetting(settingMCPMaxConcurrent, defaultMCPMaxConcurrent),
 		"mcp_breaker_threshold":         s.mcpGuardSetting(settingMCPBreakerFails, defaultMCPBreakerFails),
 		"mcp_breaker_cooldown_sec":      s.mcpGuardSetting(settingMCPBreakerCooldown, defaultMCPBreakerCooldown),
@@ -295,6 +296,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		ExecMemoryMB            *int `json:"exec_memory_mb"`
 		ExecMaxProcs            *int `json:"exec_max_procs"`
 		ExecMaxActive           *int `json:"exec_max_active"`
+		PlannerRoundSeconds     *int `json:"planner_round_seconds"`
 		MCPMaxConcurrent        *int `json:"mcp_max_concurrent_per_server"`
 		MCPBreakerFails         *int `json:"mcp_breaker_threshold"`
 		MCPBreakerCooldown      *int `json:"mcp_breaker_cooldown_sec"`
@@ -488,6 +490,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		{settingExecMemoryMB, req.ExecMemoryMB, 1048576, "内存限额（MB）"},
 		{settingExecMaxProcs, req.ExecMaxProcs, 65536, "进程数限额"},
 		{settingExecMaxActive, req.ExecMaxActive, 4096, "同时执行数上限"},
+		{"planner_round_seconds", req.PlannerRoundSeconds, 86400, "规划单轮上限（秒）"},
 		{settingMCPMaxConcurrent, req.MCPMaxConcurrent, 128, "MCP 并发上限"},
 		{settingMCPBreakerFails, req.MCPBreakerFails, 1000, "MCP 熔断阈值"},
 		{settingMCPBreakerCooldown, req.MCPBreakerCooldown, 86400, "MCP 熔断冷却（秒）"},

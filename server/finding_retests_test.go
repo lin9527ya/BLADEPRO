@@ -51,7 +51,12 @@ func newRetestServer(t *testing.T) (*Server, int64) {
 	if err := s.seedFindingRetester(); err != nil {
 		t.Fatal(err)
 	}
-	fid, err := pg.AddFinding(0, 0, "retest-server", "复测测试", "high", "summary", "original proof", "worker", nil)
+	source, err := pg.CreateTaskWithOptions("复验源任务", "复验", db.TaskCreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pg.DeleteTask(source.ID) })
+	fid, err := pg.AddFinding(source.ID, 0, "retest-server", "复测测试", "high", "summary", "original proof", "worker", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

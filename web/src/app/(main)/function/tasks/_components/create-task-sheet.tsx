@@ -146,8 +146,8 @@ export function CreateTaskSheet({
   const [open, setOpen] = React.useState(false);
   const [name, setName] = React.useState("");
   const [categoryID, setCategoryID] = React.useState<number | undefined>(undefined);
-  // 任务模式:''=普通渗透(默认,老行为不变),'src'=按「站点 × 风险面」补格收尾。
-  const [mode, setMode] = React.useState<TaskMode>("");
+  // 工作台以 SRC 为主：默认 SRC；普通渗透仍可显式切换。
+  const [mode, setMode] = React.useState<TaskMode>("src");
   // P3 平台项目:仅 SRC 模式下可选,绑定的项目规则(禁用手段/写操作/限速/必做面)编译进本任务。
   const [srcPrograms, setSrcPrograms] = React.useState<SrcProgram[]>([]);
   const [srcProgramID, setSrcProgramID] = React.useState<number | undefined>(undefined);
@@ -496,7 +496,7 @@ export function CreateTaskSheet({
               {/* 模式创建时定死(与后端的快照语义一致):运行中不可切换,所以只在这里选。 */}
               <div className="inline-flex w-fit rounded-md border p-0.5">
                 {[
-                  { value: "" as TaskMode, label: "普通渗透（默认）" },
+                  { value: "" as TaskMode, label: "普通渗透" },
                   { value: "src" as TaskMode, label: "SRC 挖掘" },
                 ].map((opt) => (
                   <button

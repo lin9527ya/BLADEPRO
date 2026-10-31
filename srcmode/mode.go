@@ -9,6 +9,7 @@ package srcmode
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -34,8 +35,10 @@ type ModeDoc struct {
 	DocVersion int    `json:"doc_version"`
 	Mode       string `json:"mode"`
 	// Platform / Program 只是提交台账与报告备注用的标签（P2 起真正使用）。
-	Platform string `json:"platform,omitempty"`
-	Program  string `json:"program,omitempty"`
+	Platform         string `json:"platform,omitempty"`
+	RequireIsolation bool   `json:"require_isolation,omitempty"`
+	NoAutomation     bool   `json:"no_automation,omitempty"`
+	Program          string `json:"program,omitempty"`
 	// PlatformTemplate 是提交块模板（generic/butian/vulbox/edu/hackerone）。
 	// 空 = 按 Platform 标签自动识别，识别不出用 generic。
 	PlatformTemplate string `json:"platform_template,omitempty"`
@@ -81,6 +84,12 @@ type ModeDoc struct {
 	// EgressIP / TestAccounts 是提交块字段（vuln-report-format §〇）。
 	EgressIP     string `json:"egress_ip,omitempty"`
 	TestAccounts string `json:"test_accounts,omitempty"`
+	// DeliveryReservePct reserves this percentage of the task token budget for
+	// delivery/retest work; exploration stops at the reduced budget. 0 = off.
+	DeliveryReservePct int `json:"delivery_reserve_pct,omitempty"`
+	// TestIdentities 是平台明确授权的只读对照身份。凭据本体只从部署环境的
+	// credential_env 读取，不进入提示词、任务快照、报告或缓存键。
+	TestIdentities []TestIdentity `json:"test_identities,omitempty"`
 	// MaxRecordsRead 是越权读取上限（合规提示用；0 = 用内建默认 5）。
 	MaxRecordsRead int `json:"max_records_read,omitempty"`
 	// TimeWindow 是平台项目的作业时间窗快照（"HH:MM-HH:MM"，逗号分段，允许跨夜）。
@@ -148,6 +157,9 @@ func Resolve(mode string, raw json.RawMessage) (json.RawMessage, ModeDoc, error)
 	}
 	if doc.MaxIntentsPerAsset <= 0 {
 		doc.MaxIntentsPerAsset = DefaultMaxIntentsPerAsset
+	}
+	if doc.DeliveryReservePct < 0 || doc.DeliveryReservePct > 50 {
+		return nil, ModeDoc{}, fmt.Errorf("delivery_reserve_pct 需在 0–50 之间")
 	}
 	if doc.MaxAttemptsPerCell > maxAttemptsLimit {
 		return nil, ModeDoc{}, fmt.Errorf("max_attempts_per_cell 不能超过 %d", maxAttemptsLimit)
@@ -316,3 +328,54 @@ func SplitItem(raw string) (area, item string, err error) {
 	}
 	return area, item, nil
 }
+
+// TestIdentity is one authorized read-only identity used for differential
+// testing. CredentialEnv names an environment variable; the secret itself never
+// enters the mode snapshot.
+type TestIdentity struct {
+	Label         string `json:"label"`
+	Role          string `json:"role,omitempty"`
+	Tenant        string `json:"tenant,omitempty"`
+	CredentialEnv string `json:"credential_env"`
+	Header        string `json:"header,omitempty"` // default Cookie
+}
+
+// IdentityByLabel resolves one configured identity (exact label match).
+func (d ModeDoc) IdentityByLabel(label string) (TestIdentity, bool) {
+	label = strings.TrimSpace(label)
+	for _, id := range d.TestIdentities {
+		if id.Label == label {
+			return id, true
+		}
+	}
+	return TestIdentity{}, false
+}
+
+// ValidateTestIdentities checks the structured identity contract.
+func ValidateTestIdentities(ids []TestIdentity) error {
+	seen := map[string]bool{}
+	for i, id := range ids {
+		id.Label = strings.TrimSpace(id.Label)
+		id.CredentialEnv = strings.TrimSpace(id.CredentialEnv)
+		id.Header = strings.TrimSpace(id.Header)
+		if id.Label == "" {
+			return fmt.Errorf("test_identities[%d].label 不能为空", i)
+		}
+		if seen[id.Label] {
+			return fmt.Errorf("test_identities 标签重复：%s", id.Label)
+		}
+		seen[id.Label] = true
+		if !credentialEnvRe.MatchString(id.CredentialEnv) {
+			return fmt.Errorf("test_identities[%d].credential_env 必须是大写环境变量名（只存引用，不存凭据）", i)
+		}
+		if id.Header == "" {
+			id.Header = "Cookie"
+		}
+		if !strings.EqualFold(id.Header, "Cookie") && !strings.EqualFold(id.Header, "Authorization") {
+			return fmt.Errorf("test_identities[%d].header 只支持 Cookie / Authorization（读取型对照，避免任意头注入）", i)
+		}
+	}
+	return nil
+}
+
+var credentialEnvRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]{2,80}$`)

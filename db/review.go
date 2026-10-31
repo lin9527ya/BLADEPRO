@@ -46,6 +46,14 @@ func (d *DB) ReviewQueue(ctx context.Context, limit, staleDays int) ([]ReviewIte
 	}
 	rows, err := d.QueryContext(ctx, `
 WITH items AS (
+ SELECT 'check_unverified'::text AS kind,'check_unverified:'||c.id||':'||(EXTRACT(EPOCH FROM c.updated_at)*1000000000)::bigint AS ref_key,
+ c.task_id,COALESCE(NULLIF(t.name,''),t.description,'') AS task_label,0::bigint AS finding_id,0::bigint AS submission_id,0::bigint AS retest_id,
+ c.asset_id,COALESCE(a.url,a.domain,a.ip,a.app_name,'') AS asset_label,'closure'::text AS area,c.check_key AS item,c.state,
+ '自报收尾项未被宿主验证；请核对原始证据后填写人工核验依据'::text AS reason,c.check_key AS title,''::text AS severity,c.updated_at
+ FROM src_checks c JOIN tasks t ON t.id=c.task_id LEFT JOIN assets a ON a.id=c.asset_id
+ WHERE c.state='done' AND c.verification='manual_unverified' AND t.mode='src' AND t.deleted_at IS NULL
+ UNION ALL
+
   -- 1) medium+ 发现没有齐备可提交件（SRC 交付门）
   SELECT 'report_missing'::text AS kind,
          'report_missing:' || f.id AS ref_key,

@@ -42,6 +42,5 @@ COPY skills/ /app/skills/
 VOLUME ["/app/data"]
 EXPOSE 9898 9899
 ENTRYPOINT ["/app/start.sh"]
-# 默认只绑 loopback（P42）：容器内监听 127.0.0.1，对外暴露交给宿主端口映射或隧道。
-# 要监听容器全网卡请显式写 "-addr", ":9898"（并确认宿主侧只映射到 127.0.0.1）。
-CMD ["-addr", "127.0.0.1:9898", "-proxy", "127.0.0.1:9899"]
+# 容器 API 监听网卡，宿主侧仍只发布 loopback；录制代理仅供容器内部使用。
+CMD ["-addr", ":9898", "-proxy", "127.0.0.1:9899"]

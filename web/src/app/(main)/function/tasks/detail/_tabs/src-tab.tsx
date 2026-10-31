@@ -26,6 +26,12 @@ import { Spinner } from "@/components/ui/spinner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
+import {
+  SRC_SUBMISSION_NEXT as SUBMISSION_NEXT,
+  SRC_SUBMISSION_STATUS_LABELS as SUBMISSION_STATUS_LABELS,
+  SRC_VERDICT_REASON_LABELS as VERDICT_REASON_LABELS,
+  srcSubmissionTone as submissionTone,
+} from "@/lib/src-submission";
 import type {
   SrcCell,
   SrcCheckAsset,
@@ -63,40 +69,6 @@ const AREA_TITLES: Record<string, string> = {
   closure: "收尾闸",
 };
 
-// 台账状态 → 中文 + 下一步合法流转（与服务端状态机一致；UI 只是少给错选项，
-// 真正的判定在服务端——两边口径以服务端为准）。
-const SUBMISSION_STATUS_LABELS: Record<string, string> = {
-  draft: "草稿",
-  ready: "可提交",
-  submitted: "已提交",
-  accepted: "已受理",
-  duplicate: "重复",
-  rejected: "已驳回",
-  paid: "已到账",
-  withdrawn: "已撤回",
-};
-
-// 平台驳回原因码（与后端 db.SrcVerdictReasons 同名）。
-const VERDICT_REASON_LABELS: Record<string, string> = {
-  not_reproducible: "无法复现",
-  duplicate: "已重复",
-  insufficient_info: "信息不全",
-  not_vulnerability: "非漏洞/不接收",
-  out_of_scope: "超出范围",
-  other: "其他",
-};
-
-const SUBMISSION_NEXT: Record<string, string[]> = {
-  draft: ["ready", "withdrawn"],
-  ready: ["submitted", "draft", "withdrawn"],
-  submitted: ["accepted", "duplicate", "rejected", "withdrawn"],
-  accepted: ["paid", "withdrawn"],
-  duplicate: ["withdrawn"],
-  rejected: ["withdrawn"],
-  paid: [],
-  withdrawn: [],
-};
-
 // 台账停留天数：ready/submitted/accepted 是"等人/等平台"的状态，超过 7 天标黄提醒。
 function submissionAgeDays(sub: SrcSubmission): number | null {
   if (!["ready", "submitted", "accepted"].includes(sub.status)) return null;
@@ -105,26 +77,6 @@ function submissionAgeDays(sub: SrcSubmission): number | null {
   const ms = Date.now() - new Date(ts).getTime();
   if (!Number.isFinite(ms) || ms < 0) return 0;
   return Math.floor(ms / 86_400_000);
-}
-
-function submissionTone(status: string): string {
-  switch (status) {
-    case "ready":
-      return "border-sky-500/40 bg-sky-500/15 text-sky-600 dark:text-sky-400";
-    case "submitted":
-      return "border-amber-500/40 bg-amber-500/15 text-amber-600 dark:text-amber-400";
-    case "accepted":
-      return "border-emerald-500/40 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400";
-    case "paid":
-      return "border-emerald-600/50 bg-emerald-600/20 text-emerald-700 dark:text-emerald-300";
-    case "duplicate":
-    case "rejected":
-      return "border-border bg-muted text-muted-foreground";
-    case "withdrawn":
-      return "border-dashed border-border text-muted-foreground";
-    default:
-      return "border-border text-muted-foreground";
-  }
 }
 
 function areaTitle(area: string): string {
@@ -717,17 +669,17 @@ export function SrcTab({ taskId }: { taskId: string }) {
                           title={`${item.hint}`}
                           onClick={() => openCheck(row, item)}
                           className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition-colors hover:opacity-80 ${cellTone(
-                            item.state === "done" ? "tested_clear" : item.state === "na" ? "na" : undefined,
+                            item.state === "done" ? (item.verification === "manual_unverified" ? "budget_stop" : "tested_clear") : item.state === "na" ? "na" : undefined,
                           )}`}
                         >
                           <span>{item.title}</span>
                           <span className="font-medium">
-                            {item.state === "done" ? "已做" : item.state === "na" ? "N/A" : item.state === "budget_stop" ? "预算停" : "未做"}
+                            {item.state === "done" ? (item.verification === "manual_unverified" ? "待核验" : item.verification === "manual_approved" ? "人工核验" : "已验证") : item.state === "na" ? "N/A" : item.state === "budget_stop" ? "预算停" : "未做"}
                           </span>
                           {item.inherited_from_task_id ? (
                             <span
                               className="rounded bg-background/60 px-1 text-[10px]"
-                              title={`继承自任务 #${item.inherited_from_task_id}`}
+                              title={`继承自任务 #${item.inherited_from_task_id}${item.observed_at ? `，原始观察 ${new Date(item.observed_at).toLocaleDateString()}` : ""}`}
                             >
                               继承
                             </span>

@@ -10,11 +10,13 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/intercept"
 	"github.com/lin9527ya/bladepro/srcmode"
 )
 
@@ -228,6 +230,13 @@ func (s *Server) prepareTaskCreate(ctx context.Context, req createTaskReq) (*pre
 	}
 	// 运行隔离：勾选“SRC 必须降权运行”时，没有真正启用 agent 沙箱的实例拒绝创建
 	// SRC 任务——宁可创建失败，也不要给出一个“看起来隔离、实际同权”的任务。
+	if srcDoc.IsSrc() && s.srcRequireIsolation() {
+		srcDoc.RequireIsolation = true
+		modeDoc, err = json.Marshal(srcDoc)
+		if err != nil {
+			return nil, taskErr(500, err.Error())
+		}
+	}
 	if srcDoc.IsSrc() && s.srcRequireIsolation() && !AgentIsolationEnabled() {
 		return nil, taskErr(400, "当前实例未启用 agent 降权运行（BLADEPRO_AGENT_USER），但设置要求 SRC 任务必须隔离：先按 deploy/README.md 配置并重启，或关闭该要求")
 	}
@@ -316,6 +325,16 @@ func (s *Server) persistPreparedTask(ctx context.Context, prep *preparedTaskCrea
 	var scopeRows []db.TaskScopeInput
 	var assetIDs []int64
 	scopeRows = append(scopeRows, prep.programInScope...)
+	if prep.srcDoc.IsSrc() && len(scopeRows) == 0 && len(companyIDs) == 0 {
+		for _, host := range intercept.ExtractTargets(prep.req.Description) {
+			if ip := net.ParseIP(host); ip != nil {
+				scopeRows = append(scopeRows, db.TaskScopeInput{Kind: "ip", Net: hostCIDR(ip), Reason: "任务描述中的明确目标"})
+			} else {
+				scopeRows = append(scopeRows, db.TaskScopeInput{Kind: "subdomain", Domain: host, Reason: "任务描述中的明确目标"})
+			}
+		}
+	}
+
 	if shard != nil {
 		name, desc, goal = shard.Name, shard.Description, shard.Goal
 		// 分片自带精确 scope 时，不要再叠加 program 的粗 in 范围（会放大分片）。
@@ -361,6 +380,11 @@ func (s *Server) persistPreparedTask(ctx context.Context, prep *preparedTaskCrea
 			return nil, taskErr(400, err.Error())
 		}
 		return nil, taskErr(500, err.Error())
+	}
+	if prep.srcDoc.IsSrc() {
+		if err := s.m.pg.SealSrcAuthorization(ctx, parseIntDefault(t.ID)); err != nil {
+			return nil, taskErr(500, "保存授权快照失败："+err.Error())
+		}
 	}
 	// 单任务自动排队优先级：没有显式 priority 时，按范围内资产分级给一个
 	// 可解释的分数（与批量扇出同一套权重）。批量分片已在 shard.Priority 里算过。
@@ -408,4 +432,11 @@ func (s *Server) applyTaskCoverageInheritance(ctx context.Context, t *Task, prep
 		log.Printf("[task] #%s %s", t.ID, summary)
 		s.engine.emitActivity(t, db.Activity{Worker: "system", Kind: "src_gate", Summary: summary})
 	}
+}
+
+func hostCIDR(ip net.IP) string {
+	if ip.To4() != nil {
+		return ip.String() + "/32"
+	}
+	return ip.String() + "/128"
 }

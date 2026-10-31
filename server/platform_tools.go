@@ -236,6 +236,13 @@ func (s *Server) toolUpdateCustomTool() actool.CoreTool {
 			if a.Kind == "http" && !hasSchemaProps(a.Schema) {
 				return actool.Errorf("http 工具必须提供参数 JSON Schema(不能留空)"), nil
 			}
+			if a.Kind == "http" && existing.Kind == "http" {
+				var err error
+				a.Exec, err = prepareMaskedHTTPUpdate(existing.Exec, a.Exec)
+				if err != nil {
+					return actool.Errorf(err.Error()), nil
+				}
+			}
 			if err := s.m.pg.UpdateCustomTool(toDBTool(a)); err != nil {
 				return actool.Errorf(err.Error()), nil
 			}
@@ -318,6 +325,18 @@ func (s *Server) toolUpdateMCP() actool.CoreTool {
 			if a.ID == 0 {
 				return actool.Errorf("id 必填"), nil
 			}
+			old, err := s.m.pg.GetMCP(a.ID)
+			if err != nil {
+				return actool.Errorf(err.Error()), nil
+			}
+			if old == nil {
+				return actool.Errorf("MCP 不存在"), nil
+			}
+			next := a.toDB()
+			if err := prepareMaskedMCPUpdate(old, next); err != nil {
+				return actool.Errorf(err.Error()), nil
+			}
+			a.Env = next.Env
 			if _, err := s.m.pg.SaveMCP(a.toDB()); err != nil {
 				return actool.Errorf(err.Error()), nil
 			}

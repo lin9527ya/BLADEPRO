@@ -11,7 +11,24 @@ precision / recall / 等级一致 / 覆盖率 / token 成本。
 | `targets.json` | 金标清单：目标、预算、每条金标的漏洞类型 + 端点 + 期望等级。 |
 | `score/` | 打分器：发现列表 vs 金标，算 TP/FP/FN、P/R/F1、等级一致、覆盖率、token/命中。 |
 
-## 跑一次基准
+## 跑一次基准（自动 runner）
+
+需要先启动靶场，然后给 runner 一个登录 token（或用户名/密码）：
+
+```bash
+srcbench/run-target.sh &                 # 本地金标靶场，仅监听 127.0.0.1
+export BLADEPRO_BASE_URL=http://127.0.0.1:9898
+export BLADEPRO_TOKEN=...                # 或 BLADEPRO_USERNAME / BLADEPRO_PASSWORD
+export TARGET_URL=http://127.0.0.1:18080
+srcbench/run-benchmark.sh
+```
+
+runner 会：健康检查 → 建固定预算的 `mode=src` 任务 → 轮询到终态 → 分页导出本任务
+原生发现 → 取 `/src` 摘要 → 调用 scorer。产物保存在 `srcbench/runs/<时间>/`
+（task/findings/src/manifest/score）。默认只允许 loopback/私网靶场；不要把生产站点
+写进 bench。
+
+### 手工跑一次（不用 runner）
 
 1. **启动靶场**（本机、无真实数据，天然在授权范围内）：
 
@@ -48,7 +65,8 @@ precision / recall / 等级一致 / 覆盖率 / token 成本。
      --findings /tmp/findings.json \
      --src /tmp/src.json \
      --tokens "$(curl -s -H "Authorization: Bearer $TOKEN" \
-        "http://127.0.0.1:9898/api/tasks/$TASK_ID" | jq -r '.tokens // 0')"
+        "http://127.0.0.1:9898/api/tasks/$TASK_ID" \
+        | jq -r '((.tokens.input_tokens // 0) + (.tokens.output_tokens // 0))')"
    ```
 
    输出 Markdown（加 `--json` 输出机器可读结果）。
@@ -61,7 +79,10 @@ precision / recall / 等级一致 / 覆盖率 / token 成本。
   `risk_accepted` 的发现不计入（它们不是待提交件）。
 - **等级一致**：命中的发现 `severity` 与金标一致的比例（只提示，不参与 P/R）。
 - **覆盖格完成率 / 收尾闸完成率**：来自 `/api/tasks/{id}/src` 的 `summary`。
-- **Token / 每条命中**：任务 token 总量 ÷ TP；SRC 是广度换深度，关注这个数的趋势。
+- **Token / 每条命中**：任务 token 总量（输入+输出；缓存/成本单列在 manifest）÷ TP；
+  SRC 是广度换深度，关注这个数的趋势。
+- **评分是标签匹配，不是漏洞复验**：类别 + host/path 命中；method/查询键可放宽。
+  真实确认度仍需独立复验与绑定请求/响应断言，不能把 TP 当成已验证可提交。
 
 ## 真实靶场（可选）
 

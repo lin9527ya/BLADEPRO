@@ -903,6 +903,21 @@ type MCPServer struct {
 	ToolsDisabled int `json:"tools_disabled"`
 }
 
+func (d *DB) GetMCP(id int64) (*MCPServer, error) {
+	var m MCPServer
+	var args, env []byte
+	err := d.QueryRow(`SELECT id,name,transport,COALESCE(command,''),args,env,COALESCE(url,''),enabled,insecure FROM mcp_servers WHERE id=$1`, id).Scan(&m.ID, &m.Name, &m.Transport, &m.Command, &args, &env, &m.URL, &m.Enabled, &m.Insecure)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	m.Args = args
+	m.Env = env
+	return &m, nil
+}
+
 func (d *DB) ListMCP() ([]*MCPServer, error) {
 	rows, err := d.Query(`SELECT id,name,transport,COALESCE(command,''),args,env,COALESCE(url,''),enabled,insecure FROM mcp_servers ORDER BY id`)
 	if err != nil {

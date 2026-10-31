@@ -118,6 +118,7 @@ func (t *ToolSet) srcScreenshotTool() actool.CoreTool {
 			if err != nil {
 				return actool.Errorf("截图失败：" + err.Error()), nil
 			}
+			t.writes.Evidence++
 			return jsonResult(map[string]any{
 				"screenshot": res,
 				"note":       fmt.Sprintf("截图已保存为证据 #%d，可把 node_id=%d 填进 src_mark_check 的 evidence_node_id。", res.ArtifactID, res.NodeID),

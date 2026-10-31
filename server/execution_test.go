@@ -27,11 +27,13 @@ func newExecFixture(t *testing.T) (*ExecutionService, *db.DB, string, string) {
 	}
 	td := t.TempDir()
 	task := "exec-test-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	svc := NewExecutionService(pg, td)
 	t.Cleanup(func() {
+		svc.Shutdown(time.Second)
 		_, _ = pg.Exec(`DELETE FROM tool_executions WHERE task_id=$1`, task)
 		pg.Close()
 	})
-	return NewExecutionService(pg, td), pg, td, task
+	return svc, pg, td, task
 }
 
 // waitTerminal polls until the row leaves the active set (or the deadline passes).

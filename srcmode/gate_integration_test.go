@@ -34,6 +34,7 @@ func TestCheckFinishAgainstRealCells(t *testing.T) {
 	doc.AllowReasonOnlyClear = true
 	task, err := d.CreateTaskWithOptions("src-gate-test", "把覆盖格清零", db.TaskCreateOptions{
 		Mode: ModeSrc, ModeDoc: raw,
+		ScopeRows: []db.TaskScopeInput{{Kind: "subdomain", Domain: "api.src-gate-test.example", Reason: "人工声明测试范围"}},
 	})
 	if err != nil {
 		t.Fatalf("create task: %v", err)

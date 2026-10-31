@@ -566,6 +566,21 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 
 // Executions returns the long-task execution service (P13). Nil when a Manager was
 // built as a bare literal (tests); every caller must tolerate nil.
+const defaultPlannerRoundSeconds = 900
+
+// plannerRoundSeconds reads the per-round planner wall clock (0 = unlimited).
+func (s *Server) plannerRoundSeconds() int {
+	v, ok, err := s.m.pg.GetSetting("planner_round_seconds")
+	if err != nil || !ok || strings.TrimSpace(v) == "" {
+		return defaultPlannerRoundSeconds
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n < 0 {
+		return defaultPlannerRoundSeconds
+	}
+	return n
+}
+
 func (m *Manager) Executions() *ExecutionService { return m.execs }
 
 // CancelTaskExecutions cancels every in-flight execution of a task (任务停止/删除时调用)
@@ -1073,12 +1088,14 @@ func (m *Manager) SetGlobalProxy(raw string) error {
 }
 
 func (m *Manager) Close() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.traffic != nil {
-		m.traffic.Close()
+	m.mu.RLock()
+	executions, tr, pg := m.execs, m.traffic, m.pg
+	m.mu.RUnlock()
+	executions.Shutdown(5 * time.Second)
+	if tr != nil {
+		tr.Close()
 	}
-	return m.pg.Close()
+	return pg.Close()
 }
 
 // isTerminalStatus reports whether a task status is terminal (done/failed/timeout).
@@ -2164,6 +2181,17 @@ func (t *Task) NotifyCancelled(intentID int64, summary, reason string) {
 		t.trigMu.Unlock()
 	}
 	t.Notify()
+}
+
+// restoreTriggers puts unconsumed events back at the front after a failed
+// planning round, so a transient provider error does not silently lose them.
+func (t *Task) restoreTriggers(evs []agent.TriggerEvent) {
+	if len(evs) == 0 {
+		return
+	}
+	t.trigMu.Lock()
+	t.pendingTriggers = append(append([]agent.TriggerEvent{}, evs...), t.pendingTriggers...)
+	t.trigMu.Unlock()
 }
 
 // drainTriggers returns and clears the trigger events accumulated since the last round.

@@ -304,11 +304,45 @@ func (t *Traffic) initIndex() error {
 	if err := ensureExchangeTaskColumn(ctx, conn); err != nil {
 		return err
 	}
+	if err := ensureExchangeIntegrityColumns(ctx, conn); err != nil {
+		return err
+	}
 	if _, err := conn.ExecContext(ctx, ftsSchema); err != nil {
 		log.Printf("[traffic] 全文索引不可用，正文搜索将被禁用（元数据搜索不受影响）：%v", err)
 		return nil
 	}
 	t.fts = true
+	return nil
+}
+
+func ensureExchangeIntegrityColumns(ctx context.Context, conn *sql.Conn) error {
+	rows, err := conn.QueryContext(ctx, `PRAGMA table_info(exchanges)`)
+	if err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	for rows.Next() {
+		var cid, nn, pk int
+		var name, typ string
+		var def sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &nn, &def, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		seen[name] = true
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for name, spec := range map[string]string{"req_state": "TEXT NOT NULL DEFAULT 'legacy'", "resp_state": "TEXT NOT NULL DEFAULT 'legacy'", "req_stored_len": "INTEGER NOT NULL DEFAULT 0", "resp_stored_len": "INTEGER NOT NULL DEFAULT 0"} {
+		if !seen[name] {
+			if _, err := conn.ExecContext(ctx, `ALTER TABLE exchanges ADD COLUMN `+name+` `+spec); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -523,7 +557,11 @@ func (s *sink) Request(f *mproxy.Flow) {
 			}
 		}
 	}
-	s.t.waitEgress(host, taskID)
+	if err := s.t.waitEgress(host, taskID); err != nil {
+		f.Response = &mproxy.Response{StatusCode: http.StatusTooManyRequests,
+			Header: http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
+			Body:   []byte(`{"error":"task rate limit queue timed out"}`)}
+	}
 }
 
 func (s *sink) Response(f *mproxy.Flow) {
@@ -570,6 +608,10 @@ func proxyCausedErr(err error) bool {
 // record persists one exchange entirely in SQLite: metadata, bodies and the
 // full-text index. Nothing is written to a per-request directory — only bodies
 // above maxInlineBody spill to the content-addressed blob store.
+func newExchangeID(now time.Time, seq int64) string {
+	return fmt.Sprintf("%d-%d", now.UnixNano(), seq)
+}
+
 func (t *Traffic) record(f *mproxy.Flow) {
 	// The write lock covers blob + index writes, so DeleteHost (and its blob GC)
 	// can run under the same lock without racing a concurrent record.
@@ -580,7 +622,7 @@ func (t *Traffic) record(f *mproxy.Flow) {
 	tmpl := db.TemplatePath(f.Request.URL.EscapedPath())
 	n := t.seq.Add(1)
 	now := time.Now()
-	id := fmt.Sprintf("%d-%04d", now.Unix(), n%10000)
+	id := newExchangeID(now, n)
 
 	ct := f.Response.Header.Get("Content-Type")
 	url := f.Request.URL.String()
@@ -606,10 +648,10 @@ func (t *Traffic) record(f *mproxy.Flow) {
 
 	// path stays empty for db-resident exchanges; a non-empty path marks a legacy
 	// row whose bodies still live in the old on-disk tree (see Get).
-	res, err := tx.Exec(`INSERT OR REPLACE INTO exchanges(id,ts,host,method,url_template,url,status,content_type,req_len,resp_len,path,task_id)
-VALUES(?,?,?,?,?,?,?,?,?,?,'',?)`,
+	res, err := tx.Exec(`INSERT INTO exchanges(id,ts,host,method,url_template,url,status,content_type,req_len,resp_len,path,task_id,req_state,resp_state,req_stored_len,resp_stored_len)
+VALUES(?,?,?,?,?,?,?,?,?,?,'',?,?,?,?,?)`,
 		id, now.Unix(), host, method, tmpl, url, f.Response.StatusCode, ct,
-		len(f.Request.Body), len(f.Response.Body), taskID)
+		len(f.Request.Body), len(f.Response.Body), taskID, reqB.state, respB.state, reqB.storedLen, respB.storedLen)
 	if err != nil {
 		log.Printf("[traffic] 记录 %s 失败（写索引）：%v", url, err)
 		return
@@ -620,7 +662,7 @@ VALUES(?,?,?,?,?,?,?,?,?,?,'',?)`,
 		return
 	}
 
-	if _, err := tx.Exec(`INSERT OR REPLACE INTO exchange_bodies(id,req_head,req_body,req_blob,resp_head,resp_body,resp_blob)
+	if _, err := tx.Exec(`INSERT INTO exchange_bodies(id,req_head,req_body,req_blob,resp_head,resp_body,resp_blob)
 VALUES(?,?,?,?,?,?,?)`,
 		id, reqHead, reqB.inline, nullIfEmpty(reqB.hash), respHead, respB.inline, nullIfEmpty(respB.hash)); err != nil {
 		log.Printf("[traffic] 记录 %s 失败（写正文）：%v", url, err)
@@ -656,9 +698,11 @@ VALUES(?,?,?,?,?,?,?)`,
 // the SQLite column (the whole body, or a preview when spilled), hash names the
 // blob when it spilled, and index is the text handed to FTS (empty for binary).
 type storedBody struct {
-	inline []byte
-	hash   string
-	index  string
+	state     string
+	storedLen int
+	inline    []byte
+	hash      string
+	index     string
 }
 
 // spill decides where one body lives. Small bodies stay inline. Large ones are
@@ -668,7 +712,7 @@ type storedBody struct {
 // independent of where the bytes end up.
 func (t *Traffic) spill(body []byte, contentType string) storedBody {
 	if len(body) == 0 {
-		return storedBody{}
+		return storedBody{state: "complete"}
 	}
 	text := !isBinaryBody(contentType, body)
 	indexText := func() string {
@@ -678,7 +722,7 @@ func (t *Traffic) spill(body []byte, contentType string) storedBody {
 		return string(clipBytes(body, maxIndexBody))
 	}
 	if len(body) <= maxInlineBody {
-		return storedBody{inline: body, index: indexText()}
+		return storedBody{inline: body, index: indexText(), state: "complete", storedLen: len(body)}
 	}
 
 	sum := sha256.Sum256(body)
@@ -688,16 +732,40 @@ func (t *Traffic) spill(body []byte, contentType string) storedBody {
 	blobDir := filepath.Join(t.dir, "_blobs", "sha256", h[:2])
 	if err := os.MkdirAll(blobDir, 0o755); err != nil {
 		log.Printf("[traffic] 创建 blob 目录失败：%v", err)
-		return storedBody{inline: clipBytes(body, blobPreview), index: indexText()}
+		return storedBody{inline: clipBytes(body, blobPreview), index: indexText(), state: "partial", storedLen: min(len(body), blobPreview)}
 	}
 	blobPath := filepath.Join(blobDir, h+".bin")
-	if _, err := os.Stat(blobPath); os.IsNotExist(err) {
-		if err := os.WriteFile(blobPath, body, 0o644); err != nil {
-			log.Printf("[traffic] 写 blob %s 失败：%v", h, err)
-			return storedBody{inline: clipBytes(body, blobPreview), index: indexText()}
+	if _, err := os.Stat(blobPath); err == nil {
+		f, err := os.Open(blobPath)
+		if err != nil {
+			return storedBody{state: "partial", inline: clipBytes(body, blobPreview), storedLen: blobPreview}
+		}
+		hash := sha256.New()
+		n, readErr := io.Copy(hash, f)
+		f.Close()
+		if readErr != nil || n != int64(len(body)) || hex.EncodeToString(hash.Sum(nil)) != h {
+			return storedBody{state: "partial", inline: clipBytes(body, blobPreview), storedLen: blobPreview}
+		}
+	} else {
+		f, err := os.CreateTemp(blobDir, ".stage-")
+		if err != nil {
+			return storedBody{state: "partial", inline: clipBytes(body, blobPreview), storedLen: blobPreview}
+		}
+		defer func() { f.Close(); os.Remove(f.Name()) }()
+		if _, err := f.Write(body); err != nil {
+			return storedBody{state: "partial", inline: clipBytes(body, blobPreview), storedLen: blobPreview}
+		}
+		if err := f.Sync(); err != nil {
+			return storedBody{state: "partial", inline: clipBytes(body, blobPreview), storedLen: blobPreview}
+		}
+		if err := f.Close(); err != nil {
+			return storedBody{state: "partial", inline: clipBytes(body, blobPreview), storedLen: blobPreview}
+		}
+		if err := os.Rename(f.Name(), blobPath); err != nil {
+			return storedBody{state: "partial", inline: clipBytes(body, blobPreview), storedLen: blobPreview}
 		}
 	}
-	sb := storedBody{hash: h, index: indexText()}
+	sb := storedBody{hash: h, index: indexText(), state: "complete", storedLen: len(body)}
 	if text {
 		sb.inline = []byte(truncateUTF8(body, blobPreview))
 	} else {
@@ -941,6 +1009,18 @@ func (t *Traffic) Search(host string, page, size int) ([]ExchangeMeta, error) {
 // newest first, capped at limit (max 20000). SRC 收尾项核验用：一次取回该 host
 // 在一个任务时间窗内的流量，再在内存里推导 paths/js/methods/non404 等指标。
 func (t *Traffic) Since(host string, since int64, limit int) ([]ExchangeMeta, error) {
+	return t.sinceForTask(0, host, since, limit)
+}
+
+// SinceTask excludes unknown and other-task captures before applying the limit.
+func (t *Traffic) SinceTask(taskID int64, host string, since int64, limit int) ([]ExchangeMeta, error) {
+	if taskID <= 0 {
+		return nil, fmt.Errorf("需要有效的任务流量身份")
+	}
+	return t.sinceForTask(taskID, host, since, limit)
+}
+
+func (t *Traffic) sinceForTask(taskID int64, host string, since int64, limit int) ([]ExchangeMeta, error) {
 	if t == nil || t.db == nil {
 		return nil, nil
 	}
@@ -954,6 +1034,10 @@ func (t *Traffic) Since(host string, since int64, limit int) ([]ExchangeMeta, er
 	q := `SELECT id,ts,host,method,url_template,url,status,content_type,resp_len,path,task_id
 FROM exchanges WHERE host=?`
 	args := []any{host}
+	if taskID > 0 {
+		q += ` AND task_id=?`
+		args = append(args, taskID)
+	}
 	if since > 0 {
 		q += ` AND ts>=?`
 		args = append(args, since)
@@ -1137,11 +1221,19 @@ func (t *Traffic) Get(id string) (req, resp string, err error) {
 	var reqBody, respBody []byte
 	var reqBlob, respBlob sql.NullString
 	var reqLen, respLen int
-	err = t.db.QueryRow(`SELECT b.req_head,b.req_body,b.req_blob,b.resp_head,b.resp_body,b.resp_blob,e.req_len,e.resp_len
+	var reqState, respState string
+	err = t.db.QueryRow(`SELECT b.req_head,b.req_body,b.req_blob,b.resp_head,b.resp_body,b.resp_blob,e.req_len,e.resp_len,e.req_state,e.resp_state
 FROM exchange_bodies b JOIN exchanges e ON e.id=b.id WHERE b.id=?`, id).
-		Scan(&reqHead, &reqBody, &reqBlob, &respHead, &respBody, &respBlob, &reqLen, &respLen)
+		Scan(&reqHead, &reqBody, &reqBlob, &respHead, &respBody, &respBlob, &reqLen, &respLen, &reqState, &respState)
 	if err == nil {
-		return assembleRaw(reqHead, reqBody, reqBlob, reqLen), assembleRaw(respHead, respBody, respBlob, respLen), nil
+		req, resp = assembleRaw(reqHead, reqBody, reqBlob, reqLen), assembleRaw(respHead, respBody, respBlob, respLen)
+		if reqState == "partial" {
+			req += "\n[partial: 原始请求正文落盘失败，仅保留预览]"
+		}
+		if respState == "partial" {
+			resp += "\n[partial: 原始响应正文落盘失败，仅保留预览]"
+		}
+		return req, resp, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return "", "", err
@@ -1154,8 +1246,17 @@ FROM exchange_bodies b JOIN exchanges e ON e.id=b.id WHERE b.id=?`, id).
 	if strings.TrimSpace(rel) == "" {
 		return "", "", fmt.Errorf("exchange %s 无正文记录", id)
 	}
-	rb, _ := os.ReadFile(filepath.Join(t.dir, rel, "request.http"))
-	pb, _ := os.ReadFile(filepath.Join(t.dir, rel, "response.http"))
+	if !filepath.IsLocal(rel) {
+		return "", "", fmt.Errorf("旧流量路径不合法")
+	}
+	rb, err := os.ReadFile(filepath.Join(t.dir, rel, "request.http"))
+	if err != nil {
+		return "", "", err
+	}
+	pb, err := os.ReadFile(filepath.Join(t.dir, rel, "response.http"))
+	if err != nil {
+		return "", "", err
+	}
 	return string(rb), string(pb), nil
 }
 

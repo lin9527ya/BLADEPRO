@@ -4,6 +4,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"sort"
@@ -20,10 +21,24 @@ func (s *Server) getReport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "no active task")
 		return
 	}
-	findings, _ := t.Store.ListByKind(db.KindFinding, 1000) // 纯漏洞（事实是独立的 KindFact，不进报告）
+	findings, err := t.Store.ListByKind(db.KindFinding, 1000) // 纯漏洞（事实是独立的 KindFact，不进报告）
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, "报告数据无法完整读取")
+		return
+	}
 	// 撤回(retracted)的漏洞出正文、进「已撤回」段；blocked/exhausted 的意图单列「未测成」。
 	tid, _ := strconv.ParseInt(t.ID, 10, 64)
-	meta, _ := s.m.pg.FindingMetaByNodeID(tid)
+	meta, err := s.m.pg.FindingMetaByNodeID(tid)
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, "报告数据无法完整读取")
+		return
+	}
+	confirmed, err := s.m.pg.ConfirmedReportNodes(r.Context(), tid)
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, "报告确认状态无法读取")
+		return
+	}
+	closed := make([]*db.Node, 0)
 	live := make([]*db.Node, 0, len(findings))
 	var retracted []report.Retracted
 	var ruledOut, proofGaps []report.CandidateNote
@@ -40,11 +55,21 @@ func (s *Server) getReport(w http.ResponseWriter, r *http.Request) {
 			ruledOut = append(ruledOut, report.CandidateNote{Node: n, Counterevidence: m.Counterevidence, ProofGap: m.ProofGap, Confidence: m.Confidence})
 		case n.State == db.FindingOpenProofGap || (ok && m.Status == db.FindingOpenProofGap):
 			proofGaps = append(proofGaps, report.CandidateNote{Node: n, Counterevidence: m.Counterevidence, ProofGap: m.ProofGap, Confidence: m.Confidence})
+		case ok && (m.Status == db.FindingFalsePositive || m.Status == db.FindingDuplicate || m.Status == db.FindingFixed || m.Status == db.FindingResolved || m.Status == db.FindingIgnored || m.Status == db.FindingRiskAccepted):
+			closed = append(closed, n)
 		default:
-			live = append(live, n)
+			if confirmed[n.ID] {
+				live = append(live, n)
+			} else {
+				proofGaps = append(proofGaps, report.CandidateNote{Node: n, ProofGap: "尚未人工确认或通过当前证据版本的独立复验", Confidence: m.Confidence})
+			}
 		}
 	}
-	intents, _ := t.Store.ListByKind(db.KindIntent, 1000)
+	intents, err := t.Store.ListByKind(db.KindIntent, 1000)
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, "报告数据无法完整读取")
+		return
+	}
 	var notProbed []report.NotProbed
 	for _, n := range intents {
 		if n.State == "blocked" || n.State == "exhausted" {
@@ -52,16 +77,24 @@ func (s *Server) getReport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var noEvidence []*db.Node
-	for _, n := range live {
+	for _, n := range findings {
 		if m, ok := meta[n.ID]; !ok || m.TrafficCount == 0 {
 			noEvidence = append(noEvidence, n)
 		}
 	}
-	coverage, _ := t.Store.CoverageMatrix(tid)
+	coverage, err := t.Store.CoverageMatrix(tid)
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, "报告数据无法完整读取")
+		return
+	}
 	// 复核结论：最新复测非"复现"的发现一并点名（存疑的会被 planner/人工再次审视）。
-	verdicts, _ := s.m.pg.LatestRetestVerdicts(tid)
+	verdicts, err := s.m.pg.LatestRetestVerdicts(tid)
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, "报告数据无法完整读取")
+		return
+	}
 	liveByID := map[int64]*db.Node{}
-	for _, n := range live {
+	for _, n := range findings {
 		liveByID[n.ID] = n
 	}
 	var retestNotes []report.RetestNote
@@ -76,19 +109,39 @@ func (s *Server) getReport(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(retestNotes, func(i, j int) bool { return retestNotes[i].Node.ID < retestNotes[j].Node.ID })
 	counts := map[string]int{}
 	for _, ty := range []string{"root_domain", "ip", "subdomain", "app", "service", "endpoint"} {
-		ns, _ := s.m.Assets().QueryByType(ty, 100000, 0)
+		ns, err := s.m.Assets().QueryByType(ty, 100000, 0)
+		if err != nil {
+			writeErr(w, http.StatusServiceUnavailable, "报告资产数据无法完整读取")
+			return
+		}
 		if len(ns) > 0 {
 			counts[ty] = len(ns)
 		}
 	}
 	// 战果：据点与凭据各取全量（同 findings 的取法）。它们不进 digest（coldgraph 只折
 	// intent/fact），所以不会被折叠吞掉，按 kind 直取即可。
-	footholds, _ := t.Store.ListByKind(db.KindFoothold, 1000)
-	credentials, _ := t.Store.ListByKind(db.KindCredential, 1000)
+	footholds, err := t.Store.ListByKind(db.KindFoothold, 1000)
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, "报告数据无法完整读取")
+		return
+	}
+	credentials, err := t.Store.ListByKind(db.KindCredential, 1000)
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, "报告数据无法完整读取")
+		return
+	}
 	// 遗留物（P43）：我们留在目标上的东西。同样按 kind 直取全量。
-	artifacts, _ := t.Store.ListByKind(db.KindArtifact, 1000)
+	artifacts, err := t.Store.ListByKind(db.KindArtifact, 1000)
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, "报告数据无法完整读取")
+		return
+	}
 	// 检测验证：同样按 kind 直取全量（也不进 digest）。
-	detections, _ := t.Store.ListByKind(db.KindDetection, 1000)
+	detections, err := t.Store.ListByKind(db.KindDetection, 1000)
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, "报告数据无法完整读取")
+		return
+	}
 
 	// 战果动用关系（intent --uses--> 战果）：交付物里最接近「攻击链」的东西——只写「拿到了
 	// 什么」是资产清单，写清「拿它走到了哪一步」才是作业叙述。
@@ -145,6 +198,15 @@ func (s *Server) getReport(w http.ResponseWriter, r *http.Request) {
 	})
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	w.WriteHeader(200)
+	if len(findings) >= 1000 || len(intents) >= 1000 || len(footholds) >= 1000 || len(credentials) >= 1000 || len(artifacts) >= 1000 || len(detections) >= 1000 {
+		md += "\n\n> 警告：报告列表达到查询上限，本导出可能不完整，请分页核对。\n"
+	}
+	if len(closed) > 0 {
+		md += "\n\n## 已关闭结论（不进入已确认漏洞正文）\n"
+		for _, n := range closed {
+			md += fmt.Sprintf("- 节点 #%d：%s\n", n.ID, meta[n.ID].Status)
+		}
+	}
 	_, _ = w.Write([]byte(md))
 }
 

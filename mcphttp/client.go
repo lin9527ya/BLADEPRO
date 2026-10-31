@@ -12,7 +12,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -101,10 +100,14 @@ func New(ctx context.Context, server, url string, headers map[string]string, ins
 	if err != nil {
 		return nil, err
 	}
-	hc := &http.Client{Timeout: 120 * time.Second}
-	if insecure {
-		hc.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	if err := checkEndpointURL(url); err != nil {
+		return nil, err
 	}
+	policy, err := newEndpointPolicy(url)
+	if err != nil {
+		return nil, err
+	}
+	hc := &http.Client{Timeout: 120 * time.Second, Transport: guardedTransport(insecure), CheckRedirect: policy.redirect}
 	c := &Client{
 		server:   server,
 		url:      url,
@@ -126,11 +129,17 @@ func NewSSE(ctx context.Context, server, sseURL string, headers map[string]strin
 	if err != nil {
 		return nil, err
 	}
-	hc := &http.Client{} // the SSE stream is intentionally long-lived.
-	if insecure {
-		hc.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	if err := checkEndpointURL(sseURL); err != nil {
+		return nil, err
 	}
+	policy, err := newEndpointPolicy(sseURL)
+	if err != nil {
+		return nil, err
+	}
+	hc := &http.Client{Transport: sseTransport(insecure), CheckRedirect: policy.redirect}
 	streamCtx, cancel := context.WithCancel(context.Background())
+	stopCaller := context.AfterFunc(ctx, cancel)
+	defer stopCaller()
 	req, err := http.NewRequestWithContext(streamCtx, http.MethodGet, sseURL, nil)
 	if err != nil {
 		cancel()
@@ -151,7 +160,15 @@ func NewSSE(ctx context.Context, server, sseURL string, headers map[string]strin
 		return nil, fmt.Errorf("mcp sse http %d: %s", resp.StatusCode, readSnippet(resp.Body))
 	}
 	reader := bufio.NewReader(resp.Body)
+	timer := time.AfterFunc(30*time.Second, func() { cancel(); resp.Body.Close() })
 	endpoint, err := readSSEEndpoint(reader, sseURL)
+	timer.Stop()
+	if err != nil {
+		resp.Body.Close()
+		cancel()
+		return nil, err
+	}
+	endpoint, err = policy.check(endpoint)
 	if err != nil {
 		resp.Body.Close()
 		cancel()

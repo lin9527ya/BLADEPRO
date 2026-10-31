@@ -236,7 +236,10 @@ VALUES($1,$2,$3,$4,$5) ON CONFLICT(finding_id,snapshot_id) DO NOTHING`, findingI
 }
 
 func bumpEvidenceVersionTx(tx *sql.Tx, findingID int64) error {
-	_, err := tx.Exec(`UPDATE findings SET evidence_version=evidence_version+1 WHERE id=$1`, findingID)
+	if _, err := tx.Exec(`UPDATE findings SET evidence_version=evidence_version+1 WHERE id=$1`, findingID); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`UPDATE src_finding_meta SET report_ready=false WHERE finding_id=$1`, findingID)
 	return err
 }
 

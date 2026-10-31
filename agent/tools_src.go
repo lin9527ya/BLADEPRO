@@ -133,8 +133,15 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 				entry["na_code"] = c.NACode
 				entry["reason"] = c.Reason
 				entry["metrics"] = c.Metrics
+				entry["verification"] = c.Verification
+				entry["review_note"] = c.ReviewNote
+				entry["probe_run_id"] = c.ProbeRunID
+				if c.ObservedAt != nil {
+					entry["observed_at"] = c.ObservedAt
+				}
 				if c.EvidenceNodeID > 0 {
 					entry["evidence_node_id"] = c.EvidenceNodeID
+
 				}
 				if c.InheritedFromTaskID > 0 {
 					entry["inherited_from_task_id"] = c.InheritedFromTaskID
@@ -627,6 +634,7 @@ func (t *ToolSet) srcMarkCell() actool.CoreTool {
 					saved = append(saved, cellResult{Index: i, Error: "写覆盖格失败：" + err.Error()})
 					continue
 				}
+				t.writes.SrcCells++
 				okCount++
 				saved = append(saved, cellResult{Index: i, Cell: row})
 			}
@@ -652,6 +660,7 @@ func (t *ToolSet) srcMarkCell() actool.CoreTool {
 // srcCheckArg is one closing-check mark; the tool accepts one top-level mark or a
 // `checks` array.
 type srcCheckArg struct {
+	ProbeRunID     string         `json:"probe_run_id"`
 	AssetID        int64          `json:"asset_id"`
 	CheckKey       string         `json:"check_key"`
 	State          string         `json:"state"`
@@ -695,6 +704,7 @@ func (t *ToolSet) srcMarkCheck() actool.CoreTool {
 		"na_code":          str("na 的理由码（工具描述与 src_state 里给出可选值）"),
 		"reason":           str("结论说明（na/budget_stop 必填；降级也要写原因）"),
 		"metrics":          metrics,
+		"probe_run_id":     str("src_probe 返回的可信执行凭据；无凭据的 done 只能登记为待人工核验"),
 		"evidence_node_id": intp("证据节点 id（record_fact 返回；done 必填）"),
 	})
 	props := itemSchema["properties"].(map[string]any)
@@ -711,7 +721,7 @@ func (t *ToolSet) srcMarkCheck() actool.CoreTool {
 			"check_key 只能是："+strings.Join(srcmode.CheckKeys(), " / ")+"。\n"+
 			"done 必须有达标的数字（metrics）与 evidence_node_id（先 record_fact 记下命令与结果）；\n"+
 			"paths/js/methods/non404 优先用 src_probe 跑确定性探针，它返回的 metrics 可直接填这里；\n"+
-			"done 提交后系统会用录制流量核对数字：返回的 verify_warnings 非空时说明自报与实测对不上，先解释差异（可能只是录制没走代理），不要无视；\n"+
+			"done 登记必须引用 src_probe 的 probe_run_id 和 evidence_node_id，宿主核验任务/资产/类型/指标后才算已验证；无凭据的人工登记进入复核队列，不直接满足收尾；\n"+
 			"na 必须写 reason + na_code（只在 src_state 给出的该 check 的 na_codes 里选）；\n"+
 			"budget_stop 必须写 reason。数字不达标会被拒绝并告诉你还差多少。",
 		itemSchema,
@@ -765,7 +775,7 @@ func (t *ToolSet) srcMarkCheck() actool.CoreTool {
 				chk := db.SrcCheck{
 					TaskID: t.taskID, AssetID: arg.AssetID, CheckKey: arg.CheckKey,
 					State: arg.State, NACode: arg.NACode, Reason: arg.Reason,
-					Metrics: arg.Metrics, EvidenceNodeID: arg.EvidenceNodeID,
+					Metrics: arg.Metrics, EvidenceNodeID: arg.EvidenceNodeID, ProbeRunID: arg.ProbeRunID,
 					UpdatedBy: t.worker,
 				}
 				if err := srcmode.ValidateCheck(ctx, t.srcStore, t.taskID, t.srcDoc, chk); err != nil {
@@ -777,6 +787,7 @@ func (t *ToolSet) srcMarkCheck() actool.CoreTool {
 					saved = append(saved, checkResult{Index: i, Error: "写收尾项失败：" + err.Error(), AutoScreenshot: autoScreenshot})
 					continue
 				}
+				t.writes.SrcChecks++
 				entry := checkResult{Index: i, Check: row, AutoScreenshot: autoScreenshot}
 				if t.srcVerifier != nil && row.State == db.SrcCheckDone {
 					warns, obs := t.srcVerifier(ctx, t.taskID, row.AssetID, row.CheckKey, row.Metrics)

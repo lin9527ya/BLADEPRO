@@ -14,6 +14,7 @@ import (
 	"github.com/lin9527ya/bladepro/agent"
 	"github.com/lin9527ya/bladepro/db"
 	"github.com/lin9527ya/bladepro/notify"
+	"github.com/lin9527ya/bladepro/srcmode"
 )
 
 // BudgetStage classifies token usage against a task budget:
@@ -79,14 +80,27 @@ func (s *Server) taskTokenBudget() int64 {
 // setting. Batch fan-out sets a per-shard budget so one noisy shard cannot eat
 // the whole campaign's allowance.
 func (e *Engine) tokenBudgetFor(t *Task) int64 {
+	budget := int64(0)
 	if t != nil && t.TokenBudget > 0 {
-		return t.TokenBudget
+		budget = t.TokenBudget
+	} else {
+		budget = e.tokenBudget()
 	}
-	return e.tokenBudget()
+	// SRC delivery reserve: stop exploration at the reduced budget so report,
+	// independent retest and submission preparation still have headroom.
+	if t != nil && t.Mode == srcmode.ModeSrc && budget > 0 {
+		if pct := srcmode.Parse(t.ModeDoc).DeliveryReservePct; pct > 0 {
+			budget = budget * int64(100-pct) / 100
+		}
+	}
+	return budget
 }
 
 // tokenBudget is the engine-side view of the same setting.
 func (e *Engine) tokenBudget() int64 {
+	if e == nil || e.m == nil || e.m.pg == nil {
+		return 0
+	}
 	v, ok, err := e.m.pg.GetSetting(settingTokenBudget)
 	if err != nil || !ok {
 		return 0

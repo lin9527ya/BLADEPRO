@@ -45,55 +45,14 @@ FROM assets WHERE id=$1`, assetID).Scan(&assetType, &domain, &rawURL, &ip, &comp
 		return false, "", err
 	}
 	host := assetHostForScope(assetType, domain, rawURL, ip)
-	// out 排除（program 级 + 任务级）优先。
-	if programID.Valid && programID.Int64 > 0 {
-		rows, err := s.ListProgramScope(ctx, programID.Int64)
-		if err != nil {
-			return false, "", err
-		}
-		for _, r := range rows {
-			if r.Direction == "out" && scopeHostMatch(r.Kind, r.Domain, r.Net, host) {
-				return false, "命中 program out 范围", nil
-			}
-		}
-	}
-	if excluded, err := s.db.TaskHostExcluded(ctx, taskID, host); err != nil {
+	inScope, _, err := s.SrcHostInScope(ctx, taskID, host)
+	if err != nil {
 		return false, "", err
-	} else if excluded {
-		return false, "命中任务排除范围", nil
 	}
-	if programID.Valid && programID.Int64 > 0 {
-		var company sql.NullInt64
-		_ = s.db.QueryRowContext(ctx, `SELECT company_id FROM src_programs WHERE id=$1`, programID.Int64).Scan(&company)
-		if company.Valid && companyID.Valid && company.Int64 == companyID.Int64 {
-			return true, "", nil
-		}
-		rows, err := s.ListProgramScope(ctx, programID.Int64)
-		if err != nil {
-			return false, "", err
-		}
-		hasIn := false
-		for _, r := range rows {
-			if r.Direction != "in" {
-				continue
-			}
-			hasIn = true
-			if scopeHostMatch(r.Kind, r.Domain, r.Net, host) {
-				return true, "", nil
-			}
-		}
-		if hasIn {
-			return false, "不在 program in 范围", nil
-		}
-	}
-	// 没有 program（或有项目但没有显式 in/企业）时，回落到任务现有 scope：
-	// 已经在范围内的资产（如公司/根域已覆盖的子域）可以继续补更细的 scope。
-	if inScope, err := s.SrcAssetInScope(ctx, taskID, assetID); err != nil {
-		return false, "", err
-	} else if inScope != nil {
+	if inScope {
 		return true, "", nil
 	}
-	return false, "不在项目/任务白名单", nil
+	return false, "不在任务冻结的授权白名单", nil
 }
 
 // assetHostForScope picks the host used for whitelist matching.

@@ -93,7 +93,7 @@ func assignIntentOrdinals(store *db.ExplorationStore, nodes []*db.Node) {
 
 func inheritedIntentResult(state string) bool {
 	switch state {
-	case "done", "negative", "out-of-scope", "blocked", "exhausted", "stopped":
+	case "done", "negative", "out-of-scope", "blocked", "exhausted", "stopped", "no_output":
 		return true
 	default:
 		return false

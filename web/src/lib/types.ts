@@ -503,6 +503,7 @@ export type IntentState =
   | "out-of-scope"
   | "blocked"
   | "exhausted"
+  | "no_output"
   | "stopped";
 export type FindingState = "confirmed" | "dismissed";
 export type HintState = "active" | "consumed";
@@ -1088,6 +1089,10 @@ export interface SrcCheckMetricField {
 }
 
 export interface SrcCheckItem {
+  probe_run_id?: string;
+  verification?: "manual_unverified" | "probe_verified" | "artifact_verified" | "manual_approved";
+  review_note?: string;
+  observed_at?: string;
   key: string;
   title: string;
   hint: string;
@@ -1264,7 +1269,16 @@ export interface SrcProgramRule {
 }
 
 /** 项目规则：禁用的手段/写操作 + 额度 + 命令级规则 + 必做面。 */
+export interface SrcTestIdentity {
+  label: string;
+  role?: string;
+  tenant?: string;
+  credential_env: string;
+  header?: "Cookie" | "Authorization";
+}
 export interface SrcProgramRules {
+  /** 平台授权的只读对照身份；只保存环境变量引用，不保存凭据。 */
+  test_identities?: SrcTestIdentity[];
   forbidden_techniques?: string[];
   forbidden_writes?: string[];
   max_intents_total?: number;
@@ -2900,6 +2914,7 @@ export interface CampaignSummary {
 
 // ---- 人工复核队列（P2）----
 export type ReviewKind =
+  | "check_unverified"
   | "report_missing"
   | "retest_inconclusive"
   | "dedupe_pending"

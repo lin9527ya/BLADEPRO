@@ -150,8 +150,8 @@ func (s *SrcStore) UpsertSrcCell(ctx context.Context, c *SrcCell) (*SrcCell, err
 		find = c.FindingID
 	}
 	row := s.db.QueryRowContext(ctx, `
-INSERT INTO src_cells(task_id, asset_id, area, item, state, reason, na_code, evidence_node_id, finding_id, attempts, updated_by, inherited_from_task_id)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,1,$10,$11)
+INSERT INTO src_cells(task_id, asset_id, area, item, state, reason, na_code, evidence_node_id, finding_id, attempts, updated_by, inherited_from_task_id, observed_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,1,$10,$11,now())
 ON CONFLICT (task_id, asset_id, area, item) DO UPDATE SET
     state            = EXCLUDED.state,
     reason           = EXCLUDED.reason,
@@ -159,7 +159,11 @@ ON CONFLICT (task_id, asset_id, area, item) DO UPDATE SET
     evidence_node_id = COALESCE(EXCLUDED.evidence_node_id, src_cells.evidence_node_id),
     finding_id       = COALESCE(EXCLUDED.finding_id, src_cells.finding_id),
     attempts         = src_cells.attempts + 1,
+    -- revision_count is a separate edit ledger; attempts keeps its historical
+    -- "every write is one attempt" semantics used by the cap.
+    revision_count   = src_cells.revision_count + 1,
     updated_by       = EXCLUDED.updated_by,
+    observed_at      = now(),
     -- 正常点格/agent 重测一律清零继承标记：这条结论从现在起是本轮新鲜结论。
     inherited_from_task_id = EXCLUDED.inherited_from_task_id
 RETURNING id`, c.TaskID, c.AssetID, c.Area, item, c.State, c.Reason, c.NACode, ev, find, c.UpdatedBy, c.InheritedFromTaskID)
@@ -398,7 +402,7 @@ func (s *SrcStore) InheritSrcCoverage(ctx context.Context, fromTaskID, toTaskID 
 
 	res, err := tx.ExecContext(ctx, `
 WITH target AS (`+scopeTargetSelect+`)
-INSERT INTO src_cells(task_id, asset_id, area, item, state, reason, na_code, evidence_node_id, finding_id, attempts, updated_by, inherited_from_task_id)
+INSERT INTO src_cells(task_id, asset_id, area, item, state, reason, na_code, evidence_node_id, finding_id, attempts, updated_by, inherited_from_task_id, observed_at)
 SELECT $1, c.asset_id, c.area, c.item, c.state,
        CASE
            WHEN btrim(COALESCE(c.reason,'')) = ''
@@ -407,10 +411,12 @@ SELECT $1, c.asset_id, c.area, c.item, c.state,
            ELSE c.reason || '（继承自任务 #' || c.task_id || '）'
        END,
        c.na_code, NULL, NULL, 0, 'inherit',
-       CASE WHEN COALESCE(c.inherited_from_task_id,0) > 0 THEN c.inherited_from_task_id ELSE c.task_id END
+       CASE WHEN COALESCE(c.inherited_from_task_id,0) > 0 THEN c.inherited_from_task_id ELSE c.task_id END,
+       c.observed_at
 FROM src_cells c
 JOIN target t ON t.id = c.asset_id
 WHERE c.task_id = $2 AND c.state = 'tested_clear'
+  AND c.observed_at IS NOT NULL AND c.observed_at > now() - interval '30 days'
 ON CONFLICT (task_id, asset_id, area, item) DO NOTHING`, toTaskID, fromTaskID)
 	if err != nil {
 		return out, err
@@ -421,7 +427,7 @@ ON CONFLICT (task_id, asset_id, area, item) DO NOTHING`, toTaskID, fromTaskID)
 
 	res, err = tx.ExecContext(ctx, `
 WITH target AS (`+scopeTargetSelect+`)
-INSERT INTO src_checks(task_id, asset_id, check_key, state, na_code, reason, evidence_node_id, metrics, updated_by, inherited_from_task_id)
+INSERT INTO src_checks(task_id, asset_id, check_key, state, na_code, reason, evidence_node_id, metrics, updated_by, inherited_from_task_id, verification, observed_at)
 SELECT $1, c.asset_id, c.check_key, c.state, c.na_code,
        CASE
            WHEN btrim(COALESCE(c.reason,'')) = ''
@@ -430,10 +436,12 @@ SELECT $1, c.asset_id, c.check_key, c.state, c.na_code,
            ELSE c.reason || '（继承自任务 #' || c.task_id || '）'
        END,
        NULL, c.metrics, 'inherit',
-       CASE WHEN COALESCE(c.inherited_from_task_id,0) > 0 THEN c.inherited_from_task_id ELSE c.task_id END
+       CASE WHEN COALESCE(c.inherited_from_task_id,0) > 0 THEN c.inherited_from_task_id ELSE c.task_id END,
+       'inherited', c.observed_at
 FROM src_checks c
 JOIN target t ON t.id = c.asset_id
 WHERE c.task_id = $2 AND c.state = 'done'
+  AND c.observed_at IS NOT NULL AND c.observed_at > now() - interval '30 days'
 ON CONFLICT (task_id, asset_id, check_key) DO NOTHING`, toTaskID, fromTaskID)
 	if err != nil {
 		return out, err
@@ -478,7 +486,7 @@ JOIN tasks t ON t.id = c.task_id
 WHERE c.task_id <> $1
   AND c.asset_id = ANY($2::bigint[])
   AND t.mode = 'src' AND t.deleted_at IS NULL
-  AND c.updated_at >= $3
+  AND COALESCE(c.observed_at, c.updated_at) >= $3
   AND c.state IN ('tested_clear','tested_found','na')
 ORDER BY c.asset_id, c.area, c.item, c.updated_at DESC
 LIMIT $4`, taskID, assetIDs, since, limit)

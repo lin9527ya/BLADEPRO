@@ -102,9 +102,9 @@ VALUES ('subdomain',$1,$2,$3) RETURNING id`, domain, rootDomain, c).Scan(&id); e
 		t.Fatalf("outside program allowed: %v %q %v", ok, why, err)
 	}
 
-	// program 企业白名单：企业资产即使不在显式 in 也放行。
-	companyAsset := mkAsset("company."+root, companyID)
-	if ok, why, err := d.Src().AutoScopeAllowed(ctx, progTask.ID, companyAsset); err != nil || !ok {
-		t.Fatalf("program company asset denied: %v %q %v", ok, why, err)
+	// 企业归属不是授权，不能越过显式 in。
+	companyAsset := mkAsset(fmt.Sprintf("company-out-%d.example", suffix), companyID)
+	if ok, why, err := d.Src().AutoScopeAllowed(ctx, progTask.ID, companyAsset); err != nil || ok {
+		t.Fatalf("out-of-scope company asset allowed: %v %q %v", ok, why, err)
 	}
 }

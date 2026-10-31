@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/lin9527ya/bladepro/db"
 )
@@ -265,6 +266,14 @@ func ValidateCheck(ctx context.Context, store *db.SrcStore, taskID int64, doc Mo
 		if ok, why := checkSatisfied(def, doc, check.Metrics); !ok {
 			return fmt.Errorf("%s 还不算做完：%s", def.Title, why)
 		}
+		// Inherited checks keep their evidence in the source task. A fresh
+		// inherited observation is valid; an old one must be retested.
+		if check.InheritedFromTaskID > 0 {
+			if check.ObservedAt != nil && time.Since(*check.ObservedAt) <= 30*24*time.Hour {
+				return nil
+			}
+			return fmt.Errorf("%s 的继承证据已过期，需要在本任务重测", def.Title)
+		}
 		if def.RequireEvidence && check.EvidenceNodeID <= 0 {
 			return fmt.Errorf("%s 标 done 必须带 evidence_node_id（先 record_fact 记下数字与命令，再把节点 id 填进来）", def.Title)
 		}
@@ -297,6 +306,20 @@ func ValidateCheck(ctx context.Context, store *db.SrcStore, taskID int64, doc Mo
 	}
 	if asset == nil {
 		return fmt.Errorf("资产 %d 不在本任务测试范围内，不能标收尾项", check.AssetID)
+	}
+	if check.State == db.SrcCheckDone && check.ProbeRunID != "" {
+		if err := store.ValidateProbeCheck(ctx, check); err != nil {
+			return err
+		}
+	}
+	if check.State == db.SrcCheckDone && def.RequireEvidence {
+		ok, err := store.FactEvidenceForAsset(ctx, taskID, check.AssetID, check.EvidenceNodeID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("证据必须是对应资产的事实节点")
+		}
 	}
 	if check.EvidenceNodeID > 0 {
 		ok, err := store.NodeBelongsToTask(ctx, taskID, check.EvidenceNodeID)
@@ -335,6 +358,9 @@ func checkSatisfied(def CheckDef, doc ModeDoc, metrics map[string]int) (bool, st
 	case "js_enum":
 		sum := metrics["js_inline"] + metrics["js_external"] + metrics["js_chunks"] + metrics["sourcemap"]
 		if sum > 0 {
+			if d, f := metrics["js_discovered"], metrics["js_fetched"]; d > 0 && f < d && metrics["degraded"] == 0 {
+				return false, fmt.Sprintf("发现 %d 个外链 JS，只成功取回 %d 个；先把失败的脚本取回（或 degraded=1 并写清 CDN/网络原因）", d, f)
+			}
 			return true, ""
 		}
 		if metrics["degraded"] > 0 {
@@ -345,6 +371,9 @@ func checkSatisfied(def CheckDef, doc ModeDoc, metrics map[string]int) (bool, st
 		if metrics["non404"] == 0 {
 			return true, ""
 		}
+		if routes, done := metrics["non404_routes"], metrics["retested_routes"]; routes > 0 && done < routes {
+			return false, fmt.Sprintf("有 %d 个非 404 候选路由，只逐条复测了 %d 个；候选必须逐条慢速复测 ≥2 次", routes, done)
+		}
 	}
 	var missing []string
 	for key, min := range need {
@@ -352,6 +381,11 @@ func checkSatisfied(def CheckDef, doc ModeDoc, metrics map[string]int) (bool, st
 		// manual_paths）；只允许抬高会让 UI/文档里承诺的降档静默失效。
 		if v, ok := doc.CheckThresholds[key]; ok {
 			min = v
+		}
+		if key == "methods" {
+			if safe := metrics["safe_methods_available"]; safe > 0 && min > safe {
+				min = safe // never force state-changing requests just to hit a count
+			}
 		}
 		if metrics[key] < min {
 			missing = append(missing, fmt.Sprintf("%s=%d < %d", key, metrics[key], min))

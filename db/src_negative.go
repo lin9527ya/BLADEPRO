@@ -56,10 +56,10 @@ func (s *SrcStore) UpsertSrcNegative(ctx context.Context, n SrcNegative) (*SrcNe
 	}
 	var id int64
 	err := s.db.QueryRowContext(ctx, `
-INSERT INTO src_negative_knowledge(task_id, asset_id, area, endpoint, technique, reason, source)
-VALUES ($1,$2,$3,$4,$5,$6,$7)
+INSERT INTO src_negative_knowledge(task_id, asset_id, area, endpoint, technique, reason, source, observed_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,now())
 ON CONFLICT (task_id, asset_id, area, endpoint, technique)
-DO UPDATE SET reason=EXCLUDED.reason, source=EXCLUDED.source, updated_at=now()
+DO UPDATE SET reason=EXCLUDED.reason, source=EXCLUDED.source, updated_at=now(), observed_at=now()
 RETURNING id`, n.TaskID, n.AssetID, strings.TrimSpace(n.Area),
 		strings.TrimSpace(n.Endpoint), strings.TrimSpace(n.Technique), strings.TrimSpace(n.Reason), source).Scan(&id)
 	if err != nil {
@@ -87,7 +87,7 @@ func (s *SrcStore) ListSrcNegativesForTask(ctx context.Context, taskID int64, li
 SELECT `+srcNegativeCols+`
 FROM src_negative_knowledge n
 JOIN assets a ON a.id=n.asset_id
-WHERE n.asset_id IN (SELECT id FROM target)
+WHERE n.asset_id IN (SELECT id FROM target) AND n.observed_at > now() - interval '30 days'
 ORDER BY n.updated_at DESC, n.id DESC LIMIT $2`, taskID, limit)
 	if err != nil {
 		return nil, err
@@ -114,7 +114,7 @@ func (s *SrcStore) ListSrcNegativesForAsset(ctx context.Context, assetID int64, 
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT `+srcNegativeCols+`
 FROM src_negative_knowledge n JOIN assets a ON a.id=n.asset_id
-WHERE n.asset_id=$1 ORDER BY n.updated_at DESC, n.id DESC LIMIT $2`, assetID, limit)
+WHERE n.asset_id=$1 AND n.observed_at > now() - interval '30 days' ORDER BY n.updated_at DESC, n.id DESC LIMIT $2`, assetID, limit)
 	if err != nil {
 		return nil, err
 	}

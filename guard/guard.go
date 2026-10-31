@@ -95,7 +95,11 @@ func (g *Guard) preToolUse(ctx context.Context, ev hook.Event) hook.Result {
 func (g *Guard) applyIntercept(ctx context.Context, ev hook.Event) hook.Result {
 	// 任务级作业时间窗：先于一切规则。窗口外不做任何动作（包括未配置 intercept
 	// 规则的任务）——这是平台封号的硬边界，不是提示词建议。
-	if g.windowCheck != nil {
+	action := intercept.BuiltinActionTool(ev.ToolName) || !intercept.BuiltinReadTool(ev.ToolName)
+	if g.interceptor != nil {
+		action = g.interceptor.IsActionTool(ev.ToolName, ev.Input)
+	}
+	if g.windowCheck != nil && action {
 		if ok, reason := g.windowCheck(); !ok {
 			return g.block(ev.ToolName, systemBlockMessage(reason), "")
 		}

@@ -20,8 +20,8 @@ import (
 
 func evidenceFixture(t *testing.T) (*Store, db.RecordFindingInput, string) {
 	t.Helper()
-	dsn := os.Getenv("BLADEPRO_PG_DSN")
-	if dsn == "" {
+	dsn, _, err := db.DSN()
+	if err != nil {
 		t.Skip("BLADEPRO_PG_DSN is required for evidence integration tests")
 	}
 	pg, err := db.Open(dsn)

@@ -5,10 +5,14 @@ package evidence
 // 文件"，不是目标回包快照。
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"net/http"
 	"os"
@@ -68,6 +72,25 @@ func (s *Store) PutArtifact(ctx context.Context, in db.EvidenceArtifact, r io.Re
 			return nil, err
 		}
 	}
+	if err := verifyFile(path, sum, n); err != nil {
+		return nil, err
+	}
+	if in.Kind == "screenshot" {
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		config, format, err := image.DecodeConfig(f)
+		f.Close()
+		if err != nil || config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > 80000000 {
+			return nil, fmt.Errorf("截图不是有效且大小受限的 PNG/JPEG")
+		}
+		actual := "image/" + format
+		if in.MIME != "" && in.MIME != actual {
+			return nil, fmt.Errorf("截图 MIME 与真实内容不符")
+		}
+		in.MIME = actual
+	}
 	// MIME：优先 caller 给的值；否则按前 512 字节嗅探（截图一定是 image/*）。
 	if strings.TrimSpace(in.MIME) == "" {
 		head := make([]byte, 512)
@@ -103,5 +126,14 @@ func (s *Store) OpenArtifact(ctx context.Context, id int64) (io.ReadCloser, *db.
 	if err != nil {
 		return nil, a, err
 	}
-	return f, a, nil
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxArtifactBytes+1))
+	if err != nil {
+		return nil, a, err
+	}
+	sum := sha256.Sum256(data)
+	if len(data) > maxArtifactBytes || int64(len(data)) != a.Size || hex.EncodeToString(sum[:]) != a.SHA256 {
+		return nil, a, fmt.Errorf("证据产物读取时校验失败")
+	}
+	return io.NopCloser(bytes.NewReader(data)), a, nil
 }

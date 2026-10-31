@@ -58,6 +58,8 @@ import (
 // 需要 Postgres（无则整体 skip）。已知边界：P4 的"100% 后落终态"一环需要 LLM 就绪
 // 才能跑完终局规划轮，这里断言到"进入收尾时序"为止（终态落库由单测与真实任务覆盖）。
 func TestAcceptance(t *testing.T) {
+	// MCP fixtures explicitly opt into loopback endpoints; production stays guarded.
+	t.Setenv(mcphttp.AllowLocalEnv, "1")
 	m, err := NewManager(t.TempDir(), "")
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) - skipping", err)
@@ -461,7 +463,7 @@ func accP11(t *testing.T, e *accEnv) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("src-report status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	md := rec.Body.String()
+	md := strings.ReplaceAll(rec.Body.String(), "\r\n", "\n")
 	for _, want := range []string{
 		"漏洞标题：",
 		"目标网站URL：https://acc-p11.example/search?q=1'",
@@ -1594,8 +1596,14 @@ func accP19(t *testing.T, e *accEnv) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &gate); err != nil {
 		t.Fatal(err)
 	}
-	if !gate.Ready || len(gate.Warnings) != 0 {
-		t.Fatalf("证据完整的发现不该有警告: %+v", gate)
+	// Bound proof packets do not replace the required description/impact/fix.
+	if gate.Ready || len(gate.Warnings) != 3 {
+		t.Fatalf("缺三段正文的发现不能标为可提交: %+v", gate)
+	}
+	for _, want := range []string{"漏洞描述", "漏洞危害", "修复建议"} {
+		if !strings.Contains(strings.Join(gate.Warnings, "；"), want) {
+			t.Fatalf("正文缺口未报告 %s: %+v", want, gate)
+		}
 	}
 }
 

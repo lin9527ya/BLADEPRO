@@ -193,7 +193,7 @@ func TestPrepareAgentStateDirsHandsTreeToAgent(t *testing.T) {
 	if err := prepareAgentStateDirs(root); err != nil {
 		t.Fatal(err)
 	}
-	for _, d := range []string{root, filepath.Join(root, "tasks"), run} {
+	for _, d := range []string{filepath.Join(root, "tasks"), run} {
 		fi, err := os.Stat(d)
 		if err != nil {
 			t.Fatal(err)
@@ -204,6 +204,9 @@ func TestPrepareAgentStateDirsHandsTreeToAgent(t *testing.T) {
 		if fi.Mode().Perm()&0o020 == 0 {
 			t.Errorf("%s 组不可写：降权后的 agent 写不进自己的产物目录", d)
 		}
+	}
+	if info, err := os.Stat(root); err != nil || info.Mode().Perm()&0o020 != 0 {
+		t.Fatal("data 根不能交给 agent 写，否则可以替换证据目录")
 	}
 	if fi, err := os.Stat(file); err != nil || fi.Mode().Perm() != 0o644 {
 		t.Errorf("普通文件的权限不该被改动：%v %v", fi.Mode(), err)

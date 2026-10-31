@@ -168,7 +168,7 @@ func (s *Server) observedTrafficForHost(taskID int64, host string) (srcObservedM
 	srcVerifyMu.Unlock()
 
 	since := s.srcVerifySince(taskID)
-	rows, err := s.m.traffic.Since(host, since, 20000)
+	rows, err := s.m.traffic.SinceTask(taskID, host, since, 20000)
 	obs, ok := srcObservedMetrics{}, false
 	if err == nil {
 		obs = observedFromExchanges(rows)

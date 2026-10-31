@@ -51,6 +51,9 @@ type Hit struct {
 
 // Result 是结构化探针结果；Metrics 的键与 src_mark_check 对齐。
 type Result struct {
+	ProbeRunID     string         `json:"probe_run_id,omitempty"`
+	EvidenceNodeID int64          `json:"evidence_node_id,omitempty"`
+	ParamsHash     string         `json:"params_hash,omitempty"`
 	Kind           string         `json:"kind"`
 	Target         string         `json:"target"`
 	Requests       int            `json:"requests"`
@@ -154,8 +157,11 @@ func (r *runner) do(ctx context.Context, method, rawURL string) (*http.Response,
 		return nil, nil, err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	return resp, body, nil
+	body, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
+	if len(body) > 1<<20 {
+		return resp, body[:1<<20], fmt.Errorf("探针正文超过 1MiB，未完整读取")
+	}
+	return resp, body, err
 }
 
 func (r *runner) record(res *Result, method, rawURL string, status int, length int64, ct string, keepHit bool) {
@@ -248,20 +254,30 @@ func probeJS(ctx context.Context, target *url.URL, r *runner, res *Result) error
 	maps := map[string]bool{}
 	for i, jsURL := range jsURLs {
 		if i >= 30 {
+			res.Truncated = true
 			res.Notes = append(res.Notes, "JS 文件超过 30 个，sourcemap 只检查了前 30 个")
 			break
 		}
 		_, jsBody, err := r.do(ctx, "GET", jsURL)
 		if err != nil {
+			res.Metrics["js_failed"]++
 			continue
 		}
+		res.Metrics["js_fetched"]++
 		for _, m := range sourceMapRe.FindAllSubmatch(jsBody, -1) {
-			if u, ok := resolveSameHost(target, string(m[1])); ok {
+			if u, ok := resolveSameHost(mustParseURL(jsURL), string(m[1])); ok {
 				maps[u] = true
 			}
 		}
 	}
-	res.Metrics["sourcemap"] = len(maps)
+	res.Metrics["js_discovered"] = res.Metrics["js_external"]
+	res.Metrics["sourcemap_refs"] = len(maps)
+	for raw := range maps {
+		resp, _, err := r.do(ctx, "GET", raw)
+		if err == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			res.Metrics["sourcemap"]++
+		}
+	}
 	if len(jsURLs) > 100 {
 		jsURLs = jsURLs[:100]
 	}
@@ -306,6 +322,10 @@ func probeMethods(ctx context.Context, target *url.URL, opts Options, r *runner,
 		}
 	}
 	res.Metrics["methods"] = len(tested)
+	// The probe only sends GET/HEAD/OPTIONS; a full-tier "7 methods" threshold
+	// must not force state-changing requests. The check may cap its minimum at
+	// the safe set actually available.
+	res.Metrics["safe_methods_available"] = len(methods)
 	if len(allow) > 0 {
 		names := make([]string, 0, len(allow))
 		for m := range allow {
@@ -354,6 +374,8 @@ func probeNon404(ctx context.Context, target *url.URL, opts Options, r *runner, 
 	}
 	res.Metrics["non404"] = non404
 	res.Metrics["retested"] = retested
+	res.Metrics["non404_routes"] = len(list)
+	res.Metrics["retested_routes"] = retested
 	return nil
 }
 
@@ -368,7 +390,7 @@ func resolveSameHost(base *url.URL, raw string) (string, bool) {
 	}
 	// 去掉 fragment：请求不需要它，也避免同一文件被算成多个。
 	u.Fragment = ""
-	if strings.ToLower(u.Hostname()) != strings.ToLower(base.Hostname()) {
+	if !strings.EqualFold(u.Hostname(), base.Hostname()) {
 		return "", false
 	}
 	return u.String(), true
@@ -387,3 +409,5 @@ func dedupe(in []string) []string {
 	}
 	return out
 }
+
+func mustParseURL(raw string) *url.URL { u, _ := url.Parse(raw); return u }

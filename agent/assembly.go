@@ -67,6 +67,10 @@ func AugmentTools(ctx context.Context, agentKey string, base []actool.CoreTool) 
 	}
 	out, def.FindingGuidance = findingWorkflowTools(agentKey, out)
 	for i, t := range out {
+		switch t.Name() {
+		case "Bash", "run_execution":
+			t = WithFailureHint(t)
+		}
 		out[i] = guardPanic(t)
 	}
 	return out, def, cleanup

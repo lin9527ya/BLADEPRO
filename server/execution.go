@@ -30,6 +30,8 @@ const (
 	execCancelGrace    = 3 * time.Second // SIGTERM → SIGKILL 的宽限
 	execReconcileGap   = 45 * time.Second
 	execMaxCommandRune = 8192
+	execWaitDelay      = 2 * time.Second
+	execDefaultMaxAge  = 2 * time.Hour
 )
 
 // ExecutionService 托管全部在跑的长任务。
@@ -37,9 +39,10 @@ type ExecutionService struct {
 	pg  *db.DB
 	dir string // 数据目录；输出落 <dir>/tasks/<taskID>/executions/<id>.log
 
-	mu     sync.Mutex
-	live   map[int64]*execRun
-	onDone func(*db.ToolExecution)
+	mu      sync.Mutex
+	closing bool
+	live    map[int64]*execRun
+	onDone  func(*db.ToolExecution)
 	// envFor 由 host 注入：托管执行必须拿到与 agent Bash 同一份环境（记录代理 +
 	// CA 信任），否则长任务的流量绕过 MITM——证据链断在这里，而且 TLS 会失败。
 	envFor func() []string
@@ -57,6 +60,7 @@ type execRun struct {
 	hardKilled atomic.Bool
 	done       chan struct{}
 	hardTimer  *time.Timer
+	graceTimer atomic.Pointer[time.Timer]
 }
 
 // NewExecutionService builds the service over the PG ledger and the data dir.
@@ -89,26 +93,30 @@ func (s *ExecutionService) Submit(ctx context.Context, taskID string, intentID i
 	if len([]rune(command)) > execMaxCommandRune {
 		return agent.ExecStatus{}, fmt.Errorf("命令过长（>%d 字符）：长脚本请先落盘再执行短命令", execMaxCommandRune)
 	}
-	// 同时执行数上限：与 P24 的资源限额互补——那三条限的是「每一条能吃多少」（ulimit 前导），
-	// 这条限的是「同时有几条」。单条被 CPU 限额兜住，但 agent 若起了一百条，机器照样被打满。
-	// 0 = 不限。读不到计数就放行（与资产闸门同一条纪律：一次 DB 抖动不该挡死 agent 的正常工具
-	// 调用），但必须留日志——不静默。
-	if maxActive := execMaxActiveFromSettings(s.pg); maxActive > 0 {
-		if n, err := s.pg.CountActiveExecutions(taskID); err != nil {
-			log.Printf("[exec] 活跃执行数读取失败，本次不拦: %v", err)
-		} else if n >= maxActive {
-			return agent.ExecStatus{}, fmt.Errorf(
-				"本任务同时运行的后台执行已达上限（%d/%d）：先 wait_execution 等已有的收尾，或用 cancel_execution 取消一条，再起新的", n, maxActive)
+	s.mu.Lock()
+	closing := s.closing
+	s.mu.Unlock()
+	if closing {
+		return agent.ExecStatus{}, fmt.Errorf("执行服务正在关闭")
+	}
+	maxActive := defaultExecMaxActive
+	if v, ok, err := s.pg.GetSetting(settingExecMaxActive); err != nil {
+		return agent.ExecStatus{}, err
+	} else if ok {
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil || n < 0 {
+			return agent.ExecStatus{}, fmt.Errorf("无效的执行并发上限")
 		}
+		maxActive = n
 	}
 	logDir := filepath.Join(s.dir, "tasks", taskID, "executions")
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return agent.ExecStatus{}, err
 	}
-	id, err := s.pg.CreateExecution(&db.ToolExecution{
+	id, err := s.pg.CreateExecutionWithinLimit(ctx, &db.ToolExecution{
 		TaskID: taskID, IntentID: intentID, Worker: worker, Tool: "run_execution",
 		Command: command, Description: strings.TrimSpace(desc),
-	})
+	}, maxActive)
 	if err != nil {
 		return agent.ExecStatus{}, err
 	}
@@ -137,6 +145,7 @@ func (s *ExecutionService) Submit(ctx context.Context, taskID string, intentID i
 	argv := shellCommandArgs(runCommand)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	startDetached(cmd)
+	cmd.WaitDelay = execWaitDelay
 	// 与 agent Bash 同环境同目录：走记录代理、信任 CA、相对产物落在本意图目录。
 	if taskID != "" {
 		cmd.Dir = agent.EnsureRunDir(s.dir, taskID, intentID)
@@ -146,6 +155,17 @@ func (s *ExecutionService) Submit(ctx context.Context, taskID string, intentID i
 	s.mu.Unlock()
 	if envFor != nil {
 		cmd.Env = append(os.Environ(), envFor()...)
+	}
+	if tid, err := strconv.ParseInt(taskID, 10, 64); err == nil && tid > 0 {
+		if cmd.Env == nil {
+			cmd.Env = os.Environ()
+		}
+		for i, v := range cmd.Env {
+			key, value, ok := strings.Cut(v, "=")
+			if ok && (strings.EqualFold(key, "http_proxy") || strings.EqualFold(key, "https_proxy")) {
+				cmd.Env[i] = key + "=" + agent.ProxyURLForTask(value, tid)
+			}
+		}
 	}
 	// 与 agent Bash 同一套隔离：降权到 BLADEPRO_AGENT_USER + 清洗疑似凭据的环境变量
 	// （未启用时 no-op）。放在 env 拼好之后，清洗看到的就是子进程最终会拿到的那份。
@@ -158,26 +178,38 @@ func (s *ExecutionService) Submit(ctx context.Context, taskID string, intentID i
 		return len(p), nil
 	}))
 	cmd.Stdout, cmd.Stderr = w, w
+	s.mu.Lock()
+	if s.closing {
+		s.mu.Unlock()
+		logFile.Close()
+		_ = s.pg.FinishExecution(id, db.ExecCancelled, -1, 0, "", "执行服务正在关闭")
+		return agent.ExecStatus{}, fmt.Errorf("执行服务正在关闭")
+	}
 	if err := cmd.Start(); err != nil {
+		s.mu.Unlock()
 		logFile.Close()
 		_ = s.pg.FinishExecution(id, db.ExecFailed, -1, 0, "", "启动失败："+err.Error())
 		return agent.ExecStatus{}, err
 	}
+	s.live[id] = run
+	if timeout <= 0 {
+		timeout = execDefaultMaxAge
+	}
+	run.hardTimer = time.AfterFunc(timeout, func() {
+		run.hardKilled.Store(true)
+		killGroup(cmd)
+		run.graceTimer.Store(time.AfterFunc(execCancelGrace, func() {
+			select {
+			case <-run.done:
+			default:
+				hardKillGroup(cmd)
+			}
+		}))
+	})
+	s.mu.Unlock()
 	if err := s.pg.MarkExecutionRunning(id); err != nil {
 		log.Printf("[exec] %d 状态落 running 失败: %v", id, err)
 	}
-	if timeout > 0 {
-		run.hardTimer = time.AfterFunc(timeout, func() {
-			run.hardKilled.Store(true)
-			killGroup(cmd)
-			// SIGTERM 不是每个进程都听：宽限后强杀整组，兑现"硬超时上限"的承诺
-			// （否则僵住的进程会让台账一直挂在 running，收尾门也跟着悬着）。
-			time.AfterFunc(execCancelGrace, func() { hardKillGroup(cmd) })
-		})
-	}
-	s.mu.Lock()
-	s.live[id] = run
-	s.mu.Unlock()
 	goSafe("execution/reap", nil, func() { s.reap(run) })
 
 	row, _ := s.pg.GetExecution(id)
@@ -198,6 +230,13 @@ func (s *ExecutionService) Submit(ctx context.Context, taskID string, intentID i
 // reap waits for the process, lands the terminal state in the ledger, and fires onDone.
 func (s *ExecutionService) reap(run *execRun) {
 	err := run.cmd.Wait()
+	if errors.Is(err, exec.ErrWaitDelay) && run.cmd.ProcessState != nil && run.cmd.ProcessState.Success() {
+		err = nil
+	}
+	hardKillGroup(run.cmd)
+	if timer := run.graceTimer.Load(); timer != nil {
+		timer.Stop()
+	}
 	if run.hardTimer != nil {
 		run.hardTimer.Stop()
 	}
@@ -236,9 +275,8 @@ func (s *ExecutionService) reap(run *execRun) {
 	if ferr := s.pg.FinishExecution(run.id, status, exitCode, run.bytes.Load(), run.tail.String(), errMsg); ferr != nil {
 		log.Printf("[exec] %d 终态落库失败: %v", run.id, ferr)
 	}
-	close(run.done)
+	defer func() { s.mu.Lock(); delete(s.live, run.id); s.mu.Unlock(); close(run.done) }()
 	s.mu.Lock()
-	delete(s.live, run.id)
 	onDone := s.onDone
 	s.mu.Unlock()
 	log.Printf("[exec] %d 结束: %s exit=%d bytes=%d", run.id, status, exitCode, run.bytes.Load())
@@ -355,6 +393,43 @@ func (s *ExecutionService) Cancel(ctx context.Context, id int64, reason string) 
 	return false, nil
 }
 
+// Shutdown stops admission first and uses shared deadlines for all reapers.
+func (s *ExecutionService) Shutdown(wait time.Duration) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.closing = true
+	runs := make([]*execRun, 0, len(s.live))
+	for _, run := range s.live {
+		runs = append(runs, run)
+	}
+	s.mu.Unlock()
+	for _, run := range runs {
+		run.cancelled.Store(true)
+		_ = s.pg.SetExecutionCancelNote(run.id, "服务关闭")
+		killGroup(run.cmd)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
+	defer cancel()
+	for _, run := range runs {
+		select {
+		case <-run.done:
+		case <-ctx.Done():
+			hardKillGroup(run.cmd)
+		}
+	}
+	grace, stop := context.WithTimeout(context.Background(), execCancelGrace)
+	defer stop()
+	for _, run := range runs {
+		select {
+		case <-run.done:
+		case <-grace.Done():
+			return
+		}
+	}
+}
+
 // CancelAll cancels every in-flight execution of one task (task stop/delete).
 func (s *ExecutionService) CancelAll(taskID, reason string) int {
 	rows, err := s.pg.ListActiveExecutions(taskID)
@@ -421,19 +496,23 @@ func (s *ExecutionService) ReconcileOrphaned() int64 {
 
 // StartOrphanReconciler runs the periodic sweep (restart leftovers + lost goroutines).
 func (s *ExecutionService) StartOrphanReconciler(ctx context.Context) {
+	goSafe("execution/orphan-reconciler", nil, func() { s.runOrphanReconciler(ctx) })
+}
+func (s *ExecutionService) runOrphanReconciler(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
 	s.ReconcileOrphaned()
-	goSafe("execution/orphan-reconciler", nil, func() {
-		t := time.NewTicker(execReconcileGap)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				s.ReconcileOrphaned()
-			}
+	ticker := time.NewTicker(execReconcileGap)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.ReconcileOrphaned()
 		}
-	})
+	}
 }
 
 // toExecStatus 转换台账行到跨层快照；live 非空时以内存尾巴/字节数为准。
@@ -501,4 +580,36 @@ func execMaxActiveFromSettings(pg *db.DB) int {
 		return defaultExecMaxActive
 	}
 	return n
+}
+
+// ShutdownContext joins the service-owned reapers within the server's shared
+// deadline. On expiry it still kills every remaining group and reports them.
+func (s *ExecutionService) ShutdownContext(ctx context.Context) int64 {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	s.closing = true
+	runs := make([]*execRun, 0, len(s.live))
+	for _, r := range s.live {
+		runs = append(runs, r)
+	}
+	s.mu.Unlock()
+	for _, r := range runs {
+		r.cancelled.Store(true)
+		if ctx.Err() == nil {
+			_, _ = s.pg.ExecContext(ctx, `UPDATE tool_executions SET cancel_note='服务关闭' WHERE id=$1`, r.id)
+		}
+		killGroup(r.cmd)
+	}
+	var left int64
+	for _, r := range runs {
+		select {
+		case <-r.done:
+		case <-ctx.Done():
+			hardKillGroup(r.cmd)
+			left++
+		}
+	}
+	return left
 }

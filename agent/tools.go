@@ -49,6 +49,9 @@ func compactIntents(ns []*db.Node, parentsOf, yieldsOf map[int64][]int64) []map[
 		if ys := yieldsOf[n.ID]; len(ys) > 0 {
 			m["yields"] = ys // 下游：本意图产生了哪些事实/发现
 		}
+		if dep, ok := p["depends_on"]; ok && dep != nil {
+			m["depends_on"] = dep
+		}
 		out = append(out, m)
 	}
 	return out
@@ -88,7 +91,8 @@ type ToolSet struct {
 	// srcProber 由宿主注入（server）：确定性只读探针（P2）。nil = src_probe 报未接线。
 	srcProber SrcProber
 	// srcScreenshotter 由宿主注入（server）：headless 浏览器截图并落成证据产物。
-	srcScreenshotter SrcScreenshotter
+	srcScreenshotter  SrcScreenshotter
+	srcIdentityDiffer SrcIdentityDiffer
 	// intentsRound 计本 ToolSet 生命周期内成功创建的意图数 —— planner 每轮新建一个
 	// ToolSet，所以它天然是"本轮已用额度"。
 	intentsRound int
@@ -98,10 +102,11 @@ type ToolSet struct {
 	// ownerNode is the exploration node that writes attach to: assets this run
 	// touches get anchored to it as lineage/provenance (NOT visibility — the asset
 	// graph is global and shared). Worker = its claimed intent; planner = begin root.
-	ownerNode int64
-	GoalMet   bool
-	Reason    string
-	writes    WriteCounts
+	ownerNode     int64
+	ownerIsIntent bool
+	GoalMet       bool
+	Reason        string
+	writes        WriteCounts
 	// killWork, if set, terminates a running work by intent id (engine callback,
 	// wired by the planner). nil = the kill_work tool reports unavailable.
 	killWork func(intentID int64) error
@@ -181,18 +186,24 @@ type WriteCounts struct {
 	Credentials int
 	Detections  int
 	Artifacts   int
+	// SrcCells / SrcChecks are SRC coverage writes; Evidence counts host probe
+	// receipts and screenshots. They are exploration output too, so a run that
+	// only closes an SRC cell is not "no output".
+	SrcCells  int
+	SrcChecks int
+	Evidence  int
 }
 
 // Total is every node persisted this run, regardless of kind — the
 // "explored but persisted nothing" signal (Total == 0).
 func (w WriteCounts) Total() int {
-	return w.Facts + w.Assets + w.Findings + w.Footholds + w.Credentials + w.Detections + w.Artifacts
+	return w.Facts + w.Assets + w.Findings + w.Footholds + w.Credentials + w.Detections + w.Artifacts + w.SrcCells + w.SrcChecks + w.Evidence
 }
 
 // String renders the per-kind breakdown for logs, e.g. "事实1 资产25 漏洞0 据点1 凭据2".
 func (w WriteCounts) String() string {
-	return fmt.Sprintf("事实%d 资产%d 漏洞%d 据点%d 凭据%d 检测%d",
-		w.Facts, w.Assets, w.Findings, w.Footholds, w.Credentials, w.Detections)
+	return fmt.Sprintf("事实%d 资产%d 漏洞%d 据点%d 凭据%d 检测%d 覆盖格%d 收尾%d 证据%d",
+		w.Facts, w.Assets, w.Findings, w.Footholds, w.Credentials, w.Detections, w.SrcCells, w.SrcChecks, w.Evidence)
 }
 
 // Writes reports what this run wrote back, split by node kind (so the engine can
@@ -255,10 +266,10 @@ func (t *ToolSet) AppendSrcTools(tools []actool.CoreTool, role string) []actool.
 	switch role {
 	case "planner":
 		return append(tools, t.srcState(), t.srcFinishCheck(), t.srcMarkCell(), t.srcMarkCheck(),
-			t.srcPrepareSubmission(), t.srcDedupe(), t.srcProbeTool(), t.srcScreenshotTool(), t.srcNegativeTool())
+			t.srcPrepareSubmission(), t.srcDedupe(), t.srcProbeTool(), t.srcScreenshotTool(), t.srcIdentityDiffTool(), t.srcNegativeTool())
 	case "worker":
 		return append(tools, t.srcMarkCell(), t.srcMarkCheck(), t.srcState(),
-			t.srcPrepareSubmission(), t.srcDedupe(), t.srcProbeTool(), t.srcScreenshotTool(), t.srcNegativeTool())
+			t.srcPrepareSubmission(), t.srcDedupe(), t.srcProbeTool(), t.srcScreenshotTool(), t.srcIdentityDiffTool(), t.srcNegativeTool())
 	case "main":
 		// 主 agent 只读 + 可交付/定案；点格/点收尾项仍归 planner/worker，避免绕过覆盖判定。
 		return append(tools, t.srcState(), t.srcPrepareSubmission(), t.srcDedupe(), t.srcNegativeTool())
@@ -311,7 +322,20 @@ func (t *ToolSet) SetEnrich(e EnrichTrigger) { t.enrich = e }
 // SetOwnerNode sets the exploration node that writes anchor to (worker: its
 // intent node; planner/main: the begin root). Assets created/referenced while
 // ownerNode is set are anchored to it as lineage (not visibility).
-func (t *ToolSet) SetOwnerNode(id int64) { t.ownerNode = id }
+func (t *ToolSet) SetOwnerNode(id int64)   { t.ownerNode = id }
+func (t *ToolSet) SetOwnerIntent(id int64) { t.ownerNode = id; t.ownerIsIntent = id > 0 }
+func (t *ToolSet) writeIntentID(id int64) (int64, error) {
+	if !t.ownerIsIntent || t.ownerNode <= 0 {
+		return id, nil
+	}
+	if id <= 0 {
+		return t.ownerNode, nil
+	}
+	if id != t.ownerNode {
+		return 0, fmt.Errorf("写回必须属于当前意图 #%d，不能引用旧意图 #%d", t.ownerNode, id)
+	}
+	return id, nil
+}
 
 // SetExecService 注入长任务执行服务（P13）；nil 表示本运行环境不支持后台执行。
 func (t *ToolSet) SetExecService(svc ExecService) { t.execService = svc }
@@ -522,7 +546,12 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 	// planner reads them every round when generating intents (否则只写不读).
 	hints, _ := t.ts.ListByKind(db.KindHint, 50)
 	hsum := make([]map[string]any, 0, len(hints))
+	consumedHints := 0
 	for _, h := range hints {
+		if h.State != "active" {
+			consumedHints++
+			continue
+		}
 		var p map[string]any
 		_ = json.Unmarshal(h.Payload, &p)
 		hint := map[string]any{"id": h.ID, "state": h.State, "text": p["text"]}
@@ -532,6 +561,10 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 		hsum = append(hsum, hint)
 	}
 	out["hints"] = hsum
+	if consumedHints > 0 {
+		out["consumed_hints"] = consumedHints
+	}
+
 	// P23 公司级知识：同公司其它任务沉淀的已确认结论（只读背景）。**刻意不与本任务图混同**：
 	// "别的任务测过 X"不等于"本任务测过 X"，所以单独一段 + 一句说明，不参与本任务去重。
 	if ks := t.companyKnowledgeRows(); len(ks) > 0 {
@@ -602,7 +635,7 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 		switch n.State {
 		case "running":
 			running = append(running, n)
-		case "done", "negative", "out-of-scope", "blocked", "exhausted":
+		case "done", "negative", "out-of-scope", "blocked", "exhausted", "no_output":
 			if hidden(n.ID) {
 				continue // in a cold_digest and still cold — shown via cold_digests (§6.2)
 			}
@@ -957,7 +990,7 @@ func recentTerminalIntents(store *db.ExplorationStore, limit int) []*db.Node {
 		}
 		for _, intent := range page {
 			switch intent.State {
-			case "done", "negative", "out-of-scope", "blocked", "exhausted", "stopped":
+			case "done", "negative", "out-of-scope", "blocked", "exhausted", "stopped", "no_output":
 				out = append(out, intent)
 			}
 			if len(out) >= limit {
@@ -1179,7 +1212,7 @@ func (t *ToolSet) relatedTaskOverviews() []map[string]any {
 
 func inheritedIntentSummaryState(state string) bool {
 	switch state {
-	case "done", "negative", "out-of-scope", "blocked", "exhausted", "stopped":
+	case "done", "negative", "out-of-scope", "blocked", "exhausted", "stopped", "no_output":
 		return true
 	default:
 		return false
@@ -1441,6 +1474,10 @@ type intentItem struct {
 	// Recon=true 表示这是一条清点意图（抽 JS、枚举路径），在 recon_gate 打开时
 	// 允许先于 payload 意图执行。它不是覆盖格，不需要 src_mark_cell。
 	Recon bool `json:"recon"`
+	// DependsOn 是前置意图 id：只有全部了结后本条才可被领取。
+	DependsOn []json.RawMessage `json:"depends_on"`
+	// IdempotencyKey：同一任务重复提交同一方向时返回同一条意图。
+	IdempotencyKey string `json:"idempotency_key"`
 }
 
 // addOneIntent 创建一条意图节点并连上游血缘，返回 id 与一条可选的目标挂载提示。
@@ -1632,6 +1669,24 @@ func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, er
 			return 0, "", fmt.Errorf("战果节点 %d 当前状态是 %q（已失效）：不能按它派意图，请先确认它是否还能用", lid, n.State)
 		}
 	}
+	// 幂等键：重复提交返回已有意图，避免两条 worker 干同一件事。
+	idempotencyKey := strings.TrimSpace(it.IdempotencyKey)
+	if idempotencyKey != "" {
+		if existing, err := t.ts.IntentByIdempotencyKey(idempotencyKey); err == nil && existing > 0 {
+			return existing, "相同 idempotency_key 已存在，复用已有意图 #" + strconv.FormatInt(existing, 10), nil
+		}
+	}
+	// 前置依赖：必须是本任务的真实意图；失败/删除的前置需要先 unblock_intent。
+	dependsOn := pidList(it.DependsOn)
+	for _, dep := range dependsOn {
+		n, err := t.ts.GetNode(dep)
+		if err != nil || n == nil || n.Kind != db.KindIntent {
+			return 0, "", fmt.Errorf("depends_on 里的 %d 不是本任务的意图", dep)
+		}
+		if n.State == "deleted" || n.State == "stopped" {
+			return 0, "", fmt.Errorf("depends_on 里的意图 #%d 已被停止/删除：先 unblock_intent 或改派前置", dep)
+		}
+	}
 	priority := it.Priority
 	if priority == 0 {
 		priority = 5
@@ -1677,7 +1732,7 @@ func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, er
 	// worker 运行时——重复发包的根因是 planner 在同一格上换措辞连派多条意图。
 	leaseArea := ""
 	var leasedAssets []int64
-	if t.srcMode && t.srcStore != nil && t.taskID > 0 && len(anchors) > 0 {
+	if t.srcMode && t.srcStore != nil && t.taskID > 0 && len(anchors) > 0 && len(dependsOn) == 0 {
 		leaseArea = db.NormalizeRiskArea(it.RiskArea)
 		_, busy, err := t.srcStore.AcquireSrcLeases(context.Background(), t.taskID, anchors, leaseArea, 0, "planner", db.SrcLeaseTTL)
 		if err != nil {
@@ -1689,6 +1744,12 @@ func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, er
 		leasedAssets = anchors
 	}
 	payload := map[string]any{"summary": it.Summary, "risk_area": db.NormalizeRiskArea(it.RiskArea)}
+	if idempotencyKey != "" {
+		payload["idempotency_key"] = idempotencyKey
+	}
+	if len(dependsOn) > 0 {
+		payload["depends_on"] = dependsOn
+	}
 	if it.Recon {
 		payload["recon"] = true
 	}
@@ -1707,22 +1768,8 @@ func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, er
 	if len(anchors) > 0 {
 		payload["asset_ids"] = anchors
 	}
-	id, err := t.ts.AddIntent(payload, priority, anchors, "planner")
-	if err != nil {
-		if len(leasedAssets) > 0 {
-			_ = t.srcStore.ReleaseSrcLeasesByCells(context.Background(), t.taskID, leasedAssets, leaseArea)
-		}
-		return 0, "", err
-	}
-	if len(leasedAssets) > 0 {
-		if err := t.srcStore.BindSrcLeaseIntent(context.Background(), t.taskID, leasedAssets, leaseArea, id); err != nil {
-			// 绑定失败不撤销意图：租约仍能挡住重复派，只是 planner 看到的归属为空。
-			log.Printf("[src-lease] task %d 意图 #%d 绑定租约失败: %v", t.taskID, id, err)
-		}
-	}
-	q.round++
-	t.intentsRound++
 	// 目标轴：没显式指名时，恰有一个 open 目标就自动挂；多个不猜（回执提示）。
+	// 必须在建节点前确定，才能把 goal --spawns--> intent 与节点原子提交。
 	note := ""
 	if goalID == 0 {
 		if only, err := t.ts.SingleOpenGoal(); err == nil && only > 0 {
@@ -1741,29 +1788,45 @@ func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, er
 			}
 		}
 	}
+	var edges []db.IntentEdge
 	if goalID > 0 {
-		_, _ = t.ts.LinkIntentToGoal(goalID, id) // 校验已在前置完成；此处 best-effort
+		edges = append(edges, db.IntentEdge{Src: goalID, Rel: db.RelSpawns})
 	}
-	// upstream lineage: link each (validated) fact/finding parent → this intent, so
-	// "multiple facts combine into one new intent" is expressible.
 	for _, parent := range parents {
-		_ = t.ts.Link(parent, db.RelDerivedFrom, id)
+		edges = append(edges, db.IntentEdge{Src: parent, Rel: db.RelDerivedFrom})
 	}
-	// 战果轴：本意图在动用哪次已得的访问（意图 --uses--> 据点/凭据）。这条边是
-	// graph_overview 算出「哪些战果还没被推进过」的唯一依据——那是 planner 自己拿不到的信息：
-	// 它看得到战果**是什么**，但看不出哪一条**已经被别的意图接手了**。
 	for _, lid := range lootIDs {
-		_ = t.ts.Link(id, db.RelUses, lid)
+		edges = append(edges, db.IntentEdge{Dst: lid, Rel: db.RelUses})
 	}
-	// a top-level intent with NO goal edge connects to the origin fact, so every
-	// intent still traces back to a fact node — at task start the only fact is the
-	// origin, and the first intents derive from it. (With a goal edge the intent
-	// already reaches the origin through the goal.)
 	if len(parents) == 0 && goalID == 0 {
 		if origin, _ := t.ts.OriginFactID(); origin > 0 {
-			_ = t.ts.Link(origin, db.RelDerivedFrom, id)
+			edges = append(edges, db.IntentEdge{Src: origin, Rel: db.RelDerivedFrom})
 		}
 	}
+	id, err := t.ts.AddIntentGraph(payload, priority, anchors, "planner", edges)
+	if err != nil {
+		if len(leasedAssets) > 0 {
+			_ = t.srcStore.ReleaseSrcLeasesByCells(context.Background(), t.taskID, leasedAssets, leaseArea)
+		}
+		// A concurrent identical request may have won the unique index after our
+		// pre-check; return that intent instead of surfacing a storage error.
+		if idempotencyKey != "" {
+			if existing, lookupErr := t.ts.IntentByIdempotencyKey(idempotencyKey); lookupErr == nil && existing > 0 {
+				return existing, "相同 idempotency_key 已存在，复用已有意图 #" + strconv.FormatInt(existing, 10), nil
+			}
+		}
+		return 0, "", err
+	}
+	if len(leasedAssets) > 0 {
+		if err := t.srcStore.BindSrcLeaseIntent(context.Background(), t.taskID, leasedAssets, leaseArea, id); err != nil {
+			// 绑定失败不撤销意图：租约仍能挡住重复派，只是 planner 看到的归属为空。
+			log.Printf("[src-lease] task %d 意图 #%d 绑定租约失败: %v", t.taskID, id, err)
+		}
+	}
+	q.round++
+	q.open++
+	q.total++
+	t.intentsRound++
 	return id, note, nil
 }
 
@@ -1771,16 +1834,18 @@ func (t *ToolSet) addIntent() actool.CoreTool {
 	return t.writeExpTool("add_intent", "生成【探索方向】写入 frontier，并连入探索链路。意图是开放的探索方向，不是固定类型——用 summary 一句话自由描述要探索/验证/利用什么。\n"+
 		"★优先批量：一轮筛出的多个新方向放进 intents 数组一次提交（比逐条调用省往返）。返回 ids 数组，与 intents 等长同序（失败项 id=0，详情见 errors）。单条则省略 intents 直接给顶层 summary。",
 		obj(map[string]any{
-			"intents":       map[string]any{"type": "array", "description": "【优先用这个】要新增的探索方向数组，按顺序处理。每个元素字段同下方顶层字段（summary/asset_ids/parent_ids/priority/risk_area）。返回 ids 与本数组等长、同序。", "items": map[string]any{"type": "object"}},
-			"summary":       str("[单条] 一句话描述这个探索方向：做什么+为什么。已写清方向即可，不依赖资产 id。"),
-			"asset_ids":     map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "本方向要测试/攻击的【目标资产 id】（**尽量传**，0/1/多个；是 list_assets 返回的资产 id，不是探索节点 id）：这条探索方向针对哪些资产（站点/接口/参数/主机等）。只要方向围绕某些具体资产就务必传上——它是「这条探索打哪些目标」的结构化标记，用于覆盖去重、把意图连入资产链路。仅当纯全局侦察、确实没有具体目标资产时才留空。"},
-			"parent_ids":    map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "上游锚点 id（可选，0/1/多个）：本方向由哪些【已确认的事实(fact)/发现(finding)】综合得出。**只能填已存在的 fact/finding 节点 id,不能填意图/目标/提示**——意图必须锚在已确认知识上,发现驱动而非凭空规划。多个事实共同产生一个新意图就传多个;顶层全新侦察方向请留空（会自动挂到任务起点 origin fact）。"},
-			"goal_id":       idp("【目标归属】本条方向服务的目标 id（graph_overview 的 goals；可选）：挂上后链路图显示「目标→意图」，push 目标进度。省略时若本任务恰有一个未达成(open)目标会自动挂；有多个目标时请指名（不猜）。"),
-			"uses_loot_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "【本方向在动用哪次已得的访问】战果节点 id（graph_overview 的 footholds/credentials；可选，0/1/多个）：这条方向的立足点来自某个据点/某条凭据时**务必传**。它让系统能算出「哪些战果还没被推进过」——不传的话那条战果会一直显示为 outstanding，你也看不出它是否已经被别的意图接手了。"},
-			"priority":      intp("优先级 0-10，默认5"),
-			"recon":         map[string]any{"type": "boolean", "description": "是否是清点意图（抽 JS / 枚举路径）。recon_gate 开启时，未清点资产只接受 recon=true 的意图"},
-			"risk_area":     str("【覆盖矩阵键】本方向要打的风险类：sqli(注入) | xss | rce(命令执行/反序列化) | ssrf | ssti | xxe | idor(对象级越权) | authz(功能级越权) | auth(认证/会话) | logic(业务逻辑/竞态) | upload | traversal | disclosure | cache(缓存投毒/欺骗) | smuggling/desync(请求走私) | oauth(OAuth/OIDC) | graphql(GraphQL) | websocket(实时通道) | supply(第三方/供应链) | other。**尽量填写**——报告与覆盖度按「范围内资产 × 风险类」统计已测/未测成/未触及。"),
-			"techniques":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "【ATT&CK 技术 ID】本方向用到的技术，如 T1190(利用公开漏洞) / T1078(有效账户) / T1552.001(凭据文件) / T1021(远程服务)。可选但**尽量填**——红队交付物按 ATT&CK 组织，报告会据此汇总「本次作业覆盖了哪些技术」；不标就只剩一堆没有共同语言的方向描述。只写 ID（T#### 或 T####.###），不要写技术名。"},
+			"intents":         map[string]any{"type": "array", "description": "【优先用这个】要新增的探索方向数组，按顺序处理。每个元素字段同下方顶层字段（summary/asset_ids/parent_ids/priority/risk_area）。返回 ids 与本数组等长、同序。", "items": map[string]any{"type": "object"}},
+			"summary":         str("[单条] 一句话描述这个探索方向：做什么+为什么。已写清方向即可，不依赖资产 id。"),
+			"asset_ids":       map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "本方向要测试/攻击的【目标资产 id】（**尽量传**，0/1/多个；是 list_assets 返回的资产 id，不是探索节点 id）：这条探索方向针对哪些资产（站点/接口/参数/主机等）。只要方向围绕某些具体资产就务必传上——它是「这条探索打哪些目标」的结构化标记，用于覆盖去重、把意图连入资产链路。仅当纯全局侦察、确实没有具体目标资产时才留空。"},
+			"parent_ids":      map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "上游锚点 id（可选，0/1/多个）：本方向由哪些【已确认的事实(fact)/发现(finding)】综合得出。**只能填已存在的 fact/finding 节点 id,不能填意图/目标/提示**——意图必须锚在已确认知识上,发现驱动而非凭空规划。多个事实共同产生一个新意图就传多个;顶层全新侦察方向请留空（会自动挂到任务起点 origin fact）。"},
+			"goal_id":         idp("【目标归属】本条方向服务的目标 id（graph_overview 的 goals；可选）：挂上后链路图显示「目标→意图」，push 目标进度。省略时若本任务恰有一个未达成(open)目标会自动挂；有多个目标时请指名（不猜）。"),
+			"uses_loot_ids":   map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "【本方向在动用哪次已得的访问】战果节点 id（graph_overview 的 footholds/credentials；可选，0/1/多个）：这条方向的立足点来自某个据点/某条凭据时**务必传**。它让系统能算出「哪些战果还没被推进过」——不传的话那条战果会一直显示为 outstanding，你也看不出它是否已经被别的意图接手了。"},
+			"priority":        intp("优先级 0-10，默认5"),
+			"recon":           map[string]any{"type": "boolean", "description": "是否是清点意图（抽 JS / 枚举路径）。recon_gate 开启时，未清点资产只接受 recon=true 的意图"},
+			"depends_on":      map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "前置意图 id（可选）：全部了结前本条不会被领取；前置失败时用 unblock_intent 拆链"},
+			"idempotency_key": str("幂等键（可选）：同一任务重复提交同一方向时复用已有意图"),
+			"risk_area":       str("【覆盖矩阵键】本方向要打的风险类：sqli(注入) | xss | rce(命令执行/反序列化) | ssrf | ssti | xxe | idor(对象级越权) | authz(功能级越权) | auth(认证/会话) | logic(业务逻辑/竞态) | upload | traversal | disclosure | cache(缓存投毒/欺骗) | smuggling/desync(请求走私) | oauth(OAuth/OIDC) | graphql(GraphQL) | websocket(实时通道) | supply(第三方/供应链) | other。**尽量填写**——报告与覆盖度按「范围内资产 × 风险类」统计已测/未测成/未触及。"),
+			"techniques":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "【ATT&CK 技术 ID】本方向用到的技术，如 T1190(利用公开漏洞) / T1078(有效账户) / T1552.001(凭据文件) / T1021(远程服务)。可选但**尽量填**——红队交付物按 ATT&CK 组织，报告会据此汇总「本次作业覆盖了哪些技术」；不标就只剩一堆没有共同语言的方向描述。只写 ID（T#### 或 T####.###），不要写技术名。"},
 		}),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct {
@@ -1951,6 +2016,14 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 		if !db.ValidSeverity(strings.ToLower(strings.TrimSpace(a.Severity))) {
 			return actool.Errorf("severity 取值必须是 critical|high|medium|low"), nil
 		}
+		severity := strings.ToLower(strings.TrimSpace(a.Severity))
+		if (severity == "high" || severity == "critical") && strings.TrimSpace(a.Evidence) == "" {
+			return actool.Errorf("高危/严重发现必须提供证明；缺证应保留为待核验候选，不得降低严重度绕过门禁"), nil
+		}
+		ownerIntent, err := t.writeIntentID(pid(a.IntentID))
+		if err != nil {
+			return actool.Errorf(err.Error()), nil
+		}
 		// 影响面/定级建议（P1）：结构化字段只校验格式与长度，等级最终仍由人确认。
 		cwe, err := report.NormalizeCWEList(a.CWE)
 		if err != nil {
@@ -1992,7 +2065,7 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 			return actool.Errorf(err.Error()), nil
 		}
 		input := db.RecordFindingInput{
-			TaskID: t.taskID, ExplorationID: t.ts.ID(), IntentID: pid(a.IntentID),
+			TaskID: t.taskID, ExplorationID: t.ts.ID(), IntentID: ownerIntent,
 			VulnClass: a.VulnClass, Name: a.Name, Severity: strings.ToLower(strings.TrimSpace(a.Severity)),
 			Summary: a.Summary, Evidence: a.Evidence, Worker: t.worker, Confidence: a.Confidence,
 			AssetIDs: pidList(a.AssetIDs),
@@ -2094,9 +2167,9 @@ func (t *ToolSet) closeCandidate() actool.CoreTool {
 		if strings.TrimSpace(a.Candidate) == "" {
 			return actool.Errorf("candidate 不能为空：一句话写清被闭合的候选是什么"), nil
 		}
-		intentID := pid(a.IntentID)
-		if intentID <= 0 {
-			intentID = t.ownerNode
+		intentID, err := t.writeIntentID(pid(a.IntentID))
+		if err != nil {
+			return actool.Errorf(err.Error()), nil
 		}
 		rec, err := t.ts.RecordCandidateClosure(ctx, db.CandidateClosureInput{
 			TaskID: t.taskID, IntentID: intentID,
@@ -2152,6 +2225,11 @@ func (t *ToolSet) recordOneFact(it factItem, defaultIntent int64) (int64, error)
 	intent := pid(it.IntentID)
 	if intent <= 0 {
 		intent = defaultIntent
+	}
+	var err error
+	intent, err = t.writeIntentID(intent)
+	if err != nil {
+		return 0, err
 	}
 	if intent > 0 {
 		node, err := t.ts.GetNode(intent)
@@ -3026,6 +3104,81 @@ func (t *ToolSet) addHint() actool.CoreTool {
 		})
 }
 
+// unblockIntent clears prerequisites when a predecessor failed.
+func (t *ToolSet) unblockIntent() actool.CoreTool {
+	return t.writeExpTool("unblock_intent",
+		"拆掉一条排队意图的全部前置依赖，让它马上可被派发。用于前置失败/不再等待的情形；拆链后这条意图必须自己取得所需输入。",
+		obj(map[string]any{"intent_id": idp("要拆链的意图 id"), "reason": str("为什么不等前置（必填，进时间线）")}, "intent_id", "reason"),
+		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
+			var a struct {
+				IntentID json.RawMessage `json:"intent_id"`
+				Reason   string          `json:"reason"`
+			}
+			_ = json.Unmarshal(in, &a)
+			id := pid(a.IntentID)
+			if id <= 0 || strings.TrimSpace(a.Reason) == "" {
+				return actool.Errorf("intent_id 与 reason 必填"), nil
+			}
+			n, err := t.ts.GetNode(id)
+			if err != nil || n == nil || n.Kind != db.KindIntent || n.State != "open" {
+				return actool.Errorf("只能拆一条尚未被领取(open)的本任务意图"), nil
+			}
+			removed, err := t.ts.ClearIntentDependencies(id)
+			if err != nil {
+				return actool.Errorf(err.Error()), nil
+			}
+			return actool.Text(fmt.Sprintf("intent %d 已拆链（移除 %d 条前置），下一轮可派发。", id, removed)), nil
+		})
+}
+
+// dropIntent soft-deletes an unclaimed intent to relieve queue pressure.
+func (t *ToolSet) dropIntent() actool.CoreTool {
+	return t.writeExpTool("drop_intent",
+		"丢弃一条尚未开跑的排队意图（软删除，保留产出与血缘）。用于方向已被新事实覆盖或队列已满；先看再删。",
+		obj(map[string]any{"intent_id": idp("要丢弃的排队意图 id"), "reason": str("为什么丢弃（必填，进 delete_reason）")}, "intent_id", "reason"),
+		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
+			var a struct {
+				IntentID json.RawMessage `json:"intent_id"`
+				Reason   string          `json:"reason"`
+			}
+			_ = json.Unmarshal(in, &a)
+			id := pid(a.IntentID)
+			if id <= 0 || strings.TrimSpace(a.Reason) == "" {
+				return actool.Errorf("intent_id 与 reason 必填"), nil
+			}
+			summary, err := t.ts.SoftDeleteIntent(id, strings.TrimSpace(a.Reason))
+			if err != nil {
+				return actool.Errorf(err.Error()), nil
+			}
+			return actool.Text(fmt.Sprintf("dropped: intent %d（%s）", id, clipLine(summary, 60))), nil
+		})
+}
+
+// consumeHint marks a strategic hint as adopted, so it leaves future overviews.
+func (t *ToolSet) consumeHint() actool.CoreTool {
+	return t.writeExpTool("consume_hint",
+		"把一条已采纳的战略提示标记为 consumed：之后 graph_overview 不再重复列出它。采纳后把它落成意图或写进目标，再调用本工具。",
+		obj(map[string]any{"hint_id": idp("已采纳的提示节点 id（graph_overview 的 hints）")}, "hint_id"),
+		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
+			var a struct {
+				HintID json.RawMessage `json:"hint_id"`
+			}
+			_ = json.Unmarshal(in, &a)
+			id := pid(a.HintID)
+			if id <= 0 {
+				return actool.Errorf("hint_id 必填"), nil
+			}
+			ok, err := t.ts.ConsumeHint(id)
+			if err != nil {
+				return actool.Errorf(err.Error()), nil
+			}
+			if !ok {
+				return actool.Text(fmt.Sprintf("hint %d 已被采纳或不存在，无需重复处理。", id)), nil
+			}
+			return actool.Text(fmt.Sprintf("hint %d 已标记为已采纳。", id)), nil
+		})
+}
+
 // killWorkTool lets the planner terminate a single running work (by intent id).
 func (t *ToolSet) killWorkTool() actool.CoreTool {
 	return t.writeExpTool("kill_work", "终止一条正在运行的意图(work)。用于叫停跑偏/无意义的探索；被终止的意图标记为 stopped，不再自动重领。先用 get_worker_output 看看它在干嘛再决定。",
@@ -3110,7 +3263,7 @@ func (t *ToolSet) getWorkerOutput() actool.CoreTool {
 			if intentNode == nil || intentNode.Kind != db.KindIntent {
 				return actool.Errorf("intent_id 不属于本任务或其直接关联任务"), nil
 			}
-			acts, _, err := t.ts.ActivityListWithSources(id, 0, 1000)
+			acts, err := t.ts.ActivityTailWithSources(id, 200)
 			if err != nil {
 				return actool.Errorf(err.Error()), nil
 			}
@@ -3140,10 +3293,20 @@ func (t *ToolSet) getWorkerOutput() actool.CoreTool {
 			if detail == "" {
 				detail = pick.Summary
 			}
+			steps := make([]map[string]any, 0, 5)
+			for i := len(acts) - 1; i >= 0 && len(steps) < 5; i-- {
+				if acts[i].Kind == "tool_result" || acts[i].Kind == "text" {
+					steps = append([]map[string]any{{"kind": acts[i].Kind, "tool": acts[i].Tool, "summary": clipLine(acts[i].Summary, 160), "is_error": acts[i].IsError}}, steps...)
+				}
+			}
 			result := map[string]any{
 				"intent_id": id, "final_text": detail,
 				"summary": pick.Summary, "is_error": pick.IsError,
 			}
+			if len(steps) > 0 {
+				result["recent_steps"] = steps
+			}
+
 			if intentNode.Inherited {
 				inheritedMap(result, intentNode.SourceTaskID)
 			}
@@ -3360,7 +3523,7 @@ func (t *ToolSet) listWorkerTraces() actool.CoreTool {
 					continue
 				}
 				switch n.State {
-				case "running", "done", "exhausted", "blocked", "stopped": // has run → has a process
+				case "running", "done", "exhausted", "blocked", "stopped", "no_output": // has run → has a process
 				default:
 					continue
 				}
@@ -3390,7 +3553,7 @@ func (t *ToolSet) PlannerTools() []actool.CoreTool {
 		// cold-digest §6.1: restore folded cold nodes (digest body → members → detail).
 		t.expandDigest(),
 		t.getWorkerOutput(), t.getWorkerTrace(), t.searchAllWorkerTraces(), t.listGoals(), t.addIntent(), t.proveGoal(), t.goalMet(),
-		t.killWorkTool(), t.steerWorkTool(),
+		t.killWorkTool(), t.steerWorkTool(), t.unblockIntent(), t.dropIntent(), t.consumeHint(),
 		// P13 长任务执行：planner 可发起长扫描并复查在跑的执行（未接线时返回可读拒绝）。
 		t.runExecution(), t.waitExecution(), t.getExecution(), t.cancelExecution(),
 		// report_finding：规划态势研判时若自身已确证漏洞，可直接登记（与 worker 同工具）。

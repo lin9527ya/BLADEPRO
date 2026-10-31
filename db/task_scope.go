@@ -214,6 +214,9 @@ func (s *AssetStore) AddAgentScope(taskID int64, kind, value, reason, source str
 	default:
 		return ts, fmt.Errorf("不支持的 kind: %s（company/root_domain/subdomain/ip/cidr/icp/keyword）", kind)
 	}
+	if err := s.checkAgentSrcScope(ts); err != nil {
+		return ts, err
+	}
 	if err := s.upsertTaskScope(ts); err != nil {
 		return ts, err
 	}

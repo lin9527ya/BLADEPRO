@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/lin9527ya/Norma/agentcore"
 	"github.com/lin9527ya/Norma/hook"
@@ -33,6 +34,7 @@ type Planner struct {
 	// srcProber 由宿主注入：确定性只读探针（nil = src_probe 报未接线）。
 	srcProber         SrcProber
 	srcScreenshotter  SrcScreenshotter
+	srcIdentityDiffer SrcIdentityDiffer
 	prov              llm.Provider
 	model             string
 	tx                *transcript.Store                      // raw LLM conversation persistence (nil = off)
@@ -62,6 +64,7 @@ type Planner struct {
 	noaEnabledFn func() bool // resolver: use experimental noa compaction? (nil = off)
 	maxTokensFn  func() int  // resolver: per-reply output cap (nil/0 = send no cap)
 	compactor    *Compactor  // cold-node compaction (§7); nil = disabled
+	roundSeconds int         // per-round wall clock; 0 = unlimited
 
 	// todos keeps ONE plan-scratchpad per task (keyed by exploration id) so the
 	// planner's multi-step plan survives across wake-ups — each Plan() is a fresh
@@ -93,6 +96,10 @@ func (p *Planner) guardHooks() *hook.Registry {
 // planner wake-up to advance the round counter, maintain cold stamps, and
 // (off the hot path) fold cold nodes into digests. nil = feature disabled.
 func (p *Planner) SetCompactor(c *Compactor) { p.compactor = c }
+
+// SetRoundSeconds bounds one planner wake-up independently of the whole task
+// deadline. A long stuck round must not consume the task's entire budget.
+func (p *Planner) SetRoundSeconds(seconds int) { p.roundSeconds = seconds }
 
 // SetNonStreaming wires a resolver deciding whether runs use the non-streaming
 // model path (true = non-streaming). nil/unset = streaming (default).
@@ -461,6 +468,11 @@ func plannerStaticSystem(goal, dataDir, assetSummary string) string {
 // for time/heartbeat wakes). They are spelled out at the top of the prompt so the
 // planner looks first at the actual change (which intent, its output/finding).
 func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts *db.ExplorationStore, goal string, triggers []TriggerEvent, emit func(db.Activity)) (met bool, reason string, err error) {
+	if p.roundSeconds > 0 {
+		roundCtx, cancel := context.WithTimeout(ctx, time.Duration(p.roundSeconds)*time.Second)
+		defer cancel()
+		ctx = roundCtx
+	}
 	// cold-digest §2.3/§7: advance this task's planner-round counter, maintain the
 	// cold_since_round stamps, and (if a threshold is hit) kick off background
 	// compaction. Synchronous part is cheap (a few queries); the LLM compaction

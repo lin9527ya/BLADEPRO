@@ -41,26 +41,28 @@ type srcBatchEntry struct {
 	Warnings    []string `json:"warnings"`
 	Fingerprint string   `json:"fingerprint,omitempty"`
 	// DuplicateGroup >0 表示这条与同组其它发现疑似同一个洞（组号从 1 起）。
-	DuplicateGroup int  `json:"duplicate_group,omitempty"`
-	Included       bool `json:"included"`
+	DuplicateGroup int    `json:"duplicate_group,omitempty"`
+	Included       bool   `json:"included"`
+	SkipReason     string `json:"skip_reason,omitempty"`
 }
 
 type srcBatchPlan struct {
-	TaskID      string          `json:"task_id"`
-	TaskName    string          `json:"task_name"`
-	Goal        string          `json:"goal"`
-	GeneratedAt string          `json:"generated_at"`
-	Entries     []srcBatchEntry `json:"entries"`
-	Groups      [][]int64       `json:"duplicate_groups"`
-	Warnings    []string        `json:"warnings"`
-	Included    int             `json:"included"`
-	Skipped     int             `json:"skipped"`
+	TaskID         string          `json:"task_id"`
+	TaskName       string          `json:"task_name"`
+	Goal           string          `json:"goal"`
+	GeneratedAt    string          `json:"generated_at"`
+	SubmissionOnly bool            `json:"submission_only,omitempty"`
+	Entries        []srcBatchEntry `json:"entries"`
+	Groups         [][]int64       `json:"duplicate_groups"`
+	Warnings       []string        `json:"warnings"`
+	Included       int             `json:"included"`
+	Skipped        int             `json:"skipped"`
 	// Submissions 是本任务的提交台账（P2）：包里要带一份，人打开包就知道交到哪一步。
 	Submissions []db.SrcSubmission `json:"submissions,omitempty"`
 }
 
 // buildSrcBatch 组装交付计划：一次查完所有发现的绑定端点，据此算指纹与分组。
-func (s *Server) buildSrcBatch(ctx context.Context, t *Task) (*srcBatchPlan, error) {
+func (s *Server) buildSrcBatch(ctx context.Context, t *Task, submissionOnly bool) (*srcBatchPlan, error) {
 	rows, _, err := s.m.pg.ListFindingsPage(db.FindingFilter{TaskID: t.ID, Sort: "time"}, 1, 500)
 	if err != nil {
 		return nil, err
@@ -75,8 +77,18 @@ func (s *Server) buildSrcBatch(ctx context.Context, t *Task) (*srcBatchPlan, err
 	}
 	assets := s.resolveAssetIDsForFindings(rows)
 
+	// Submission packages only include findings that are currently ready and
+	// deduplication-decided; the default (audit) view still shows every finding.
+	delivery := map[int64]db.SrcDeliveryFinding{}
+	if submissionOnly {
+		if rows, err := s.m.PG().Src().SrcDeliveryFindings(ctx, tidOfTask(t)); err == nil {
+			for _, d := range rows {
+				delivery[d.FindingID] = d
+			}
+		}
+	}
 	plan := &srcBatchPlan{
-		TaskID:      t.ID,
+		TaskID: t.ID, SubmissionOnly: submissionOnly,
 		TaskName:    t.Name,
 		Goal:        t.Goal,
 		GeneratedAt: time.Now().Format("2006-01-02 15:04:05"),
@@ -106,6 +118,27 @@ func (s *Server) buildSrcBatch(ctx context.Context, t *Task) (*srcBatchPlan, err
 			Fingerprint: report.Fingerprint(f.VulnClass, refs),
 			Target:      srcTargetLabel(f, assets[f.ID], eps),
 			Included:    f.Status != db.FindingRetracted,
+		}
+		if submissionOnly {
+			entry.Included = false
+			entry.SkipReason = "未在当前可提交包中"
+			if d, ok := delivery[f.ID]; ok {
+				switch d.Status {
+				case db.FindingRetracted, db.FindingFalsePositive, db.FindingDuplicate, db.FindingRuledOut, db.FindingIgnored, db.FindingRiskAccepted, db.FindingFixed:
+					entry.SkipReason = "发现状态不提交：" + d.Status
+				case db.FindingOpenProofGap:
+					entry.SkipReason = "存疑待补证，不能提交"
+				default:
+					if !d.ReportReady {
+						entry.SkipReason = "报告未在当前证据版本通过交付校验"
+					} else if d.DedupeOf > 0 && d.SubmissionStatus != db.SrcSubDuplicate && d.SubmissionStatus != db.SrcSubWithdrawn {
+						entry.SkipReason = "疑似重复未定案"
+					} else {
+						entry.Included = true
+						entry.SkipReason = ""
+					}
+				}
+			}
 		}
 		if entry.Included {
 			plan.Included++
@@ -210,7 +243,8 @@ func (s *Server) getTaskSrcBatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "task not found")
 		return
 	}
-	plan, err := s.buildSrcBatch(r.Context(), t)
+	submissionOnly := r.URL.Query().Get("submission") == "1"
+	plan, err := s.buildSrcBatch(r.Context(), t, submissionOnly)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -224,7 +258,8 @@ func (s *Server) getTaskSrcReportZip(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "task not found")
 		return
 	}
-	plan, err := s.buildSrcBatch(r.Context(), t)
+	submissionOnly := r.URL.Query().Get("submission") == "1"
+	plan, err := s.buildSrcBatch(r.Context(), t, submissionOnly)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -390,7 +425,11 @@ func srcFileSlug(title, fallback string) string {
 // 交付封面，也是"哪些没进包、为什么"的唯一说明处。
 func srcBatchReadme(t *Task, plan *srcBatchPlan) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# 交付包说明 · %s\n\n", firstNonEmpty(t.Name, "任务 #"+t.ID))
+	title := "交付包说明"
+	if plan.SubmissionOnly {
+		title = "可提交包说明"
+	}
+	fmt.Fprintf(&b, "# %s · %s\n\n", title, firstNonEmpty(t.Name, "任务 #"+t.ID))
 	fmt.Fprintf(&b, "- 任务：#%s\n", t.ID)
 	if strings.TrimSpace(t.Goal) != "" {
 		fmt.Fprintf(&b, "- 目标：%s\n", oneLine(t.Goal))
@@ -398,7 +437,7 @@ func srcBatchReadme(t *Task, plan *srcBatchPlan) string {
 	fmt.Fprintf(&b, "- 生成时间：%s\n", plan.GeneratedAt)
 	fmt.Fprintf(&b, "- 发现：共 %d 条，进包 %d 条", len(plan.Entries), plan.Included)
 	if plan.Skipped > 0 {
-		fmt.Fprintf(&b, "，未进包 %d 条（已撤回，见下）", plan.Skipped)
+		fmt.Fprintf(&b, "，未进包 %d 条（见下）", plan.Skipped)
 	}
 	b.WriteString("\n\n")
 
@@ -438,6 +477,24 @@ func srcBatchReadme(t *Task, plan *srcBatchPlan) string {
 			fmt.Fprintf(&b, "- ⚠ %s\n", w)
 		}
 		b.WriteString("\n这些**不阻断导出**：交不交由人决定，平台只负责把缺什么说清楚。\n\n")
+	}
+
+	var skipped []srcBatchEntry
+	for _, e := range plan.Entries {
+		if !e.Included {
+			skipped = append(skipped, e)
+		}
+	}
+	if len(skipped) > 0 {
+		b.WriteString("## 未进包的发现\n\n")
+		for _, e := range skipped {
+			reason := e.SkipReason
+			if reason == "" {
+				reason = "已撤回"
+			}
+			fmt.Fprintf(&b, "- #%d %s：%s\n", e.ID, e.Title, reason)
+		}
+		b.WriteString("\n")
 	}
 
 	b.WriteString("## 三、疑似重复（同一漏洞被多次登记）\n\n")

@@ -39,6 +39,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { usePolling } from "@/hooks/use-polling";
 import { api } from "@/lib/api";
+import { taskIsTerminal } from "@/lib/status";
 import type { LLMProfile, Task } from "@/lib/types";
 
 import { ADPathsTab } from "./_tabs/ad-paths-tab";
@@ -95,7 +96,7 @@ function TaskLLMControl({ task, profiles, onUpdated }: { task: Task; profiles: L
   const exhausted = task.llm_failover_state === "chain_exhausted";
   // 任何状态都可以改链,终态也不例外:任务结束后主 Agent 对话仍走这条链,
   // 链上模型出问题时必须能换掉,否则已完成任务就没法继续交互。
-  const terminal = ["done", "failed", "timeout"].includes(task.status);
+  const terminal = taskIsTerminal(task.status);
   // A null active profile on an exhausted, non-empty chain is a persisted end
   // cursor. Keep the status display honest; choosing the first profile is only
   // the editor's reset draft and does not mean it is currently active.
@@ -222,6 +223,8 @@ function TaskDetailInner() {
   const [paused, setPaused] = React.useState(false);
   const [loaded, setLoaded] = React.useState(false);
   const [tab, setTab] = React.useState("sessions");
+  // SRC 任务首次打开默认进入 SRC 页签；用户手动选过页签后轮询不得抢回。
+  const [tabChosen, setTabChosen] = React.useState(false);
   const [interceptPendingCount, setInterceptPendingCount] = React.useState(0);
   const [profiles, setProfiles] = React.useState<LLMProfile[]>([]);
   const [archiving, setArchiving] = React.useState(false);
@@ -285,7 +288,7 @@ function TaskDetailInner() {
     if (!task) return;
     // 终态任务（done/failed/timeout）→「继续运行」：若 frontier 里还有从未执行的
     // 意图，后端会复活任务让 worker 重新领取；没有遗留时后端拒绝并给出提示。
-    const terminal = ["done", "failed", "timeout"].includes(task.status);
+    const terminal = taskIsTerminal(task.status);
     let action: "pause" | "resume" = "pause";
     if (terminal || paused) action = "resume";
     try {
@@ -312,6 +315,10 @@ function TaskDetailInner() {
     }
   }
 
+  React.useEffect(() => {
+    if (!tabChosen && task?.mode === "src") setTab("src");
+  }, [task?.mode, tabChosen]);
+
   if (!task) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 p-10 text-center">
@@ -327,7 +334,7 @@ function TaskDetailInner() {
     );
   }
 
-  const terminal = ["done", "failed", "timeout"].includes(task.status);
+  const terminal = taskIsTerminal(task.status);
   const archiveLifecycleEligible = terminal || paused || task.status === "paused";
   const canArchive = archiveLifecycleEligible && !task.archive_blocked_by_task_id;
   let archiveDisabledReason = task.queued ? "排队中的任务必须先暂停" : "运行中的任务必须先暂停";
@@ -361,7 +368,14 @@ function TaskDetailInner() {
   );
 
   return (
-    <Tabs value={tab} onValueChange={setTab} className="flex flex-1 flex-col gap-0">
+    <Tabs
+      value={tab}
+      onValueChange={(value) => {
+        setTabChosen(true);
+        setTab(value);
+      }}
+      className="flex flex-1 flex-col gap-0"
+    >
       {/* Top fixed area */}
       <header className="sticky top-0 z-10 flex flex-col gap-2 border-b bg-background/95 px-4 py-2.5 backdrop-blur lg:px-6">
         <div className="flex items-center gap-2">

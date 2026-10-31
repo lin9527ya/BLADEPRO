@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/lin9527ya/Norma/llm"
@@ -27,6 +28,8 @@ type Server struct {
 	m        *Manager
 	engine   *Engine
 	ctx      context.Context
+	cancel   context.CancelFunc
+	loops    backgroundLoops
 	sched    *Scheduler
 	skillDir string // root directory for skill subdirectories
 	side     *sideQuestionState
@@ -148,12 +151,13 @@ type triggeredRun struct {
 }
 
 func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDir string) *Server {
+	ctx, cancel := context.WithCancel(ctx)
 	key, err := loadOrCreateJWTKey(m.pg, keyDir, dataDir)
 	if err != nil {
 		log.Fatalf("[auth] JWT key: %v", err)
 	}
 	s := &Server{
-		m: m, engine: NewEngine(m), ctx: ctx, skillDir: skillDir,
+		m: m, engine: NewEngine(m), ctx: ctx, cancel: cancel, skillDir: skillDir,
 		chatRuns: chatState{
 			busy:   map[string]bool{},
 			cancel: map[string]context.CancelCauseFunc{},
@@ -175,6 +179,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	s.auth.jwtKeyPath = filepath.Join(keyDir, jwtKeyFilename)
 	s.installTrafficScopeGuard()
 	s.initSideQuestions()
+	s.engine.SetBaseContext(s.ctx)
 	// 熔断阈值/冷却是失败路径上的热参数，启动时把全局重试策略推给 Registry 一次；
 	// 之后每次保存策略再推一次（saveLLMRetryPolicy）。
 	s.applyRetryPolicy()
@@ -268,24 +273,42 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		if err := s.seedFindingRetester(); err != nil {
 			log.Printf("[retester] seed: %v", err)
 		}
-		goSafe("server/evidence-gc", nil, func() { s.evidenceStore().RunGC(s.ctx) })
+		if !testing.Testing() {
+			s.loops.start(func() { s.evidenceStore().RunGC(ctx) })
+		}
 		// 数据库侧的保留清理（llm_usage / activity / server_logs / llm_records）。
 		// 默认全 0 = 不清理，所以这里起 goroutine 不会删任何东西。
-		s.startRetentionSweeper(s.ctx)
+		if !testing.Testing() {
+			s.startRetentionSweeper(s.ctx)
+		}
 		s.seedPythonInterpreter() // 自定义脚本工具:开机检测 python 解释器入库(仅空时)
 		s.installMCPGuard()       // P24 外部 MCP 的并发上限 + 熔断（每调用现读设置）
 		// P35：把 Scheduler 存下来，让"停机时这一 tick 做了什么"可被断言（tickOnce）。
 		s.sched = newScheduler(s)
-		goSafe("server/scheduler", nil, func() { s.sched.Run(s.ctx) }) // P3 触发器调度(定时/finding/目标事件),仅自定义 agent
+		if !testing.Testing() {
+			s.loops.start(func() { s.sched.Run(ctx) })
+		} // P3 触发器调度(定时/finding/目标事件),仅自定义 agent
 		// 漏洞 IM 推送投递引擎。与 Scheduler 并列但独立：推送的实时性要求(3s)
 		// 与触发器的业务节奏不同，且两者失败互不牵连——推送卡住不该影响 agent 触发。
-		goSafe("server/notifier", nil, func() { newNotifier(s).Run(s.ctx) })
+		if !testing.Testing() {
+			s.loops.start(func() { newNotifier(s).Run(ctx) })
+		}
 		// SLA 提醒：每 6h 扫一次复核队列里的超时台账项，按项冷却 72h 后推任务告警。
-		goSafe("server/src-alerts", nil, func() { s.runSrcSLAAlerts(s.ctx) })
+		if !testing.Testing() {
+			s.loops.start(func() { s.runSrcSLAAlerts(ctx) })
+		}
 		// Fill the tool cache for any enabled MCP that has none yet (notably the
 		// seeded browser MCP on first run). Async so it never blocks startup.
-		goSafe("server/discover-mcps", nil, func() { s.discoverEmptyMCPsOnStartup() })
-		logSink.SetDB(ctx, m.pg) // restore last 100 log rows and enable async persistence
+		if !testing.Testing() {
+			s.loops.start(func() {
+				if ctx.Err() == nil {
+					s.discoverEmptyMCPsOnStartup()
+				}
+			})
+		}
+		if !testing.Testing() {
+			logSink.SetDB(ctx, m.pg)
+		} // restore last 100 log rows and enable async persistence
 	}
 	// precedence: persisted DB config > env.
 	if cfg, ok := s.loadLLMConfig(); ok {
@@ -307,7 +330,9 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	// 生产路径由 main 显式调用（重启后恢复任务）；测试构造服务器时因此不会被库里
 	// 遗留的未终态任务"劫持"：那些任务会真跑起来、把文件写进测试的临时工作目录，
 	// 与 t.TempDir() 的清理竞态（偶发 "directory not empty"）。
-	goSafe("server/reconcile-concurrency", nil, func() { s.reconcileConcurrency() })
+	if ctx.Err() == nil {
+		s.loops.start(func() { s.reconcileConcurrency() })
+	}
 	s.startTaskArchiveWorker()
 	s.wireInterceptReviewer() // LLM 兜底审批:未命中拦截规则的命令交给模型判定
 	return s
@@ -325,7 +350,7 @@ func (s *Server) RestoreTaskRuntimes() {
 	// P13：先把上一进程遗留的活跃执行对账成 orphaned（不是 failed——没有任何观察），
 	// 再拉起周期巡检；必须在任务循环启动前完成，否则收尾门会把这些僵尸行当成在跑。
 	if x := m.Executions(); x != nil {
-		x.StartOrphanReconciler(s.ctx)
+		s.loops.start(func() { x.runOrphanReconciler(s.ctx) })
 	}
 	// reload tasks persisted on disk so the task list survives a restart, and
 	// restore persisted paused state (so a task paused before restart stays paused).

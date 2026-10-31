@@ -10,6 +10,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/lin9527ya/bladepro/db"
 )
@@ -35,19 +36,36 @@ func srcRetestState(rows []*db.FindingRetest) (passed, active bool, lastComplete
 		if r == nil {
 			continue
 		}
-		switch r.Status {
-		case "pending", "running":
+		if r.Status == "pending" || r.Status == "running" {
 			active = true
-		case "completed":
-			if lastCompleted == "" {
-				lastCompleted = r.Verdict
-			}
-			if r.Verdict == "reproduced" {
-				passed = true
-			}
+		}
+		if r.Status == "completed" && lastCompleted == "" {
+			lastCompleted = r.Verdict
 		}
 	}
-	return passed, active, lastCompleted
+	// A newer failed/interrupted/active test is not evidence of reproducibility.
+	for _, r := range rows {
+		if r != nil {
+			passed = !active && r.Status == "completed" && r.Verdict == "reproduced"
+			break
+		}
+	}
+	return
+}
+
+func srcRetestCurrent(rows []*db.FindingRetest, f *db.DBFinding, now time.Time) bool {
+	passed, _, _ := srcRetestState(rows)
+	if !passed || f == nil {
+		return false
+	}
+	for _, r := range rows {
+		if r == nil {
+			continue
+		}
+		return r.EvidenceVersion == f.EvidenceVersion && r.EvidenceVersion >= 0 &&
+			r.FinishedAt != nil && !r.FinishedAt.After(now) && now.Sub(*r.FinishedAt) <= db.SrcEvidenceValidity
+	}
+	return false
 }
 
 // ensureSrcRetest 返回空串表示已通过；否则返回一段给交付台账 issue 的说明。
@@ -62,8 +80,11 @@ func (s *Server) ensureSrcRetest(ctx context.Context, f *db.DBFinding) string {
 		return "无法读取独立复验记录：" + err.Error()
 	}
 	passed, active, lastVerdict := srcRetestState(rows)
-	if passed {
+	if passed && srcRetestCurrent(rows, f, time.Now()) {
 		return ""
+	}
+	if passed {
+		return "独立复验针对旧证据版本或已过期，请重新发起复验"
 	}
 	if active {
 		return "已有独立复验在进行中；等结论 reproduced 后再准备交付件"

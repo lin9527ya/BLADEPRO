@@ -19,9 +19,11 @@ import (
 	"time"
 
 	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/srcmode"
 )
 
 var reviewKinds = map[string]bool{
+	"check_unverified":    true,
 	"report_missing":      true,
 	"retest_inconclusive": true,
 	"dedupe_pending":      true,
@@ -193,6 +195,36 @@ func (s *Server) applyReviewAction(ctx context.Context, action string, it review
 		return fmt.Errorf("缺少 ref_key")
 	}
 	switch it.Kind {
+	case "check_unverified":
+		if it.TaskID <= 0 || it.AssetID <= 0 || it.Item == "" {
+			return fmt.Errorf("缺少收尾项 task/asset/check_key")
+		}
+		row, err := s.m.pg.Src().GetSrcCheck(ctx, it.TaskID, it.AssetID, it.Item)
+		if err != nil {
+			return err
+		}
+		if row == nil {
+			return fmt.Errorf("收尾项不存在")
+		}
+		if err := srcmode.ValidateCheck(ctx, s.m.pg.Src(), it.TaskID, s.srcDocForTask(it.TaskID), *row); err != nil {
+			return err
+		}
+		switch action {
+		case "accept":
+			if err := s.m.pg.Src().ApproveSrcCheck(ctx, it.TaskID, it.AssetID, it.Item, it.RefKey, note); err != nil {
+				return err
+			}
+		case "reject", "retest":
+			if it.RefKey != fmt.Sprintf("check_unverified:%d:%d", row.ID, row.UpdatedAt.UnixNano()) {
+				return fmt.Errorf("收尾项已变化，请刷新")
+			}
+			if deleted, err := s.m.pg.Src().DeleteUnverifiedSrcCheck(ctx, *row); err != nil {
+				return err
+			} else if !deleted {
+				return fmt.Errorf("收尾项已变化，未删除")
+			}
+		}
+
 	case "report_missing", "retest_inconclusive", "dedupe_pending":
 		if it.FindingID <= 0 {
 			return fmt.Errorf("缺少 finding_id")

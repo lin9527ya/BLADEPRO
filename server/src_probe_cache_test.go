@@ -1,33 +1,42 @@
 package server
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/lin9527ya/bladepro/agent"
+	"github.com/lin9527ya/bladepro/srcmode"
 	"github.com/lin9527ya/bladepro/srcprobe"
 )
 
+func key(r agent.SrcProbeRequest, doc srcmode.ModeDoc) string { return srcProbeCacheKey(r, doc) }
+
 func TestSrcProbeCacheKey(t *testing.T) {
-	if got := srcProbeCacheKey(agent.SrcProbeRequest{Kind: srcprobe.KindPaths}); got != "paths:max=200" {
+	doc := srcmode.ModeDoc{}
+	if got := key(agent.SrcProbeRequest{Kind: srcprobe.KindPaths}, doc); !strings.HasSuffix(got, "paths:max=200") {
 		t.Fatalf("paths default key=%q", got)
 	}
-	if got := srcProbeCacheKey(agent.SrcProbeRequest{Kind: srcprobe.KindPaths, MaxPaths: 50}); got != "paths:max=50" {
+	if got := key(agent.SrcProbeRequest{Kind: srcprobe.KindPaths, MaxPaths: 50}, doc); !strings.HasSuffix(got, "paths:max=50") {
 		t.Fatalf("paths max key=%q", got)
 	}
-	if got := srcProbeCacheKey(agent.SrcProbeRequest{Kind: srcprobe.KindJS}); got != "js" {
+	if got := key(agent.SrcProbeRequest{Kind: srcprobe.KindJS}, doc); !strings.HasSuffix(got, ":js") {
 		t.Fatalf("js key=%q", got)
 	}
-	a := srcProbeCacheKey(agent.SrcProbeRequest{Kind: srcprobe.KindMethods, Endpoints: []string{"/b", "/a"}})
-	b := srcProbeCacheKey(agent.SrcProbeRequest{Kind: srcprobe.KindMethods, Endpoints: []string{"/a", "/b", "/a"}})
+	a := key(agent.SrcProbeRequest{Kind: srcprobe.KindMethods, Endpoints: []string{"/b", "/a"}}, doc)
+	b := key(agent.SrcProbeRequest{Kind: srcprobe.KindMethods, Endpoints: []string{"/a", "/b", "/a"}}, doc)
 	if a == "" || a != b {
 		t.Fatalf("methods key should be order/duplicate insensitive: %q vs %q", a, b)
 	}
-	c := srcProbeCacheKey(agent.SrcProbeRequest{Kind: srcprobe.KindMethods, Endpoints: []string{"/a"}})
+	c := key(agent.SrcProbeRequest{Kind: srcprobe.KindMethods, Endpoints: []string{"/a"}}, doc)
 	if a == c {
 		t.Fatal("methods key must change with endpoint set")
 	}
-	// non404 depends on the task's traffic; never cached.
-	if got := srcProbeCacheKey(agent.SrcProbeRequest{Kind: srcprobe.KindNon404}); got != "" {
+	if got := key(agent.SrcProbeRequest{Kind: srcprobe.KindNon404}, doc); got != "" {
 		t.Fatalf("non404 must not be cached, got %q", got)
+	}
+	// Rule changes must not reuse cached enumeration results.
+	changed := srcmode.ModeDoc{RateLimit: 1, CheckTier: "platform", CheckThresholds: map[string]int{"paths": 10}}
+	if a == key(agent.SrcProbeRequest{Kind: srcprobe.KindMethods, Endpoints: []string{"/b", "/a"}}, changed) {
+		t.Fatal("rule changes must invalidate the probe cache key")
 	}
 }

@@ -17,6 +17,37 @@ import (
 	"github.com/lin9527ya/bladepro/report"
 )
 
+// attachFindingEndpoints adds bound method/URL pairs to DTOs in one query.
+// Standalone finding ids are used because node ids are not traffic keys.
+func (s *Server) attachFindingEndpoints(dtos []FindingDTO) []FindingDTO {
+	idx := map[int64][]int{}
+	var ids []int64
+	for i, d := range dtos {
+		id, err := strconv.ParseInt(d.FindingID, 10, 64)
+		if err != nil || id <= 0 {
+			continue
+		}
+		idx[id] = append(idx[id], i)
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return dtos
+	}
+	byFinding, err := s.m.pg.FindingEndpoints(ids)
+	if err != nil {
+		return dtos
+	}
+	for id, eps := range byFinding {
+		for _, i := range idx[id] {
+			for _, e := range eps {
+				dtos[i].Endpoints = append(dtos[i].Endpoints, strings.TrimSpace(e.Method+" "+e.URL))
+				dtos[i].EndpointDetails = append(dtos[i].EndpointDetails, FindingEndpointDTO{Method: e.Method, URL: e.URL, Role: e.Role})
+			}
+		}
+	}
+	return dtos
+}
+
 func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 	// 无 task 参数 → 全局「发现」页：从独立 findings 表读取（任务删除后 finding 依然保留）。
 	// 带 task 参数 → 仅该任务（任务概览/发现 Tab 用），从 exploration_nodes 读（任务在则节点在）。
@@ -47,6 +78,7 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 		for _, f := range fs {
 			out = append(out, findingFromDB(f, assets))
 		}
+		out = s.attachFindingEndpoints(out)
 		writeJSON(w, 200, map[string]any{"items": out, "total": total, "page": page, "page_size": limit})
 		return
 	}
@@ -71,6 +103,7 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 	}
 	assets := s.resolveAssetIDs(aidSet)
 	out := findingDTOsForTask(t, f, meta, assets)
+	out = s.attachFindingEndpoints(out)
 
 	// Related-task findings are a live, read-only view. Provenance metadata lets
 	// the task UI suppress mutation affordances while retaining stable ids.

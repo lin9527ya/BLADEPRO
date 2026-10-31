@@ -38,7 +38,7 @@ func TestLootKindsReachPreExistingInstall(t *testing.T) {
 	const oldKind = `CHECK (kind IN ('begin','goal','intent','fact','finding','hint','digest'))`
 	const oldState = `CHECK (
             (kind='begin'   AND state IN ('open')) OR
-            (kind='intent'  AND state IN ('open','running','paused','done','negative','out-of-scope','blocked','exhausted','stopped','deleted')) OR
+            (kind='intent'  AND state IN ('open','running','paused','done','negative','out-of-scope','blocked','exhausted','stopped','no_output','deleted')) OR
             (kind='goal'    AND state IN ('open','met','abandoned')) OR
             (kind='fact'    AND state IN ('confirmed','dismissed','origin')) OR
             (kind='finding' AND state IN ('confirmed','dismissed','ruled_out','open_proof_gap')) OR

@@ -11,13 +11,17 @@ import (
 // Initialize an explicitly configured fresh database before taking the same
 // suite lock as db, agent and server. Hold it on one pinned connection.
 func TestMain(m *testing.M) {
-	if os.Getenv("BLADEPRO_PG_DSN") == "" {
+	if _, _, err := db.DSN(); err != nil {
 		os.Exit(m.Run())
 	}
 	os.Exit(runEvidenceSuite(m))
 }
 func runEvidenceSuite(m *testing.M) int {
-	pg, err := db.Open(os.Getenv("BLADEPRO_PG_DSN"))
+	dsn, _, err := db.DSN()
+	if err != nil {
+		panic(err)
+	}
+	pg, err := db.Open(dsn)
 	if err != nil {
 		panic(err)
 	}

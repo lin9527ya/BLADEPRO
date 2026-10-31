@@ -19,20 +19,12 @@ const DeliveryArea = "delivery"
 // exemptFindingStatuses 是"不需要交付"的发现状态：被推翻的结论不该进台账。
 var exemptFindingStatuses = map[string]bool{
 	db.FindingRetracted:     true,
+	db.FindingFixed:         true,
 	db.FindingFalsePositive: true,
 	db.FindingDuplicate:     true,
 	db.FindingRuledOut:      true,
 	db.FindingIgnored:       true,
 	db.FindingRiskAccepted:  true,
-}
-
-// submissionDelivered 是"这条已经有件了"的台账状态。
-var submissionDelivered = map[string]bool{
-	db.SrcSubReady:     true,
-	db.SrcSubSubmitted: true,
-	db.SrcSubAccepted:  true,
-	db.SrcSubPaid:      true,
-	db.SrcSubDuplicate: true,
 }
 
 // deliveryGapsFor 返回交付面缺口，并顺带统计 medium+ 发现数与报告已齐备数。
@@ -53,7 +45,7 @@ func deliveryGapsFor(ctx context.Context, store *db.SrcStore, taskID int64) (gap
 			continue
 		}
 		mediumPlus++
-		if f.ReportReady || submissionDelivered[f.SubmissionStatus] {
+		if f.ReportReady {
 			ready++
 		} else {
 			gaps = append(gaps, Gap{

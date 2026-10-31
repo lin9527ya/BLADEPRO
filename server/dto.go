@@ -418,7 +418,17 @@ type FindingDTO struct {
 	SourceTaskID    string            `json:"source_task_id,omitempty"`
 	Inherited       bool              `json:"inherited,omitempty"`
 	Assets          []FindingAssetDTO `json:"assets,omitempty"`
-	TS              string            `json:"ts"`
+	// Endpoints 是 "METHOD URL" 形式，供外部评测直接匹配；结构化明细见 endpoint_details。
+	Endpoints       []string             `json:"endpoints,omitempty"`
+	EndpointDetails []FindingEndpointDTO `json:"endpoint_details,omitempty"`
+	TS              string               `json:"ts"`
+}
+
+// FindingEndpointDTO is one bound traffic endpoint of a finding.
+type FindingEndpointDTO struct {
+	Method string `json:"method"`
+	URL    string `json:"url"`
+	Role   string `json:"role,omitempty"`
 }
 
 // FindingAssetDTO is one asset a finding is anchored to, pre-labelled for display.

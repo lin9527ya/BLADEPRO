@@ -182,6 +182,7 @@ func (s *Server) postTaskSrcCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
+		ProbeRunID     string         `json:"probe_run_id"`
 		AssetID        int64          `json:"asset_id"`
 		CheckKey       string         `json:"check_key"`
 		State          string         `json:"state"`
@@ -196,7 +197,8 @@ func (s *Server) postTaskSrcCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	store := s.m.PG().Src()
 	check := db.SrcCheck{
-		TaskID: taskID, AssetID: req.AssetID, CheckKey: strings.TrimSpace(req.CheckKey),
+		ProbeRunID: req.ProbeRunID,
+		TaskID:     taskID, AssetID: req.AssetID, CheckKey: strings.TrimSpace(req.CheckKey),
 		State: strings.TrimSpace(req.State), NACode: strings.TrimSpace(req.NACode),
 		Reason: strings.TrimSpace(req.Reason), Metrics: req.Metrics,
 		EvidenceNodeID: req.EvidenceNodeID, UpdatedBy: "human",
@@ -222,4 +224,25 @@ func (s *Server) postTaskSrcCheck(w http.ResponseWriter, r *http.Request) {
 		"checks_total": rep.ChecksTotal, "checks_done": rep.ChecksDone,
 		"finishable": rep.Finishable,
 	})
+}
+
+func (s *Server) getSrcProbeRun(w http.ResponseWriter, r *http.Request) {
+	task, _, id, ok := s.srcTask(w, r)
+	if task == nil {
+		return
+	}
+	if !ok {
+		writeErr(w, 400, "非 SRC 任务")
+		return
+	}
+	run, err := s.m.pg.Src().ProbeRun(r.Context(), id, r.PathValue("probe"))
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if run == nil {
+		writeErr(w, 404, "探针凭据不存在或不属于本任务")
+		return
+	}
+	writeJSON(w, 200, run)
 }

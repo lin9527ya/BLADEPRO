@@ -78,6 +78,10 @@ type ProgramRules struct {
 	// EgressIP / TestAccounts 是提交块字段。
 	EgressIP     string `json:"egress_ip,omitempty"`
 	TestAccounts string `json:"test_accounts,omitempty"`
+	// DeliveryReservePct 预留任务 token 预算给交付/复验（0–50，0=不预留）。
+	DeliveryReservePct int `json:"delivery_reserve_pct,omitempty"`
+	// TestIdentities 是平台授权的只读对照身份；只保存环境变量引用。
+	TestIdentities []TestIdentity `json:"test_identities,omitempty"`
 }
 
 // 平台等级（severity_map 的值域）。有些平台只有三档，有些有五档。
@@ -101,6 +105,14 @@ func (p *Program) Validate() error {
 	}
 	if err := validateTimeWindow(p.TimeWindow); err != nil {
 		return err
+	}
+	if len(p.Rules.TestIdentities) > 0 {
+		if err := ValidateTestIdentities(p.Rules.TestIdentities); err != nil {
+			return err
+		}
+	}
+	if p.Rules.DeliveryReservePct < 0 || p.Rules.DeliveryReservePct > 50 {
+		return fmt.Errorf("delivery_reserve_pct 需在 0–50 之间")
 	}
 	for _, tech := range p.Rules.ForbiddenTechniques {
 		if strings.TrimSpace(tech) == "" {
@@ -282,6 +294,16 @@ func (p *Program) ApplyToModeDoc(doc ModeDoc) ModeDoc {
 	if p.Rules.TestAccounts != "" {
 		out.TestAccounts = p.Rules.TestAccounts
 	}
+	if p.Rules.DeliveryReservePct > 0 {
+		out.DeliveryReservePct = p.Rules.DeliveryReservePct
+	}
+	if len(p.Rules.TestIdentities) > 0 {
+		if err := ValidateTestIdentities(p.Rules.TestIdentities); err != nil {
+			return out
+		}
+		out.TestIdentities = append([]TestIdentity(nil), p.Rules.TestIdentities...)
+	}
+	out.NoAutomation = out.NoAutomation || p.Rules.NoAutomation
 	if len(p.Rules.Redlines) > 0 {
 		out.PlatformRedlines = append(append([]string(nil), out.PlatformRedlines...), p.Rules.Redlines...)
 	}

@@ -251,18 +251,30 @@ func CheckFinish(ctx context.Context, store *db.SrcStore, taskID int64, doc Mode
 					addCheckGap(&gaps, &rep, asset, def, GapMissingCheck, "", "未做："+def.Hint, 0, assetMult)
 					continue
 				}
-				rep.ChecksDone++
 				if chk.InheritedFromTaskID > 0 {
 					rep.InheritedChecks++
 				}
+				if err := ValidateCheck(ctx, store, taskID, doc, chk); err != nil {
+					addCheckGap(&gaps, &rep, asset, def, GapMissingCheck, chk.State, "收尾证据/数字不达标："+err.Error(), chk.EvidenceNodeID, assetMult)
+					continue
+				}
 				switch chk.State {
 				case db.SrcCheckDone:
+					if err := store.CheckVerified(ctx, chk); err != nil {
+						addCheckGap(&gaps, &rep, asset, def, GapMissingEvidence, chk.State, err.Error(), chk.EvidenceNodeID, assetMult)
+						continue
+					}
+					rep.ChecksDone++
 					if ok, why := checkSatisfied(def, doc, chk.Metrics); !ok {
 						addCheckGap(&gaps, &rep, asset, def, GapMissingCheck, chk.State, "数字不达标："+why, chk.EvidenceNodeID, assetMult)
 					}
 				case db.SrcCheckNA:
+					rep.ChecksDone++
 					// 写入侧已校验理由码；N/A 是终态，不再报缺口。
 				case db.SrcCheckBudgetStop:
+					if doc.AllowBudgetStop {
+						rep.ChecksDone++
+					}
 					if !doc.AllowBudgetStop {
 						addCheckGap(&gaps, &rep, asset, def, GapBudgetStopBlocked, chk.State, chk.Reason, chk.EvidenceNodeID, assetMult)
 					}

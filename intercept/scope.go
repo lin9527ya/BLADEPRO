@@ -389,8 +389,8 @@ func (i *Interceptor) scopeRows(taskID int64) ([]db.TaskScope, error) {
 func (i *Interceptor) CheckScope(ctx context.Context, taskID int64, toolName string, input json.RawMessage) (Decision, bool) {
 	// 只判**动作类**工具（能对目标动手的那些）。停机期间读图、记事实这类仍然可用：
 	// 停的是"动手"，不是"看"——把人锁在平台外面没有任何安全收益。
-	cmd := shellCommandOf(toolName, input)
-	if cmd == "" {
+	cmd, action := i.actionSurface(toolName, input)
+	if !action {
 		return Decision{}, false
 	}
 	// ① 停机开关（P35）：刻意排在模式判定**之前**。它不是"授权范围的一档"，而是"现在就停"——
@@ -427,6 +427,20 @@ func (i *Interceptor) CheckScope(ctx context.Context, taskID int64, toolName str
 		}, true
 	}
 	// ③ 空间门。off = 不做空间判定；此时后面那些"无从判起"的降级（taskID==0）也就无从谈起了。
+	if taskID > 0 && i.db != nil {
+		mode, _, err := i.db.Src().TaskMode(ctx, taskID)
+		if err != nil {
+			return Decision{Action: "deny", RuleName: "[SRC] 授权", Message: "无法读取任务授权，拒绝动作"}, true
+		}
+		if mode == "src" {
+			for _, host := range ExtractTargets(cmd) {
+				ok, decidable, err := i.db.Src().SrcHostInScope(ctx, taskID, host)
+				if err != nil || !decidable || !ok {
+					return Decision{Action: "deny", RuleName: "[SRC] 授权", Message: "目标不在任务冻结授权范围：" + host}, true
+				}
+			}
+		}
+	}
 	mode := i.ScopeMode()
 	if mode == "off" {
 		return Decision{}, false

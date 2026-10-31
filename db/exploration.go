@@ -235,6 +235,62 @@ VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
 	return id, tx.Commit()
 }
 
+// IntentEdge is one lineage edge created atomically with a new intent. A zero
+// Src or Dst is replaced by the new intent id.
+type IntentEdge struct {
+	Src int64
+	Rel string
+	Dst int64
+}
+
+// AddIntentGraph creates the intent node, its asset anchors and every lineage
+// edge in one transaction. Callers must not publish partial lineage: a worker
+// can claim the node as soon as it exists.
+func (s *ExplorationStore) AddIntentGraph(payload map[string]any, priority int, anchors []int64, origin string, edges []IntentEdge) (int64, error) {
+	if origin == "" {
+		origin = "planner"
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return 0, err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	var id int64
+	if err := tx.QueryRow(`INSERT INTO exploration_nodes(exploration_id, kind, payload, priority, state, origin)
+VALUES ($1, 'intent', $2, $3, 'open', $4) RETURNING id`, s.expID, string(raw), priority, origin).Scan(&id); err != nil {
+		return 0, err
+	}
+	for _, a := range anchors {
+		if _, err := tx.Exec(`INSERT INTO exploration_anchors(node_id, asset_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, id, a); err != nil {
+			return 0, err
+		}
+	}
+	for _, e := range edges {
+		src, dst := e.Src, e.Dst
+		if src == 0 {
+			src = id
+		}
+		if dst == 0 {
+			dst = id
+		}
+		if src <= 0 || dst <= 0 || e.Rel == "" {
+			return 0, fmt.Errorf("invalid intent edge %+v", e)
+		}
+		if _, err := tx.Exec(`INSERT INTO exploration_edges(exploration_id, src_id, rel, dst_id)
+VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`, s.expID, src, e.Rel, dst); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
 // AddIntent is a convenience: an open intent.
 func (s *ExplorationStore) AddIntent(payload map[string]any, priority int, anchors []int64, origin string) (int64, error) {
 	if origin == "" {
@@ -446,7 +502,7 @@ WHERE exploration_id=$1 AND kind='intent' AND state='running'`, s.expID)
 	return n, nil
 }
 
-// ReopenIntent flips ONE not-successfully-finished intent (blocked/exhausted/stopped)
+// ReopenIntent flips ONE not-successfully-finished intent (blocked/exhausted/stopped/no_output)
 // back to 'open' so a worker re-claims it (graph writes it already produced stay).
 // The worker resumes from its prior LLM transcript instead of restarting from scratch.
 // done/open/running are left untouched. Returns whether a row changed. Used by "重跑".
@@ -454,7 +510,7 @@ func (s *ExplorationStore) ReopenIntent(id int64) (bool, error) {
 	res, err := s.db.Exec(`UPDATE exploration_nodes
 SET state='open', completed_at=NULL, blocked_reason=NULL
 WHERE id=$1 AND exploration_id=$2 AND kind='intent'
-  AND state IN ('blocked','exhausted','stopped')`, id, s.expID)
+  AND state IN ('blocked','exhausted','stopped','no_output')`, id, s.expID)
 	if err != nil {
 		return false, err
 	}
@@ -477,7 +533,7 @@ WHERE exploration_id=$1 AND kind='intent' AND state='blocked'`, s.expID)
 
 func (s *ExplorationStore) SetIntentState(id int64, state string) error {
 	// terminal states stamp completed_at; reopening (back to open/running) clears it.
-	terminal := state == "done" || state == "negative" || state == "out-of-scope" || state == "blocked" || state == "exhausted" || state == "stopped"
+	terminal := state == "done" || state == "negative" || state == "out-of-scope" || state == "blocked" || state == "exhausted" || state == "stopped" || state == "no_output"
 	_, err := s.db.Exec(`UPDATE exploration_nodes
 SET state=$1, blocked_reason=NULL, content_version=content_version+1,
     semantic_outcome = CASE WHEN $4 THEN semantic_outcome ELSE '' END,
@@ -982,7 +1038,7 @@ func (s *ExplorationStore) countByKindFiltered(kind, q string) (int, error) {
 func (s *ExplorationStore) CountFinishedIntents() (int, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM exploration_nodes
-WHERE exploration_id=$1 AND kind='intent' AND state IN ('done','negative','out-of-scope','blocked','exhausted')`, s.expID).Scan(&n)
+WHERE exploration_id=$1 AND kind='intent' AND state IN ('done','negative','out-of-scope','blocked','exhausted','no_output')`, s.expID).Scan(&n)
 	return n, err
 }
 
@@ -1324,7 +1380,7 @@ func (s *ExplorationStore) FindingIntentsTerminal() (map[int64]int64, error) {
 	JOIN exploration_nodes finding ON finding.id=e.dst_id AND finding.exploration_id=e.exploration_id
 	JOIN exploration_nodes intent ON intent.id=e.src_id AND intent.exploration_id=e.exploration_id
 	WHERE e.exploration_id=$1 AND e.rel=$2 AND finding.kind='finding'
-	  AND intent.kind='intent' AND intent.state IN ('done','negative','out-of-scope','blocked','exhausted','stopped')`, s.expID, RelYields)
+	  AND intent.kind='intent' AND intent.state IN ('done','negative','out-of-scope','blocked','exhausted','stopped','no_output')`, s.expID, RelYields)
 	if err != nil {
 		return nil, err
 	}
@@ -1347,6 +1403,12 @@ func (s *ExplorationStore) Frontier(limit int) ([]*Node, error) {
 	}
 	rows, err := s.db.Query(`SELECT `+nodeCols+` FROM exploration_nodes
 WHERE exploration_id=$1 AND kind='intent' AND state='open'
+  AND NOT EXISTS (
+      SELECT 1 FROM jsonb_array_elements_text(COALESCE(payload->'depends_on','[]'::jsonb)) dep
+      JOIN exploration_nodes dn ON dn.id = dep.value::bigint
+      WHERE dn.exploration_id=$1
+        AND dn.state NOT IN ('done','negative','out-of-scope','stopped','deleted')
+    )
 ORDER BY priority DESC, id ASC LIMIT $2`, s.expID, limit)
 	if err != nil {
 		return nil, err
@@ -1377,6 +1439,66 @@ WHERE exploration_id=$1 AND kind='goal' AND state='open')`, s.expID).Scan(&exist
 	return exists, err
 }
 
+// IntentByIdempotencyKey returns the existing intent for this key (0 = none).
+func (s *ExplorationStore) IntentByIdempotencyKey(key string) (int64, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return 0, nil
+	}
+	var id int64
+	err := s.db.QueryRow(`SELECT id FROM exploration_nodes
+WHERE exploration_id=$1 AND kind='intent' AND payload->>'idempotency_key'=$2
+ORDER BY id LIMIT 1`, s.expID, key).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return id, err
+}
+
+// ClearIntentDependencies removes every prerequisite from an open intent, so
+// the planner can deliberately proceed without a failed predecessor.
+func (s *ExplorationStore) ClearIntentDependencies(id int64) (int, error) {
+	if id <= 0 {
+		return 0, nil
+	}
+	res, err := s.db.Exec(`UPDATE exploration_nodes
+SET payload = payload - 'depends_on', content_version = content_version + 1
+WHERE id=$1 AND exploration_id=$2 AND kind='intent' AND state='open'
+  AND payload ? 'depends_on'`, id, s.expID)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// IntentPriorOutput reports whether this intent produced anything before the
+// current run. Continuation runs must not be judged "no output" when earlier
+// turns already yielded facts/findings.
+func (s *ExplorationStore) IntentPriorOutput(id int64) (bool, error) {
+	var ok bool
+	err := s.db.QueryRow(`SELECT
+EXISTS(SELECT 1 FROM exploration_edges WHERE exploration_id=$1 AND src_id=$2 AND rel='yields')
+OR EXISTS(SELECT 1 FROM activity WHERE exploration_id=$1 AND node_id=$2 AND kind='result')`,
+		s.expID, id).Scan(&ok)
+	return ok, err
+}
+
+// ConsumeHint marks an active hint consumed (idempotent). The planner calls
+// this after adopting a hint so it stops re-appearing in future overviews.
+func (s *ExplorationStore) ConsumeHint(id int64) (bool, error) {
+	if id <= 0 {
+		return false, nil
+	}
+	res, err := s.db.Exec(`UPDATE exploration_nodes SET state='consumed', content_version=content_version+1
+WHERE id=$1 AND exploration_id=$2 AND kind='hint' AND state='active'`, id, s.expID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // IntentLeaseTTL is the intent lease window: a running intent whose last heartbeat is
 // older than this is treated as a zombie (its worker hung or died) and reclaimed by the
 // task coordinator's watchdog. It must exceed the longest legitimate silent stretch of a
@@ -1389,7 +1511,13 @@ const IntentLeaseTTL = 15 * time.Minute
 func (s *ExplorationStore) ClaimIntent(id int64, owner string, ttl time.Duration) (bool, error) {
 	res, err := s.db.Exec(`UPDATE exploration_nodes SET state='running', owner=$1,
 heartbeat_at=now(), lease_expires_at=now()+($4 * interval '1 second')
-WHERE id=$2 AND exploration_id=$3 AND kind='intent' AND state='open'`, owner, id, s.expID, int64(ttl/time.Second))
+WHERE id=$2 AND exploration_id=$3 AND kind='intent' AND state='open'
+  AND NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements_text(COALESCE(payload->'depends_on','[]'::jsonb)) dep
+    JOIN exploration_nodes dn ON dn.id = dep.value::bigint
+    WHERE dn.exploration_id=$3
+      AND dn.state NOT IN ('done','negative','out-of-scope','stopped','deleted')
+  )`, owner, id, s.expID, int64(ttl/time.Second))
 	if err != nil {
 		return false, err
 	}
@@ -1910,6 +2038,73 @@ FROM activity WHERE exploration_id=$1 AND id>$2 ORDER BY id LIMIT $3`, s.expID, 
 	return out, cursor, rows.Err()
 }
 
+// ActivityTail returns the newest activities for one intent in ascending order.
+// Long runs exceed any head-page limit, so reading "the final conclusion" must
+// start from the tail.
+func (s *ExplorationStore) ActivityTail(nodeID int64, limit int) ([]Activity, error) {
+	if limit <= 0 || limit > 2000 {
+		limit = 200
+	}
+	const cols = `id, node_id, COALESCE(worker,''), COALESCE(kind,''), COALESCE(tool,''), COALESCE(tool_use_id,''), is_error, COALESCE(summary,''), metadata, created_at, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, main_seg`
+	rows, err := s.db.Query(`SELECT `+cols+` FROM activity
+WHERE exploration_id=$1 AND node_id=$2 ORDER BY id DESC LIMIT $3`, s.expID, nodeID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Activity{}
+	for rows.Next() {
+		var a Activity
+		if err := rows.Scan(&a.ID, &a.NodeID, &a.Worker, &a.Kind, &a.Tool, &a.ToolUseID, &a.IsError, &a.Summary, &a.Metadata, &a.CreatedAt,
+			&a.InputTokens, &a.OutputTokens, &a.CacheReadTokens, &a.CacheWriteTokens, &a.MainSeg); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, nil
+}
+
+// ActivityTailForTerminalIntent is the inherited-source equivalent: only a
+// terminal worker intent may expose its trace, and the tail is what matters.
+func (s *ExplorationStore) ActivityTailForTerminalIntent(nodeID int64, limit int) ([]Activity, error) {
+	if limit <= 0 || limit > 2000 {
+		limit = 200
+	}
+	const cols = `a.id, a.node_id, COALESCE(a.worker,''), COALESCE(a.kind,''), COALESCE(a.tool,''), COALESCE(a.tool_use_id,''), a.is_error, COALESCE(a.summary,''), a.created_at, a.input_tokens, a.output_tokens, a.cache_read_tokens, a.cache_write_tokens`
+	rows, err := s.db.Query(`SELECT `+cols+` FROM activity a
+JOIN exploration_nodes n ON n.id=a.node_id AND n.exploration_id=a.exploration_id
+WHERE a.exploration_id=$1 AND a.node_id=$2
+  AND n.kind='intent' AND n.state IN ('done','negative','out-of-scope','blocked','exhausted','stopped','no_output')
+  AND a.kind NOT IN ('thinking','usage')
+ORDER BY a.id DESC LIMIT $3`, s.expID, nodeID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Activity{}
+	for rows.Next() {
+		var a Activity
+		if err := rows.Scan(&a.ID, &a.NodeID, &a.Worker, &a.Kind, &a.Tool, &a.ToolUseID, &a.IsError, &a.Summary, &a.CreatedAt,
+			&a.InputTokens, &a.OutputTokens, &a.CacheReadTokens, &a.CacheWriteTokens); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, nil
+}
+
 // ActivityListForTerminalIntent is the inherited, incremental-read boundary.
 // The intent state check and activity read happen in one statement so a source
 // intent reopened between API-level checks cannot expose its new in-flight trace.
@@ -1924,7 +2119,7 @@ func (s *ExplorationStore) ActivityListForTerminalIntent(nodeID, sinceID int64, 
 	FROM activity a
 	JOIN exploration_nodes n ON n.id=a.node_id AND n.exploration_id=a.exploration_id
 	WHERE a.exploration_id=$1 AND a.node_id=$2 AND a.id>$3
-	  AND n.kind='intent' AND n.state IN ('done','negative','out-of-scope','blocked','exhausted','stopped')
+	  AND n.kind='intent' AND n.state IN ('done','negative','out-of-scope','blocked','exhausted','stopped','no_output')
 	  AND a.kind NOT IN ('thinking','usage')
 	ORDER BY a.id LIMIT $4`, s.expID, nodeID, sinceID, limit)
 	if err != nil {
@@ -2045,7 +2240,7 @@ func (s *ExplorationStore) ActivityPageForTerminalIntent(nodeID, before int64, l
 	FROM activity a
 	JOIN exploration_nodes n ON n.id=a.node_id AND n.exploration_id=a.exploration_id
 	WHERE a.exploration_id=$1 AND a.node_id=$2
-	  AND n.kind='intent' AND n.state IN ('done','negative','out-of-scope','blocked','exhausted','stopped')
+	  AND n.kind='intent' AND n.state IN ('done','negative','out-of-scope','blocked','exhausted','stopped','no_output')
 	  AND a.kind NOT IN ('thinking','usage')
 	  AND ($3 <= 0 OR a.id < $3)
 	ORDER BY a.id DESC LIMIT $4`, s.expID, nodeID, before, limit+1)
@@ -2195,7 +2390,7 @@ func (s *ExplorationStore) ActivityTraceForTerminalIntent(nodeID int64, limit in
 	FROM activity a
 	JOIN exploration_nodes n ON n.id=a.node_id AND n.exploration_id=a.exploration_id
 	WHERE a.exploration_id=$1 AND a.node_id=$2 AND n.kind='intent'
-	  AND n.state IN ('done','negative','out-of-scope','blocked','exhausted','stopped')
+	  AND n.state IN ('done','negative','out-of-scope','blocked','exhausted','stopped','no_output')
 	  AND a.kind NOT IN ('thinking','usage')
 	ORDER BY a.id LIMIT $3`, s.expID, nodeID, limit)
 	if err != nil {
@@ -2243,7 +2438,7 @@ func (s *ExplorationStore) ActivityTraceSearchForTerminalIntent(nodeID int64, q 
 	FROM activity a
 	JOIN exploration_nodes n ON n.id=a.node_id AND n.exploration_id=a.exploration_id
 	WHERE a.exploration_id=$1 AND a.node_id=$2 AND n.kind='intent'
-	  AND n.state IN ('done','negative','out-of-scope','blocked','exhausted','stopped')
+	  AND n.state IN ('done','negative','out-of-scope','blocked','exhausted','stopped','no_output')
 	  AND a.kind NOT IN ('thinking','usage')
 	  AND (a.summary ILIKE $3 OR a.detail ILIKE $3)
 	ORDER BY a.id LIMIT $4`, s.expID, nodeID, like, limit)
@@ -2265,7 +2460,7 @@ func (s *ExplorationStore) ActivityTraceSearchTerminalIntents(q string, limit in
 	FROM activity a
 	JOIN exploration_nodes n ON n.id=a.node_id AND n.exploration_id=a.exploration_id
 	WHERE a.exploration_id=$1 AND n.kind='intent'
-	  AND n.state IN ('done','negative','out-of-scope','blocked','exhausted','stopped')
+	  AND n.state IN ('done','negative','out-of-scope','blocked','exhausted','stopped','no_output')
 	  AND a.kind NOT IN ('thinking','usage')
 	  AND (a.summary ILIKE $2 OR a.detail ILIKE $2)
 	ORDER BY a.id LIMIT $3`, s.expID, like, limit)
@@ -2396,7 +2591,7 @@ func (s *ExplorationStore) ActivityByIDsForTerminalIntents(ids []int64) ([]Activ
 	FROM activity a
 	JOIN exploration_nodes n ON n.id=a.node_id AND n.exploration_id=a.exploration_id
 		WHERE a.exploration_id=$1 AND a.kind NOT IN ('thinking','usage') AND n.kind='intent'
-	  AND n.state IN ('done','negative','out-of-scope','blocked','exhausted','stopped')
+	  AND n.state IN ('done','negative','out-of-scope','blocked','exhausted','stopped','no_output')
 	  AND a.id IN (`+strings.Join(ph, ",")+`) ORDER BY a.id`, args...)
 	if err != nil {
 		return nil, err

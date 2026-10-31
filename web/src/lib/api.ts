@@ -854,10 +854,11 @@ export const api = {
   },
 
   // P19 批量交付：先取交付计划（清单/证据门/疑似重复），再下载整包。
-  taskSrcBatch: (id: string) => get<TaskSrcBatchPlan>(`/tasks/${id}/src-batch`),
-  downloadTaskSrcZip: async (id: string) => {
+  taskSrcBatch: (id: string, submissionOnly = false) =>
+    get<TaskSrcBatchPlan>(`/tasks/${id}/src-batch${submissionOnly ? "?submission=1" : ""}`),
+  downloadTaskSrcZip: async (id: string, submissionOnly = false) => {
     const token = getToken();
-    const r = await fetch(`/api/tasks/${id}/src-report.zip`, {
+    const r = await fetch(`/api/tasks/${id}/src-report.zip${submissionOnly ? "?submission=1" : ""}`, {
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     });
     if (!r.ok) throw new Error(`导出失败: ${r.status}`);

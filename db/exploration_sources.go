@@ -267,6 +267,37 @@ func (s *ExplorationStore) ActivityListWithSources(nodeID, sinceID int64, limit 
 	return []Activity{}, sinceID, nil
 }
 
+// ActivityTailWithSources returns the newest activities for an intent, local or
+// inherited (a terminal source intent only).
+func (s *ExplorationStore) ActivityTailWithSources(nodeID int64, limit int) ([]Activity, error) {
+	node, err := s.GetNode(nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if node != nil {
+		return s.ActivityTail(nodeID, limit)
+	}
+	sources, err := s.DirectSourceStores()
+	if err != nil {
+		return nil, err
+	}
+	for _, source := range sources {
+		node, err = source.Store.GetNode(nodeID)
+		if err != nil {
+			return nil, err
+		}
+		if node == nil || node.Kind != KindIntent {
+			continue
+		}
+		acts, err := source.Store.ActivityTailForTerminalIntent(nodeID, limit)
+		if err != nil {
+			return nil, err
+		}
+		return markInheritedActivities(acts, source.Task.TaskID), nil
+	}
+	return []Activity{}, nil
+}
+
 // ActivityDetailWithSources keeps the legacy local-task lookup (including local
 // thinking rows), while inherited details are restricted to terminal worker
 // intents. Source planner/main rows have no node id and must never become part of

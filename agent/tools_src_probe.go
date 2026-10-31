@@ -35,7 +35,7 @@ func (t *ToolSet) srcProbeTool() actool.CoreTool {
 			"  js      —— 抽首页的内联脚本、同 host 外链 JS、chunk 与 sourcemap；结果给 js_inline/js_external/js_chunks/sourcemap。\n"+
 			"  methods —— 对 endpoints（默认资产 URL）测 GET/HEAD/OPTIONS，记录状态与 Allow；状态变更方法不自动发。\n"+
 			"  non404  —— 对本任务流量里该 host 的非 404 路由慢速复测 2 次；结果给 non404/retested。\n"+
-			"返回的 metrics 与 src_mark_check 的指标同名，可直接用于登记收尾项；探针不会自动点格。\n"+
+			"返回 metrics、probe_run_id、evidence_node_id；登记收尾项必须引用同一次可信执行凭据。缓存只作历史提示，需 force=true 获得当前任务的新鲜凭据。探针不会自动点格。\n"+
 			"paths/js/methods 的结果按资产缓存 12h（跨任务复用），返回 cached=true 时是历史结果；需要新鲜数据传 force=true。",
 		obj(map[string]any{
 			"asset_id":  intp("要探测的资产 id（来自 src_state / list_assets）"),
@@ -77,6 +77,7 @@ func (t *ToolSet) srcProbeTool() actool.CoreTool {
 			if err != nil {
 				return actool.Errorf("探针失败：" + err.Error()), nil
 			}
+			t.writes.Evidence++
 			return jsonResult(map[string]any{
 				"probe":   res,
 				"metrics": res.Metrics,

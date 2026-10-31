@@ -3,16 +3,20 @@ package evidence
 import (
 	"bytes"
 	"context"
+	"image"
+	"image/png"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/lin9527ya/bladepro/db"
 )
 
 func TestPutAndOpenArtifact(t *testing.T) {
-	dsn := os.Getenv("BLADEPRO_PG_DSN")
-	if dsn == "" {
+	dsn, _, err := db.DSN()
+	if err != nil {
 		t.Skip("BLADEPRO_PG_DSN is required for evidence integration tests")
 	}
 	pg, err := db.Open(dsn)
@@ -27,7 +31,11 @@ func TestPutAndOpenArtifact(t *testing.T) {
 	t.Cleanup(func() { _ = pg.DeleteTask(task.ID) })
 	store := New(pg, nil, t.TempDir())
 	// 最小 PNG 头足够让 mime 嗅探命中 image/png。
-	payload := append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{0}, 128)...)
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		t.Fatal(err)
+	}
+	payload := encoded.Bytes()
 	ctx := context.Background()
 	a, err := store.PutArtifact(ctx, db.EvidenceArtifact{
 		TaskID: task.ID, Kind: "screenshot", Filename: "shot.png",
@@ -51,5 +59,41 @@ func TestPutAndOpenArtifact(t *testing.T) {
 		TaskID: task.ID, Kind: "screenshot", SHA256: "deadbeef",
 	}, bytes.NewReader(payload)); err == nil {
 		t.Fatal("wrong sha256 should be rejected")
+	}
+}
+
+func TestArtifactReadRejectsCorruptionAndFakeImage(t *testing.T) {
+	dsn, _, err := db.DSN()
+	if err != nil {
+		t.Skip("isolated DB required")
+	}
+	pg, err := db.Open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pg.Close()
+	task, err := pg.CreateTask("artifact integrity", "fixture", nil, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pg.DeleteTask(task.ID)
+	store := New(pg, nil, t.TempDir())
+	if _, err := store.PutArtifact(t.Context(), db.EvidenceArtifact{TaskID: task.ID, Kind: "screenshot", MIME: "image/png"}, strings.NewReader("not an image")); err == nil {
+		t.Fatal("fake MIME accepted as screenshot")
+	}
+	var imageData bytes.Buffer
+	if err := png.Encode(&imageData, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := store.PutArtifact(t.Context(), db.EvidenceArtifact{TaskID: task.ID, Kind: "screenshot"}, bytes.NewReader(imageData.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(store.Dir, "artifacts", artifact.SHA256+".bin")
+	if err := os.WriteFile(path, []byte("corrupted"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.OpenArtifact(t.Context(), artifact.ID); err == nil {
+		t.Fatal("corrupt artifact was downloadable")
 	}
 }

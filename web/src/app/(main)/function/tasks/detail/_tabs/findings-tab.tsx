@@ -212,10 +212,10 @@ export function FindingsTab({ taskId }: { taskId: string }) {
     }
   };
 
-  const downloadZip = async () => {
+  const downloadZip = async (submissionOnly = false) => {
     setBatchBusy(true);
     try {
-      await api.downloadTaskSrcZip(taskId);
+      await api.downloadTaskSrcZip(taskId, submissionOnly);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "打包失败");
     } finally {
@@ -246,6 +246,9 @@ export function FindingsTab({ taskId }: { taskId: string }) {
             </Button>
             <Button size="sm" disabled={batchBusy || included.length === 0} onClick={() => void downloadZip()}>
               <DownloadIcon className="size-3.5" /> 下载交付包（zip）
+            </Button>
+            <Button size="sm" variant="outline" disabled={batchBusy} onClick={() => void downloadZip(true)}>
+              <DownloadIcon className="size-3.5" /> 下载可提交包（zip）
             </Button>
             {batch ? (
               <span className="text-muted-foreground text-xs">

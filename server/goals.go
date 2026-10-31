@@ -59,6 +59,12 @@ func (s *Server) launchTask(t *Task, seedText string, seedFirstIntent bool) {
 }
 
 func (s *Server) startTaskEngine(t *Task) {
+	if t != nil && t.Mode == srcmode.ModeSrc && srcmode.Parse(t.ModeDoc).RequireIsolation && !AgentIsolationEnabled() {
+		s.engine.emitActivity(t, db.Activity{Worker: "system", Kind: "system", IsError: true, Summary: "任务要求隔离运行，当前实例未启用隔离，拒绝启动"})
+		_ = s.m.SetTaskStatus(t.ID, "paused")
+		return
+	}
+
 	// 任务级出站 QPS：SRC 程序规则的 rate_limit 在代理层也生效，与全局/单 host
 	// 令牌桶叠加。任务启动/恢复时重新安装，规则快照不变则幂等。
 	if t != nil && strings.TrimSpace(t.Mode) == srcmode.ModeSrc {

@@ -406,6 +406,16 @@ func (e *Engine) settleTask(ctx context.Context, t *Task, why string, fallback s
 	// 守卫(SetTaskStatusGuarded)会拒绝覆盖,保留 completed 语义。
 	// SRC 任务的 done 由收尾门判定：终局轮说 met 但覆盖格没清零时落 fallback（timeout /
 	// policy_blocked），不能因为"时间到了"就绕过门。
+	if met && t.Mode == srcmode.ModeSrc {
+		won, err := e.completeSrcTask(ctx, t)
+		if err != nil {
+			log.Printf("[deadline] SRC 原子收官失败: %v", err)
+		}
+		if won {
+			return
+		}
+		met = false
+	}
 	status := e.settledStatus(ctx, t, met, fallback)
 	won, err := e.m.SetTaskStatusGuarded(t.ID, status)
 	switch {

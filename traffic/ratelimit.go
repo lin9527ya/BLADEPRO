@@ -11,6 +11,7 @@ package traffic
 // 把目标打挂/触发平台风控，不是让 agent 的任务无故失败。
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"sync"
@@ -113,18 +114,27 @@ func (g *egressGovernor) hostBucket(host string) *tokenBucket {
 	return b
 }
 
-func (g *egressGovernor) wait(host string) {
+func (g *egressGovernor) wait(host string) { _ = g.waitLimited(host, false) }
+
+func (g *egressGovernor) waitLimited(host string, strict bool) error {
 	deadline := time.Now().Add(g.limits.MaxWait)
 	if g.limits.HostQPS > 0 && host != "" {
 		if !g.hostBucket(host).take(deadline) {
+			if strict {
+				return fmt.Errorf("任务出站排队超时")
+			}
 			g.waived.Add(1)
 		}
 	}
 	if g.global != nil {
 		if !g.global.take(deadline) {
+			if strict {
+				return fmt.Errorf("任务出站排队超时")
+			}
 			g.waived.Add(1)
 		}
 	}
+	return nil
 }
 
 // SetEgressLimits installs (or clears, when both QPS are <= 0) the runtime
@@ -192,24 +202,26 @@ func (t *Traffic) ClearTaskQPS(taskID int64) {
 
 // waitEgress blocks per the current limits. Nil governor + no task bucket = off,
 // so the proxy is unchanged unless the operator configured a rate.
-func (t *Traffic) waitEgress(host string, taskID int64) {
+func (t *Traffic) waitEgress(host string, taskID int64) error {
 	if t == nil {
-		return
+		return nil
 	}
 	host = strings.ToLower(strings.TrimSpace(host))
+	bucket, strict := t.taskBuckets.Load(taskID)
 	g := t.rate.Load()
 	if g != nil {
-		g.wait(host)
-	}
-	if taskID > 0 {
-		if v, ok := t.taskBuckets.Load(taskID); ok {
-			deadline := time.Now().Add(defaultEgressMaxWait)
-			if g != nil && g.limits.MaxWait > 0 {
-				deadline = time.Now().Add(g.limits.MaxWait)
-			}
-			if !v.(*tokenBucket).take(deadline) && g != nil {
-				g.waived.Add(1)
-			}
+		if err := g.waitLimited(host, strict); err != nil {
+			return err
 		}
 	}
+	if strict {
+		deadline := time.Now().Add(defaultEgressMaxWait)
+		if g != nil && g.limits.MaxWait > 0 {
+			deadline = time.Now().Add(g.limits.MaxWait)
+		}
+		if !bucket.(*tokenBucket).take(deadline) {
+			return fmt.Errorf("任务出站排队超时")
+		}
+	}
+	return nil
 }

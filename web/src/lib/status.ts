@@ -44,6 +44,8 @@ const intent: Record<string, StatusMeta> = {
   blocked: { label: "执行出错", tone: "red" },
   // exhausted = 达到步数/时间预算被中途掐断、只写回部分结果（非方向已探尽）。
   exhausted: { label: "预算耗尽", tone: "violet" },
+  // no_output = 正常返回但没有任何产出：没测到东西，可重派，不算已覆盖。
+  no_output: { label: "无产出", tone: "amber" },
   // stopped = 历史软删除状态（保留,历史数据）。
   stopped: { label: "已停止", tone: "slate" },
   // deleted = 用户假删除了该意图（保留节点与血缘，删除原因见 delete_reason 字段）。
@@ -136,4 +138,12 @@ export type StatusDomain = keyof typeof maps;
 
 export function statusMeta(domain: StatusDomain, key: string): StatusMeta {
   return maps[domain][key] ?? { label: key, tone: "neutral" };
+}
+
+// 任务终态：后端对这四个状态不再接受「暂停」，只接受「继续运行」（有未执行意图时）。
+// 详情页、列表页的暂停按钮与归档资格都从这里取，避免各处硬编码漏掉 policy_blocked。
+export const TASK_TERMINAL_STATUSES = new Set<string>(["done", "failed", "timeout", "policy_blocked"]);
+
+export function taskIsTerminal(status: string): boolean {
+  return TASK_TERMINAL_STATUSES.has(status);
 }

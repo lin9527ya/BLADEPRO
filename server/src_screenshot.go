@@ -48,6 +48,9 @@ func (s *Server) runSrcScreenshot(ctx context.Context, req agent.SrcScreenshotRe
 		return nil, fmt.Errorf("需要 task_id 与 asset_id")
 	}
 	doc := s.srcDocForTask(req.TaskID)
+	if doc.RequireIsolation && !AgentIsolationEnabled() {
+		return nil, fmt.Errorf("任务要求隔离运行，但当前实例未启用隔离")
+	}
 	if !doc.IsSrc() {
 		return nil, fmt.Errorf("该任务不是 SRC 模式，不能截图")
 	}
@@ -109,22 +112,32 @@ func (s *Server) runSrcScreenshot(ctx context.Context, req agent.SrcScreenshotRe
 			return nil, err
 		}
 	}
+	browserProxy, closeProxy, err := s.srcBrowserProxy(ctx, req.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	defer closeProxy()
 	tmp, err := os.MkdirTemp("", "bladepro-shot-")
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(tmp)
+	if agentIso.enabled {
+		if err := os.Chown(tmp, int(agentIso.uid), int(agentIso.gid)); err != nil {
+			return nil, err
+		}
+	}
 	out := filepath.Join(tmp, "shot.png")
 	if len(req.Steps) > 0 || req.FullPage {
 		runCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
-		if err := captureWithCDP(runCtx, browser, target, out, width, height, req.FullPage, req.Steps, s.m.ProxyAddr()); err != nil {
+		if err := captureWithCDP(runCtx, browser, target, out, width, height, req.FullPage, req.Steps, browserProxy); err != nil {
 			return nil, fmt.Errorf("浏览器截图失败：%w", err)
 		}
 	} else {
 		profile := filepath.Join(tmp, "profile")
 		args := []string{
-			"--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run",
+			"--proxy-bypass-list=<-loopback>", "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run",
 			"--no-default-browser-check", "--disable-dev-shm-usage",
 			"--user-data-dir=" + profile,
 			fmt.Sprintf("--window-size=%d,%d", width, height),
@@ -134,13 +147,18 @@ func (s *Server) runSrcScreenshot(ctx context.Context, req agent.SrcScreenshotRe
 		if os.Geteuid() == 0 {
 			args = append(args, "--no-sandbox")
 		}
-		if addr := strings.TrimSpace(s.m.ProxyAddr()); addr != "" {
+		if addr := strings.TrimSpace(browserProxy); addr != "" {
 			args = append(args, "--proxy-server=http://"+addr, "--ignore-certificate-errors")
 		}
 		args = append(args, target)
 		runCtx, cancel := context.WithTimeout(ctx, screenshotTimeout)
 		defer cancel()
 		cmd := exec.CommandContext(runCtx, browser, args...)
+		hardenAgentCmd(cmd)
+		startDetached(cmd)
+		cmd.WaitDelay = execWaitDelay
+		cmd.Cancel = func() error { killGroup(cmd); return nil }
+		defer hardKillGroup(cmd)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			msg := strings.TrimSpace(string(output))

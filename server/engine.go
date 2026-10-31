@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -98,6 +99,7 @@ func retryableWorkerModelError(reason harness.TerminalReason, err error) bool {
 // (re)installed at runtime (LLM configured from the UI); the loops always run
 // but idle until an LLM is set.
 type Engine struct {
+	baseCtx  context.Context
 	m        *Manager
 	debounce time.Duration
 
@@ -269,7 +271,16 @@ func (e *Engine) runtimeCtx(taskID string) context.Context {
 	if rt := e.runtimes[taskID]; rt != nil {
 		return rt.ctx
 	}
+	if e.baseCtx != nil {
+		return e.baseCtx
+	}
 	return context.Background()
+}
+
+func (e *Engine) SetBaseContext(ctx context.Context) {
+	e.runtimeMu.Lock()
+	e.baseCtx = ctx
+	e.runtimeMu.Unlock()
 }
 
 // StopTask permanently stops every long-lived goroutine and removes all Engine
@@ -973,22 +984,38 @@ func (e *Engine) plannerLoop(ctx context.Context, t *Task) {
 		switch {
 		case err != nil && ectx.Err() == nil:
 			log.Printf("[planner] task %s 规划出错: %v", t.ID, err)
+			t.restoreTriggers(triggers)
+			// One delayed retry per failed round: the heartbeat alone can be ten
+			// minutes away, and a transient provider failure should not stall the task.
+			goSafe("planner/retry", nil, func() {
+				select {
+				case <-time.After(30 * time.Second):
+					if ectx.Err() == nil {
+						t.Notify()
+					}
+				case <-ectx.Done():
+				}
+			})
 		case met:
 			log.Printf("[planner] task %s 判定目标达成: %s", t.ID, reason)
-			// SRC 模式：目标达成只是"可以试着收尾"，覆盖格清零才是真的完成。
-			// 门没过就本轮不落 done，缺口已经写进时间线并推给下一轮 planner。
-			if !e.srcFinishGate(ectx, t, taskIDInt) {
-				e.touch(t.ID)
-				break
+			if t.Mode == srcmode.ModeSrc {
+				if won, err := e.completeSrcTask(ectx, t); err != nil {
+					log.Printf("[src-gate] 原子收官失败，保留未完成状态: %v", err)
+				} else if won {
+					e.cancelExec(t.ID, agent.AbortGoalMet)
+				}
+			} else {
+				if open, err := t.Store.HasOpenGoal(); err != nil || open {
+					e.touch(t.ID)
+					break
+				}
+				if won, err := e.m.SetTaskStatusGuarded(t.ID, "done"); err != nil {
+					log.Printf("[planner] task %s 标记完成失败: %v", t.ID, err)
+				} else if won {
+					e.cancelExec(t.ID, agent.AbortGoalMet)
+				}
 			}
-			// 所有目标达成 → 持久化任务状态为 done（前端 DTO 会优先展示该终态）。
-			if err := e.m.SetTaskStatus(t.ID, "done"); err != nil {
-				log.Printf("[planner] task %s 标记完成落库失败: %v", t.ID, err)
-			}
-			// 任务已判完成 → 立刻取消在跑的 worker：它们手头的意图跑出来也没意义了。
-			// 下一轮 worker 循环撞终态门就不再领新意图;被取消的这批走下方"任务已完成"分支
-			// 归为 stopped(而非 blocked)。
-			e.cancelExec(t.ID, agent.AbortGoalMet)
+
 		default:
 			log.Printf("[planner] task %s 规划完成", t.ID)
 		}
@@ -1102,6 +1129,25 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	iid := intent.ID
 	wTaskID, _ := strconv.ParseInt(t.ID, 10, 64)
 	srcStore := e.m.pg.Src()
+	// 依赖就绪的意图不在创建时占格；领取后、真正执行前才取租约。占用失败就退回
+	// open，让 worker 循环退避，避免两条意图同时测同一格。
+	if srcStore != nil && t.Mode == srcmode.ModeSrc {
+		if ids := intent.AssetIDs(); len(ids) > 0 {
+			var payload struct {
+				RiskArea string `json:"risk_area"`
+			}
+			_ = json.Unmarshal(intent.Payload, &payload)
+			if busy, err := srcStore.EnsureSrcLeasesForIntent(workCtx, wTaskID, intent.ID, ids, db.NormalizeRiskArea(payload.RiskArea), name); err != nil {
+				log.Printf("[src-lease] task %s 意图 #%d 领取租约失败: %v", t.ID, intent.ID, err)
+				_ = transitionIntentState(t.Store, intent.ID, "running", "open")
+				return false
+			} else if len(busy) > 0 {
+				log.Printf("[src-lease] task %s 意图 #%d 的单元格仍被占用，退回 open 等待", t.ID, intent.ID)
+				_ = transitionIntentState(t.Store, intent.ID, "running", "open")
+				return false
+			}
+		}
+	}
 	// 单元格租约在 worker 结束时释放（正常/异常/被 kill 都走这里）；过期也有 TTL 兜底。
 	defer func() {
 		if srcStore == nil {
@@ -1147,6 +1193,9 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 		limit:  e.emptyTurnNudgeLimit(),
 		label:  label,
 	}
+	// Capture prior output BEFORE this run: every SDK run emits a result activity,
+	// which must not make an empty run look like a continuation.
+	priorOutput, _ := t.Store.IntentPriorOutput(intent.ID)
 	e.BeginLLMCall(t.ID)
 	var reason harness.TerminalReason
 	var wrote agent.WriteCounts
@@ -1301,27 +1350,20 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 		e.touch(t.ID)
 		return true
 	}
-	// terminal分流：撞步数上限 ≠ 完成。max_turns→exhausted（规划者据此知道这个方向
-	// 试过但没真正做完、需换角度，而非当成已覆盖永久跳过）；出错→blocked；正常→done。
-	state := "done"
-	switch {
-	case err != nil:
-		state = "blocked"
-	case reason == harness.ReasonMaxTurns:
-		state = "exhausted"
-		log.Printf("[worker %s] intent %d 撞步数上限(exhausted)，本次写回 %s", name, intent.ID, wrote)
-	case reason == harness.ReasonTimeout:
-		state = "exhausted"
-		log.Printf("[worker %s] intent %d 运行超时(exhausted)，收尾后写回 %s", name, intent.ID, wrote)
-	}
-	// 语义终态提升：worker 经 conclude_intent 声明 negative / out-of-scope 时，正常完成的
-	// 意图以语义为准；blocked / exhausted 压过它——没测成不是结论（与上面的分流注释同一条纪律）。
-	if state == "done" {
+	// terminal分流：正常返回不等于真的有产出。语义结论优先于状态；没有本次/历史
+	// 写回时落 no_output，让规划者重派或换打法，而不是把"跑了但什么都没测到"当成覆盖。
+	semantic := ""
+	if err == nil {
 		if outcome, outcomeErr := t.Store.GetIntentSemanticOutcome(intent.ID); outcomeErr == nil {
-			if outcome == "negative" || outcome == "out-of-scope" {
-				state = outcome
-			}
+			semantic = outcome
 		}
+	}
+	state := settleIntentState(err, reason, wrote, semantic, priorOutput)
+	if state == "exhausted" {
+		log.Printf("[worker %s] intent %d 预算耗尽(exhausted)，本次写回 %s", name, intent.ID, wrote)
+	}
+	if state == "no_output" {
+		log.Printf("[worker %s] intent %d 正常返回但本次/历史均无写回(no_output)，等待规划者重派", name, intent.ID)
 	}
 	if state == "blocked" && isTaskLLMChainExhausted(err) {
 		_ = t.Store.SetIntentBlockedReason(intent.ID, db.IntentBlockedLLMQuota)

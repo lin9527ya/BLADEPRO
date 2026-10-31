@@ -20,8 +20,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/lin9527ya/bladepro/agent"
 	"github.com/lin9527ya/bladepro/config"
+	"github.com/lin9527ya/bladepro/db"
+	"github.com/lin9527ya/bladepro/srcmode"
 	"github.com/lin9527ya/bladepro/srcprobe"
 )
 
@@ -38,8 +41,14 @@ func (s *Server) runSrcProbe(ctx context.Context, req agent.SrcProbeRequest) (*s
 		return nil, fmt.Errorf("需要 task_id 与 asset_id")
 	}
 	doc := s.srcDocForTask(req.TaskID)
+	if doc.RequireIsolation && !AgentIsolationEnabled() {
+		return nil, fmt.Errorf("任务要求隔离运行，但当前实例未启用隔离")
+	}
 	if !doc.IsSrc() {
 		return nil, fmt.Errorf("该任务不是 SRC 模式，不能使用只读探针")
+	}
+	if doc.NoAutomation {
+		return nil, fmt.Errorf("平台禁止自动化探针：请使用经授权的手工验证")
 	}
 	if strings.TrimSpace(doc.TimeWindow) != "" && !doc.InWindow(time.Now()) {
 		return nil, fmt.Errorf("当前不在平台作业时间窗（%s）内：等窗口开启后再探", doc.TimeWindow)
@@ -69,12 +78,15 @@ func (s *Server) runSrcProbe(ctx context.Context, req agent.SrcProbeRequest) (*s
 	}
 
 	// 资产级枚举缓存（P2 跨任务复用）：key 含探针参数，target 在缓存主键里。
-	cacheKey := srcProbeCacheKey(req)
+	cacheKey := srcProbeCacheKey(req, doc)
 	if cacheKey != "" && !req.Force {
 		if entry, err := s.m.PG().GetProbeCache(ctx, req.AssetID, cacheKey, target); err == nil && entry != nil {
 			var cached srcprobe.Result
 			if json.Unmarshal(entry.Payload, &cached) == nil {
 				cached.Cached = true
+				cached.ProbeRunID = ""
+				cached.EvidenceNodeID = 0
+				cached.ParamsHash = ""
 				cached.ElapsedMS = 0
 				cached.Notes = append(cached.Notes, fmt.Sprintf(
 					"复用资产级枚举缓存（生成于 %s，有效至 %s）；需要新鲜结果请传 force=true。",
@@ -105,6 +117,14 @@ func (s *Server) runSrcProbe(ctx context.Context, req agent.SrcProbeRequest) (*s
 		}
 	}
 	client, note := s.srcProbeClient(req.TaskID)
+	runID := uuid.NewString()
+	base := client.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	trace := &probeTraceTransport{base: base, runID: runID}
+	client.Transport = trace
+
 	rate := doc.RateLimit
 	if rate <= 0 {
 		rate = srcProbeDefaultRate
@@ -117,6 +137,17 @@ func (s *Server) runSrcProbe(ctx context.Context, req agent.SrcProbeRequest) (*s
 		return nil, err
 	}
 	res.Notes = append(res.Notes, note)
+	rows, complete := trace.snapshot()
+	params, _ := json.Marshal(map[string]any{"target": target, "kind": req.Kind, "max_paths": req.MaxPaths, "endpoints": req.Endpoints, "wordlist": words, "retest": retest})
+	result, _ := json.Marshal(map[string]any{"probe": res, "requests": rows})
+	receipt := &db.SrcProbeRun{ID: runID, TaskID: req.TaskID, AssetID: req.AssetID, Kind: req.Kind, Target: target, Params: params, Metrics: res.Metrics, Complete: complete, Truncated: res.Truncated, Result: result}
+	if err := s.m.pg.RecordSrcProbeRun(ctx, receipt); err != nil {
+		return nil, fmt.Errorf("保存可信探针凭据失败：%w", err)
+	}
+	res.ProbeRunID = runID
+	res.EvidenceNodeID = receipt.NodeID
+	res.ParamsHash = receipt.ParamsHash
+
 	if cacheKey != "" {
 		if payload, err := json.Marshal(res); err == nil {
 			// 缓存写失败不影响本次结果；下次会重新跑。
@@ -129,7 +160,8 @@ func (s *Server) runSrcProbe(ctx context.Context, req agent.SrcProbeRequest) (*s
 // srcProbeCacheKey returns the cacheable key for paths/js/methods, or "" for
 // non404. The key includes the parameters that change the result (paths max,
 // methods endpoint set); target is part of the cache primary key.
-func srcProbeCacheKey(req agent.SrcProbeRequest) string {
+func srcProbeCacheKey(req agent.SrcProbeRequest, doc srcmode.ModeDoc) string {
+	prefix := fmt.Sprintf("probe-v1:rate=%d:tier=%s:thresholds=%v:", doc.RateLimit, doc.Tier(), doc.CheckThresholds)
 	switch req.Kind {
 	case srcprobe.KindPaths:
 		max := req.MaxPaths
@@ -139,9 +171,9 @@ func srcProbeCacheKey(req agent.SrcProbeRequest) string {
 		if max > 1000 {
 			max = 1000
 		}
-		return fmt.Sprintf("paths:max=%d", max)
+		return prefix + fmt.Sprintf("paths:max=%d", max)
 	case srcprobe.KindJS:
-		return "js"
+		return prefix + "js"
 	case srcprobe.KindMethods:
 		eps := make([]string, 0, len(req.Endpoints))
 		seen := map[string]bool{}
@@ -155,7 +187,7 @@ func srcProbeCacheKey(req agent.SrcProbeRequest) string {
 		}
 		sort.Strings(eps)
 		sum := sha256.Sum256([]byte(strings.Join(eps, "\n")))
-		return "methods:" + hex.EncodeToString(sum[:8])
+		return prefix + "methods:" + hex.EncodeToString(sum[:8])
 	}
 	return ""
 }
@@ -207,7 +239,7 @@ func readSrcProbeWordlist() ([]string, error) {
 // srcProbeRetestURLs 从该 host 的录制流量里取非 404 的 GET URL（去重，最多 100）。
 func (s *Server) srcProbeRetestURLs(taskID int64, host string) ([]string, error) {
 	since := s.srcVerifySince(taskID)
-	rows, err := s.m.traffic.Since(host, since, 20000)
+	rows, err := s.m.traffic.SinceTask(taskID, host, since, 20000)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +254,7 @@ func (s *Server) srcProbeRetestURLs(taskID int64, host string) ([]string, error)
 			continue
 		}
 		u, err := url.Parse(raw)
-		if err != nil || strings.ToLower(u.Hostname()) != strings.ToLower(host) {
+		if err != nil || !strings.EqualFold(u.Hostname(), host) {
 			continue
 		}
 		seen[raw] = true

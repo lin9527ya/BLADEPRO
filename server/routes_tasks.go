@@ -61,6 +61,7 @@ func (s *Server) registerTaskRoutes(mux routeRegistrar) {
 	mux.HandleFunc("GET /api/tasks/{id}/coverage-graph", s.taskCoverageGraph)
 	// SRC 挖掘模式：覆盖矩阵 / 人工点格 / 人工放行收尾（非 SRC 任务返回 enabled:false）。
 	mux.HandleFunc("GET /api/tasks/{id}/src", s.getTaskSrc)
+	mux.HandleFunc("GET /api/tasks/{id}/src/probes/{probe}", s.getSrcProbeRun)
 	mux.HandleFunc("POST /api/tasks/{id}/src/cells", s.postTaskSrcCell)
 	mux.HandleFunc("POST /api/tasks/{id}/src/checks", s.postTaskSrcCheck)
 	mux.HandleFunc("POST /api/tasks/{id}/src/force-finish", s.postTaskSrcForceFinish)

@@ -175,6 +175,9 @@ func run() int {
 	if err := server.InstallAgentIsolation(*dataDir, config.BaseDir(), skillDir); err != nil {
 		log.Fatalf("[isolation] %v", err)
 	}
+	if err := server.InstallFileRootGuard(*dataDir, config.BaseDir(), skillDir); err != nil {
+		log.Fatalf("[file-guard] %v", err)
+	}
 	srv := server.New(ctx, mgr, skillDir, *dataDir, config.BaseDir())
 	// 重启恢复：把 PG 里已准入的任务重新拉起（构造器只装配，不在这里恢复——
 	// 见 Server.RestoreTaskRuntimes 的注释）。
@@ -230,6 +233,9 @@ func run() int {
 	if busy := srv.WaitAllQuiescent(drainCtx); busy > 0 {
 		log.Printf("[shutdown] 等满 %s 仍有 %d 处 run 未收尾：其意图终态未落库，下次启动会重置为 open",
 			shutdownDrainGrace, busy)
+	}
+	if left := srv.Shutdown(drainCtx); left > 0 {
+		log.Printf("[shutdown] 仍有 %d 项后台工作未在截止时间内完成", left)
 	}
 	return code
 }

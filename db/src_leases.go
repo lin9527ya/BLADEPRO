@@ -101,6 +101,59 @@ RETURNING `+srcLeaseCols, taskID, assetID, area, ownerIntentID, worker, int(ttl.
 	return acquired, nil, nil
 }
 
+// EnsureSrcLeasesForIntent acquires the cell leases for an intent that was not
+// pre-leased at creation (dependency-ready intents). A lease already owned by
+// this intent is refreshed; any other active owner is returned as busy.
+func (s *SrcStore) EnsureSrcLeasesForIntent(ctx context.Context, taskID, intentID int64, assetIDs []int64, area, worker string) ([]SrcLease, error) {
+	if s == nil || s.db == nil || taskID <= 0 || intentID <= 0 || len(assetIDs) == 0 {
+		return nil, nil
+	}
+	area = normalizeLeaseArea(area)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM src_cell_leases WHERE task_id=$1 AND expires_at < now()`, taskID); err != nil {
+		return nil, err
+	}
+	seen := map[int64]bool{}
+	var busy []SrcLease
+	for _, assetID := range assetIDs {
+		if assetID <= 0 || seen[assetID] {
+			continue
+		}
+		seen[assetID] = true
+		held, err := scanSrcLease(tx.QueryRowContext(ctx,
+			`SELECT `+srcLeaseCols+` FROM src_cell_leases WHERE task_id=$1 AND asset_id=$2 AND area=$3`, taskID, assetID, area))
+		if err == nil && held.OwnerIntentID != intentID {
+			busy = append(busy, *held)
+			continue
+		}
+		if err != nil && err != sql.ErrNoRows {
+			return nil, err
+		}
+		if held != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE src_cell_leases SET expires_at=now()+make_interval(secs => $4), worker=$5 WHERE id=$1 AND task_id=$2 AND owner_intent_id=$3`,
+				held.ID, taskID, intentID, int(SrcLeaseTTL.Seconds()), worker); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO src_cell_leases(task_id, asset_id, area, owner_intent_id, worker, expires_at)
+VALUES ($1,$2,$3,$4,$5,now()+make_interval(secs => $6))`, taskID, assetID, area, intentID, worker, int(SrcLeaseTTL.Seconds())); err != nil {
+			return nil, err
+		}
+	}
+	if len(busy) > 0 {
+		return busy, nil // rollback: this call must not partially take cells
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
 // BindSrcLeaseIntent 把占位租约绑到刚创建的意图上。
 func (s *SrcStore) BindSrcLeaseIntent(ctx context.Context, taskID int64, assetIDs []int64, area string, intentID int64) error {
 	if s == nil || s.db == nil || taskID <= 0 || intentID <= 0 || len(assetIDs) == 0 {

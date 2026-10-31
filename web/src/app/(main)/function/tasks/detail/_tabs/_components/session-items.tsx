@@ -2,14 +2,16 @@
 
 import * as React from "react";
 
-import { statusIcon } from "./session-helpers";
+import { Loader2Icon, ShieldAlertIcon, Trash2Icon } from "lucide-react";
+
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { taskAssetSourceLabel, taskAssetTypeLabel } from "@/lib/task-assets";
 import { IntentAsset, Session } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { Loader2Icon, ShieldAlertIcon, Trash2Icon } from "lucide-react";
+
+import { statusIcon } from "./session-helpers";
 
 // 会话列表的条目与 worker 资产徽标。
 

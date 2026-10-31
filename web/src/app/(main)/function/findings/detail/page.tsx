@@ -351,7 +351,10 @@ function FindingDetailInner() {
                 {finding.cvss_vector ? (
                   <FieldRow label="CVSS">
                     <div className="flex flex-col items-end gap-0.5">
-                      <code className="max-w-[22rem] truncate rounded bg-muted px-1.5 py-0.5 font-mono text-xs" title={finding.cvss_vector}>
+                      <code
+                        className="max-w-[22rem] truncate rounded bg-muted px-1.5 py-0.5 font-mono text-xs"
+                        title={finding.cvss_vector}
+                      >
                         {finding.cvss_vector}
                       </code>
                       {finding.cvss_score !== undefined ? (

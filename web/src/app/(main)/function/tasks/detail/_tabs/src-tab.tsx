@@ -29,8 +29,8 @@ import { api } from "@/lib/api";
 import {
   SRC_SUBMISSION_NEXT as SUBMISSION_NEXT,
   SRC_SUBMISSION_STATUS_LABELS as SUBMISSION_STATUS_LABELS,
-  SRC_VERDICT_REASON_LABELS as VERDICT_REASON_LABELS,
   srcSubmissionTone as submissionTone,
+  SRC_VERDICT_REASON_LABELS as VERDICT_REASON_LABELS,
 } from "@/lib/src-submission";
 import type {
   SrcCell,
@@ -72,7 +72,7 @@ const AREA_TITLES: Record<string, string> = {
 // 台账停留天数：ready/submitted/accepted 是"等人/等平台"的状态，超过 7 天标黄提醒。
 function submissionAgeDays(sub: SrcSubmission): number | null {
   if (!["ready", "submitted", "accepted"].includes(sub.status)) return null;
-  const ts = sub.status === "submitted" ? sub.submitted_at ?? sub.updated_at : sub.updated_at ?? sub.created_at;
+  const ts = sub.status === "submitted" ? (sub.submitted_at ?? sub.updated_at) : (sub.updated_at ?? sub.created_at);
   if (!ts) return null;
   const ms = Date.now() - new Date(ts).getTime();
   if (!Number.isFinite(ms) || ms < 0) return 0;
@@ -248,9 +248,7 @@ export function SrcTab({ taskId }: { taskId: string }) {
 
   const openMark = (asset: SrcMatrixAsset, cell: SrcMatrixCell) => {
     setTarget({ asset, cell });
-    setCellState(
-      CELL_STATES.includes(cell.state as SrcCell["state"]) ? (cell.state as SrcCell["state"]) : "",
-    );
+    setCellState(CELL_STATES.includes(cell.state as SrcCell["state"]) ? (cell.state as SrcCell["state"]) : "");
     setCellReason(cell.reason ?? "");
     setCellNaCode(cell.na_code ?? "");
     setEvidenceNodeID(cell.evidence_node_id ? String(cell.evidence_node_id) : "");
@@ -328,7 +326,8 @@ export function SrcTab({ taskId }: { taskId: string }) {
     }
   };
 
-  const submitForce = async () => {    const reason = forceReason.trim();
+  const submitForce = async () => {
+    const reason = forceReason.trim();
     if (!reason) return;
     setForcing(true);
     setForceError("");
@@ -541,10 +540,7 @@ export function SrcTab({ taskId }: { taskId: string }) {
             <Stat label="台账" value={(data.submissions ?? []).length} />
             <Stat
               label="待交付"
-              value={Math.max(
-                0,
-                (summary?.findings_medium_plus ?? 0) - (summary?.reports_ready ?? 0),
-              )}
+              value={Math.max(0, (summary?.findings_medium_plus ?? 0) - (summary?.reports_ready ?? 0))}
             />
           </div>
 
@@ -571,10 +567,14 @@ export function SrcTab({ taskId }: { taskId: string }) {
                   <div key={item.intent_id} className="flex flex-wrap items-center gap-2 text-xs">
                     <Badge variant="outline">#{item.intent_id}</Badge>
                     <span className="truncate">{item.summary}</span>
-                    <span className="text-muted-foreground">等待 {item.depends_on.map((id) => `#${id}`).join("、")}</span>
+                    <span className="text-muted-foreground">
+                      等待 {item.depends_on.map((id) => `#${id}`).join("、")}
+                    </span>
                     {item.blocked_by?.length ? (
                       <span className="text-amber-600 dark:text-amber-400">
-                        {item.blocked_by.map((dep) => `#${dep.intent_id} ${dep.state}${dep.terminal ? "（需处理）" : ""}`).join("、")}
+                        {item.blocked_by
+                          .map((dep) => `#${dep.intent_id} ${dep.state}${dep.terminal ? "（需处理）" : ""}`)
+                          .join("、")}
                       </span>
                     ) : null}
                   </div>
@@ -588,7 +588,9 @@ export function SrcTab({ taskId }: { taskId: string }) {
               <CardHeader className="border-b py-3">
                 <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
                   身份对照
-                  <span className="text-muted-foreground text-xs font-normal">只读状态/长度差异；distinct 只是线索，需结合对象归属与独立复验</span>
+                  <span className="text-muted-foreground text-xs font-normal">
+                    只读状态/长度差异；distinct 只是线索，需结合对象归属与独立复验
+                  </span>
                 </CardTitle>
               </CardHeader>
               <CardContent className="flex flex-col gap-1.5 py-3">
@@ -638,7 +640,9 @@ export function SrcTab({ taskId }: { taskId: string }) {
                       {assetBudget > 0 ? (
                         <span
                           className={`text-xs tabular-nums ${
-                            (assetUsage.get(asset.asset_id) ?? 0) >= assetBudget ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"
+                            (assetUsage.get(asset.asset_id) ?? 0) >= assetBudget
+                              ? "text-amber-600 dark:text-amber-400"
+                              : "text-muted-foreground"
                           }`}
                           title="该资产已归因的 token / 预算"
                         >
@@ -718,30 +722,48 @@ export function SrcTab({ taskId }: { taskId: string }) {
                       {[...(row.items ?? [])]
                         .sort((a, b) => Number(Boolean(a.state)) - Number(Boolean(b.state)))
                         .map((item) => (
-                        <button
-                          key={item.key}
-                          type="button"
-                          title={`${item.hint}`}
-                          onClick={() => openCheck(row, item)}
-                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition-colors hover:opacity-80 ${cellTone(
-                            item.state === "done" ? (item.verification === "manual_unverified" ? "manual_unverified" : "tested_clear") : item.state === "na" ? "na" : undefined,
-                          )}`}
-                        >
-                          <span>{item.title}</span>
-                          {item.inherited_stale ? <span title="源任务的证据已变更或撤回，请在本任务重测">·源变更</span> : null}
-                          <span className="font-medium">
-                            {item.state === "done" ? (item.verification === "manual_unverified" ? "待核验" : item.verification === "manual_approved" ? "人工核验" : "已验证") : item.state === "na" ? "N/A" : item.state === "budget_stop" ? "预算停" : "未做"}
-                          </span>
-                          {item.inherited_from_task_id ? (
-                            <span
-                              className="rounded bg-background/60 px-1 text-[10px]"
-                              title={`继承自任务 #${item.inherited_from_task_id}${item.observed_at ? `，原始观察 ${new Date(item.observed_at).toLocaleDateString()}` : ""}`}
-                            >
-                              继承
+                          <button
+                            key={item.key}
+                            type="button"
+                            title={`${item.hint}`}
+                            onClick={() => openCheck(row, item)}
+                            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition-colors hover:opacity-80 ${cellTone(
+                              item.state === "done"
+                                ? item.verification === "manual_unverified"
+                                  ? "manual_unverified"
+                                  : "tested_clear"
+                                : item.state === "na"
+                                  ? "na"
+                                  : undefined,
+                            )}`}
+                          >
+                            <span>{item.title}</span>
+                            {item.inherited_stale ? (
+                              <span title="源任务的证据已变更或撤回，请在本任务重测">·源变更</span>
+                            ) : null}
+                            <span className="font-medium">
+                              {item.state === "done"
+                                ? item.verification === "manual_unverified"
+                                  ? "待核验"
+                                  : item.verification === "manual_approved"
+                                    ? "人工核验"
+                                    : "已验证"
+                                : item.state === "na"
+                                  ? "N/A"
+                                  : item.state === "budget_stop"
+                                    ? "预算停"
+                                    : "未做"}
                             </span>
-                          ) : null}
-                        </button>
-                      ))}
+                            {item.inherited_from_task_id ? (
+                              <span
+                                className="rounded bg-background/60 px-1 text-[10px]"
+                                title={`继承自任务 #${item.inherited_from_task_id}${item.observed_at ? `，原始观察 ${new Date(item.observed_at).toLocaleDateString()}` : ""}`}
+                              >
+                                继承
+                              </span>
+                            ) : null}
+                          </button>
+                        ))}
                     </div>
                     {(row.items ?? []).some((it) => (it.verify_warnings?.length ?? 0) > 0) ? (
                       <div className="mt-2 grid gap-1">
@@ -767,9 +789,7 @@ export function SrcTab({ taskId }: { taskId: string }) {
             <CardHeader className="border-b py-3">
               <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
                 缺口
-                <span className="text-muted-foreground text-xs font-normal">
-                  按优先级排序，补格清单以矩阵为准
-                </span>
+                <span className="text-muted-foreground text-xs font-normal">按优先级排序，补格清单以矩阵为准</span>
               </CardTitle>
             </CardHeader>
             <CardContent className="px-0">
@@ -856,9 +876,7 @@ export function SrcTab({ taskId }: { taskId: string }) {
                             #{sub.finding_id} {sub.title}
                           </span>
                           {sub.fingerprint ? (
-                            <code className="text-muted-foreground font-mono text-[10px]">
-                              {sub.fingerprint}
-                            </code>
+                            <code className="text-muted-foreground font-mono text-[10px]">{sub.fingerprint}</code>
                           ) : null}
                         </div>
                       </TableCell>
@@ -880,7 +898,9 @@ export function SrcTab({ taskId }: { taskId: string }) {
                           const days = submissionAgeDays(sub);
                           if (days == null) return "—";
                           return (
-                            <span className={days >= 7 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}>
+                            <span
+                              className={days >= 7 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}
+                            >
                               {days} 天
                             </span>
                           );
@@ -927,10 +947,7 @@ export function SrcTab({ taskId }: { taskId: string }) {
           <div className="grid gap-4">
             <div className="grid gap-2">
               <Label htmlFor="src-cell-state">状态</Label>
-              <Select
-                value={cellState}
-                onValueChange={(next) => setCellState(next as SrcCell["state"])}
-              >
+              <Select value={cellState} onValueChange={(next) => setCellState(next as SrcCell["state"])}>
                 <SelectTrigger id="src-cell-state" className="w-full">
                   <SelectValue placeholder="选择终态" />
                 </SelectTrigger>
@@ -1115,9 +1132,7 @@ export function SrcTab({ taskId }: { taskId: string }) {
                 onChange={(e) => setLedgerReward(e.target.value)}
               />
             </div>
-            {ledgerError ? (
-              <p className="text-destructive text-xs [overflow-wrap:anywhere]">{ledgerError}</p>
-            ) : null}
+            {ledgerError ? <p className="text-destructive text-xs [overflow-wrap:anywhere]">{ledgerError}</p> : null}
             <div className="grid gap-1.5 border-t pt-3">
               <Label className="text-xs">状态历史</Label>
               {ledgerEventsLoading ? (
@@ -1142,7 +1157,9 @@ export function SrcTab({ taskId }: { taskId: string }) {
                         {ev.external_id ? `编号 ${ev.external_id} · ` : ""}
                         {ev.platform_level ? `等级 ${ev.platform_level} · ` : ""}
                         {ev.reward ? `回报 ${ev.reward} · ` : ""}
-                        {ev.verdict_reason ? `原因 ${VERDICT_REASON_LABELS[ev.verdict_reason] ?? ev.verdict_reason}` : ""}
+                        {ev.verdict_reason
+                          ? `原因 ${VERDICT_REASON_LABELS[ev.verdict_reason] ?? ev.verdict_reason}`
+                          : ""}
                         {ev.note ? ` ${ev.note}` : ""}
                       </div>
                     </div>
@@ -1191,10 +1208,7 @@ export function SrcTab({ taskId }: { taskId: string }) {
           <div className="grid gap-4">
             <div className="grid gap-2">
               <Label htmlFor="src-check-state">终态</Label>
-              <Select
-                value={checkState}
-                onValueChange={(v) => setCheckState(v as "done" | "na" | "budget_stop")}
-              >
+              <Select value={checkState} onValueChange={(v) => setCheckState(v as "done" | "na" | "budget_stop")}>
                 <SelectTrigger id="src-check-state" className="w-full">
                   <SelectValue placeholder="选择终态" />
                 </SelectTrigger>
@@ -1265,9 +1279,7 @@ export function SrcTab({ taskId }: { taskId: string }) {
                 onChange={(e) => setCheckEvidence(e.target.value)}
               />
             </div>
-            {checkError ? (
-              <p className="text-destructive text-xs [overflow-wrap:anywhere]">{checkError}</p>
-            ) : null}
+            {checkError ? <p className="text-destructive text-xs [overflow-wrap:anywhere]">{checkError}</p> : null}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCheckTarget(null)}>
@@ -1286,8 +1298,8 @@ export function SrcTab({ taskId }: { taskId: string }) {
           <DialogHeader>
             <DialogTitle>准备交付件</DialogTitle>
             <DialogDescription>
-              服务端会当场校验：正文齐备（不许占位符）+ 证据合规（proof 绑定、包长、请求 id、授权范围）
-              + 跨任务指纹查重。issues 非空时台账落 draft。
+              服务端会当场校验：正文齐备（不许占位符）+ 证据合规（proof 绑定、包长、请求 id、授权范围） +
+              跨任务指纹查重。issues 非空时台账落 draft。
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4">

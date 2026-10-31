@@ -533,8 +533,8 @@ export function ProfileDialog({
               <div className="grid gap-0.5">
                 <Label className="text-sm">成本分层 · tier</Label>
                 <p className="text-muted-foreground text-xs">
-                  开启「模型分层自动路由」后，未显式绑定的 planner/goals 自动用 cheap、worker 用
-                  strong。显式 Agent 绑定与任务配置链优先级更高，不会被覆盖。
+                  开启「模型分层自动路由」后，未显式绑定的 planner/goals 自动用 cheap、worker 用 strong。显式 Agent
+                  绑定与任务配置链优先级更高，不会被覆盖。
                 </p>
               </div>
               <Select value={tier} onValueChange={setTier}>
@@ -554,8 +554,8 @@ export function ProfileDialog({
               <div className="grid gap-0.5">
                 <Label className="text-sm">单价（USD / 1M tokens）</Label>
                 <p className="text-muted-foreground text-xs">
-                  用于把每次 LLM 调用折算成 cost_usd，做「每条有效发现的成本」归因。0 =
-                  未配置，成本记 0（不代表免费）。单价按调用时的配置计算，改价不会回溯历史账。
+                  用于把每次 LLM 调用折算成 cost_usd，做「每条有效发现的成本」归因。0 = 未配置，成本记
+                  0（不代表免费）。单价按调用时的配置计算，改价不会回溯历史账。
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">

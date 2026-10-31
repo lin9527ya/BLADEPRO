@@ -448,9 +448,7 @@ export function ScheduleTasksDialog({ categories, onCreated }: { categories: Tas
                       <NativeSelect
                         size="sm"
                         value={form.batchFilter}
-                        onChange={(e) =>
-                          setForm({ ...form, batchFilter: e.target.value as FormState["batchFilter"] })
-                        }
+                        onChange={(e) => setForm({ ...form, batchFilter: e.target.value as FormState["batchFilter"] })}
                       >
                         <NativeSelectOption value="all">全部资产</NativeSelectOption>
                         <NativeSelectOption value="new">新增资产</NativeSelectOption>
@@ -480,7 +478,8 @@ export function ScheduleTasksDialog({ categories, onCreated }: { categories: Tas
                       />
                     </div>
                     <p className="text-muted-foreground text-xs sm:col-span-2">
-                      资产范围来自本计划任务绑定的 SRC 项目/企业范围；未绑定项目时需通过 API 指定 company_ids 或 asset_ids。
+                      资产范围来自本计划任务绑定的 SRC 项目/企业范围；未绑定项目时需通过 API 指定 company_ids 或
+                      asset_ids。
                     </p>
                   </div>
                 ) : null}

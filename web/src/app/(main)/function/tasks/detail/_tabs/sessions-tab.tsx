@@ -1,16 +1,37 @@
 "use client";
 
 import * as React from "react";
-import { SessionItem, WorkerAssetBadge } from "./_components/session-items";
 
-import { ArrowUpIcon, ChevronDownIcon, CircleXIcon, ClockIcon, Loader2Icon, PaperclipIcon, PlusIcon, RotateCwIcon, SquareIcon, Trash2Icon, WifiOffIcon, XIcon } from "lucide-react";
+import {
+  ArrowUpIcon,
+  ChevronDownIcon,
+  CircleXIcon,
+  ClockIcon,
+  Loader2Icon,
+  PaperclipIcon,
+  PlusIcon,
+  RotateCwIcon,
+  SquareIcon,
+  Trash2Icon,
+  WifiOffIcon,
+  XIcon,
+} from "lucide-react";
 
 import { ApprovalExecutionFocus } from "@/components/approval-execution-focus";
 import { MentionTextarea } from "@/components/mention-textarea";
 import { SideQuestionButton, SideQuestionWorkspace } from "@/components/side-question-workspace";
 import { TodoPopover } from "@/components/todo-popover";
 import { Transcript } from "@/components/transcript";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupButton } from "@/components/ui/input-group";
@@ -18,15 +39,23 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-
 import { api } from "@/lib/api";
 import { shouldSubmitOnKey } from "@/lib/chat-send-mode";
 import { MOCK } from "@/lib/mock/enabled";
 import { isBtwCommand } from "@/lib/side-questions";
-
 import { cn } from "@/lib/utils";
 
-import { fmtBytes, fmtDuration, keyForSession, MAX_WORKER_MESSAGE_CHARS, resolutionLabel, roleMeta, TokenMetrics, workerMessageCharCount } from "./_components/session-helpers";
+import {
+  fmtBytes,
+  fmtDuration,
+  keyForSession,
+  MAX_WORKER_MESSAGE_CHARS,
+  resolutionLabel,
+  roleMeta,
+  TokenMetrics,
+  workerMessageCharCount,
+} from "./_components/session-helpers";
+import { SessionItem, WorkerAssetBadge } from "./_components/session-items";
 import { useSessionsState } from "./_components/use-sessions-state";
 
 // resolutionLabel names the LLM a session runs on. The badge shows this alone and
@@ -344,7 +373,11 @@ export function SessionsTab({ taskId }: { taskId: string }) {
         {/* Right: transcript */}
         <SideQuestionWorkspace
           side={side}
-          label={active.role === "worker" ? `Worker #${active.worker_no ?? active.intent_id} · ${activeDisplayTitle}` : activeDisplayTitle}
+          label={
+            active.role === "worker"
+              ? `Worker #${active.worker_no ?? active.intent_id} · ${activeDisplayTitle}`
+              : activeDisplayTitle
+          }
         >
           <div className="flex min-h-0 flex-1 min-w-0 flex-col overflow-hidden rounded-lg border bg-card">
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-b px-3 py-2 sm:px-4 sm:py-2.5">

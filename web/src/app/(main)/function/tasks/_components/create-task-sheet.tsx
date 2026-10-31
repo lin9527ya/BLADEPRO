@@ -295,9 +295,7 @@ export function CreateTaskSheet({
               platform_template: platformTemplate || undefined,
             }
           : undefined,
-      interceptRules: interceptRules
-        .map((r) => ({ ...r, pattern: r.pattern.trim() }))
-        .filter((r) => r.pattern !== ""),
+      interceptRules: interceptRules.map((r) => ({ ...r, pattern: r.pattern.trim() })).filter((r) => r.pattern !== ""),
       // 勾了自定义才发覆盖层（两轴显式：勾选状态就是本任务的最终策略）；
       // 不勾则整段省略 → 服务端按当时的全局默认落快照。
       explorationPolicy: policyCustom
@@ -455,7 +453,9 @@ export function CreateTaskSheet({
                 setCategoryID(template.category_id ?? undefined);
                 setInterceptRules(template.intercept_rules ?? []);
                 setMode(template.mode === "src" ? "src" : "");
-                setSrcProgramID(template.mode === "src" && template.src_program_id ? template.src_program_id : undefined);
+                setSrcProgramID(
+                  template.mode === "src" && template.src_program_id ? template.src_program_id : undefined,
+                );
                 setInheritCoverage(template.mode === "src" && !!template.inherit_coverage);
                 const batch = template.mode === "src" ? template.batch : null;
                 setBatchFanout(!!batch);
@@ -464,9 +464,7 @@ export function CreateTaskSheet({
                 setMaxShards(batch?.max_shards ? String(batch.max_shards) : "50");
                 setCampaignName(batch?.campaign_name ?? "");
                 setCampaignTokenBudget(batch?.campaign_token_budget ? String(batch.campaign_token_budget) : "0");
-                setBatchAssetFilter(
-                  batch?.only_untested_assets ? "untested" : batch?.only_new_assets ? "new" : "all",
-                );
+                setBatchAssetFilter(batch?.only_untested_assets ? "untested" : batch?.only_new_assets ? "new" : "all");
                 setUploadCount(0);
               }}
               portalContainer={sheetContentRef}
@@ -513,9 +511,7 @@ export function CreateTaskSheet({
                       }
                     }}
                     className={`rounded px-2.5 py-1 text-xs transition-colors ${
-                      mode === opt.value
-                        ? "bg-primary text-primary-foreground"
-                        : "text-muted-foreground hover:bg-muted"
+                      mode === opt.value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
                     }`}
                   >
                     {opt.label}
@@ -573,9 +569,7 @@ export function CreateTaskSheet({
                     <SelectItem value="hackerone">HackerOne</SelectItem>
                   </SelectContent>
                 </Select>
-                <FieldDescription>
-                  只决定【提交信息】块的字段名/顺序；绑定平台项目时以项目规则为准。
-                </FieldDescription>
+                <FieldDescription>只决定【提交信息】块的字段名/顺序；绑定平台项目时以项目规则为准。</FieldDescription>
               </Field>
             )}
             {mode === "src" && (
@@ -609,8 +603,8 @@ export function CreateTaskSheet({
                   onChange={(e) => setAssetCostBudget(e.target.value)}
                 />
                 <FieldDescription>
-                  单个资产的 LLM 成本上限（0 = 跟随系统设置的全局默认）。到点后新意图被拒绝、
-                  未完成格转 budget_stop，预算转向其他资产。
+                  单个资产的 LLM 成本上限（0 = 跟随系统设置的全局默认）。到点后新意图被拒绝、 未完成格转
+                  budget_stop，预算转向其他资产。
                 </FieldDescription>
               </Field>
             )}
@@ -627,8 +621,8 @@ export function CreateTaskSheet({
                   onChange={(e) => setAssetTimeBudget(e.target.value)}
                 />
                 <FieldDescription>
-                  从资产首次产生 LLM 用量起算的墙钟上限（0 = 跟随系统设置的全局默认）。到点后新意图被拒绝、
-                  未完成格转 budget_stop，预算转向其他资产；任务本身不会因此收尾。
+                  从资产首次产生 LLM 用量起算的墙钟上限（0 = 跟随系统设置的全局默认）。到点后新意图被拒绝、 未完成格转
+                  budget_stop，预算转向其他资产；任务本身不会因此收尾。
                 </FieldDescription>
               </Field>
             )}
@@ -654,8 +648,8 @@ export function CreateTaskSheet({
                 批量扇出（按资产分片建多个任务）
               </label>
               <FieldDescription>
-                需要先选择关联企业或来源任务来确定资产范围。每个分片只包含本片 host 的 scope，
-                归入同一个 campaign；并发仍受全局任务并发上限约束。
+                需要先选择关联企业或来源任务来确定资产范围。每个分片只包含本片 host 的 scope， 归入同一个
+                campaign；并发仍受全局任务并发上限约束。
               </FieldDescription>
               {batchFanout ? (
                 <div className="grid gap-3 rounded-lg border p-3">
@@ -748,7 +742,13 @@ export function CreateTaskSheet({
                     />
                   </div>
                   <div className="flex items-center gap-2">
-                    <Button type="button" variant="outline" size="sm" onClick={() => void previewBatch()} disabled={creating}>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void previewBatch()}
+                      disabled={creating}
+                    >
                       预览分片
                     </Button>
                     <span className="text-muted-foreground text-xs">

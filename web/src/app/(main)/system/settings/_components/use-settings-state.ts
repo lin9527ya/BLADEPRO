@@ -410,7 +410,7 @@ export function useSettingsState() {
     try {
       parsed = JSON.parse(areaTiers || "{}");
     } catch {
-      toast.error("风险面分层必须是合法 JSON，例如 {\"authz\":\"strong\",\"paths\":\"cheap\"}");
+      toast.error('风险面分层必须是合法 JSON，例如 {"authz":"strong","paths":"cheap"}');
       return;
     }
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {

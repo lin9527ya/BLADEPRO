@@ -2,10 +2,11 @@
 
 import * as React from "react";
 
-import { fmtTime } from "./skills-helpers";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { MissingSkill, SkillItem } from "@/lib/types";
+
+import { fmtTime } from "./skills-helpers";
 
 // 技能总览：调用次数排行、从未使用与近期活跃。
 

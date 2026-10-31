@@ -129,7 +129,10 @@ export function RowSrcFunnel() {
                 const prev = i > 0 ? stages[i - 1].value : 0;
                 const rate = prev > 0 ? Math.round((s.value / prev) * 100) : null;
                 return (
-                  <div key={s.key} className="grid grid-cols-[9rem_minmax(0,1fr)_5rem_3.5rem] items-center gap-2 text-sm">
+                  <div
+                    key={s.key}
+                    className="grid grid-cols-[9rem_minmax(0,1fr)_5rem_3.5rem] items-center gap-2 text-sm"
+                  >
                     <span className="text-muted-foreground truncate text-xs" title={s.label}>
                       {s.label}
                     </span>

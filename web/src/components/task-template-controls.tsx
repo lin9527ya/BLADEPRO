@@ -354,9 +354,7 @@ function TaskTemplateManager({
                     onChange={(event) =>
                       patchDraft({
                         mode: event.target.value as TaskMode,
-                        ...(event.target.value !== "src"
-                          ? { srcProgramID: null, inheritCoverage: false }
-                          : {}),
+                        ...(event.target.value !== "src" ? { srcProgramID: null, inheritCoverage: false } : {}),
                       })
                     }
                   >
@@ -437,9 +435,7 @@ function TaskTemplateManager({
                               id="task-template-assets-per-task"
                               inputMode="numeric"
                               value={String(draft.batch.assets_per_task ?? 20)}
-                              onChange={(event) =>
-                                patchBatch({ assets_per_task: Number(event.target.value) || 0 })
-                              }
+                              onChange={(event) => patchBatch({ assets_per_task: Number(event.target.value) || 0 })}
                             />
                           </Field>
                           <Field>

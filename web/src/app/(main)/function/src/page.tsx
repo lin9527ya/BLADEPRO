@@ -256,7 +256,17 @@ function draftFromProgram(p: SrcProgram): ProgramDraft {
 }
 
 /** 点选切换的小圆角按钮（与建任务里的策略词表同款样式）。 */
-function ToggleChip({ on, label, title, onClick }: { on: boolean; label: string; title?: string; onClick: () => void }) {
+function ToggleChip({
+  on,
+  label,
+  title,
+  onClick,
+}: {
+  on: boolean;
+  label: string;
+  title?: string;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"
@@ -468,9 +478,7 @@ function LedgerTab() {
                     <Empty className="py-4">
                       <EmptyHeader>
                         <EmptyTitle>还没有提交台账</EmptyTitle>
-                        <EmptyDescription>
-                          在任务详情的 SRC 页签里「准备交付件」后，这里就能看到。
-                        </EmptyDescription>
+                        <EmptyDescription>在任务详情的 SRC 页签里「准备交付件」后，这里就能看到。</EmptyDescription>
                       </EmptyHeader>
                     </Empty>
                   </TableCell>
@@ -555,7 +563,6 @@ function LedgerTab() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
     </div>
   );
 }
@@ -565,8 +572,17 @@ function LedgerTab() {
 // 自定义提交模板的字段编辑用「每行 label|source|required」的轻量文本格式；
 // 比嵌套 JSON 好填，也比纯自由文本可校验。
 const SUBMIT_FIELD_SOURCES = [
-  "title", "severity", "cwe", "cvss", "asset", "repro_env", "attachments",
-  "platform", "program", "egress_ip", "test_accounts",
+  "title",
+  "severity",
+  "cwe",
+  "cvss",
+  "asset",
+  "repro_env",
+  "attachments",
+  "platform",
+  "program",
+  "egress_ip",
+  "test_accounts",
 ];
 
 function fieldsToText(fields?: SrcSubmitField[]): string {
@@ -592,7 +608,11 @@ function ProgramsTab() {
   const [tplOpen, setTplOpen] = React.useState(false);
   const [tplSaving, setTplSaving] = React.useState(false);
   const [tplDraft, setTplDraft] = React.useState({
-    key: "", name: "", ruleUrl: "", ruleDate: "", header: "",
+    key: "",
+    name: "",
+    ruleUrl: "",
+    ruleDate: "",
+    header: "",
     fieldsText: "Title|title|1\nSeverity|severity|1\nAsset|asset|1",
   });
   const [loading, setLoading] = React.useState(true);
@@ -677,8 +697,12 @@ function ProgramsTab() {
 
   const editTemplate = (t: SrcSubmitTemplate) => {
     setTplDraft({
-      key: t.key, name: t.name, ruleUrl: t.rule_url ?? "", ruleDate: t.rule_date ?? "",
-      header: t.header ?? "", fieldsText: fieldsToText(t.fields),
+      key: t.key,
+      name: t.name,
+      ruleUrl: t.rule_url ?? "",
+      ruleDate: t.rule_date ?? "",
+      header: t.header ?? "",
+      fieldsText: fieldsToText(t.fields),
     });
     setTplOpen(true);
   };
@@ -890,7 +914,9 @@ function ProgramsTab() {
                         ) : null}
                       </div>
                     </TableCell>
-                    <TableCell className="text-xs [overflow-wrap:anywhere]">{severityMapText(p.severity_map)}</TableCell>
+                    <TableCell className="text-xs [overflow-wrap:anywhere]">
+                      {severityMapText(p.severity_map)}
+                    </TableCell>
                     <TableCell className="text-right whitespace-nowrap">
                       <Button size="sm" variant="ghost" onClick={() => openEdit(p)}>
                         <PencilIcon /> 编辑
@@ -939,9 +965,7 @@ function ProgramsTab() {
               {dupGroups.map((g) => (
                 <div key={g.fingerprint} className="grid gap-1.5 px-4 py-3">
                   <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant={g.strong ? "secondary" : "outline"}>
-                      {g.strong ? "强指纹" : "降级指纹"}
-                    </Badge>
+                    <Badge variant={g.strong ? "secondary" : "outline"}>{g.strong ? "强指纹" : "降级指纹"}</Badge>
                     <code className="text-muted-foreground text-xs">{g.fingerprint}</code>
                     <span className="text-xs">{g.count} 条</span>
                   </div>
@@ -955,9 +979,7 @@ function ProgramsTab() {
                         <Badge variant="outline" className="text-[10px]">
                           {f.severity || "—"}
                         </Badge>
-                        <span className="text-muted-foreground">
-                          {f.task_name || `任务 #${f.task_id}`}
-                        </span>
+                        <span className="text-muted-foreground">{f.task_name || `任务 #${f.task_id}`}</span>
                         {f.submission_status ? (
                           <span className="text-muted-foreground">台账 {f.submission_status}</span>
                         ) : null}
@@ -982,9 +1004,7 @@ function ProgramsTab() {
         <DialogContent className="flex max-h-[88vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
           <DialogHeader className="border-b p-6">
             <DialogTitle>{editing ? `编辑项目：${editing.name}` : "新建 SRC 平台项目"}</DialogTitle>
-            <DialogDescription>
-              规则会编译进绑定任务的提示词与命令拦截：项目规则改动不影响已建任务。
-            </DialogDescription>
+            <DialogDescription>规则会编译进绑定任务的提示词与命令拦截：项目规则改动不影响已建任务。</DialogDescription>
           </DialogHeader>
 
           <div className="min-h-0 flex-1 overflow-y-auto p-6">
@@ -1010,7 +1030,10 @@ function ProgramsTab() {
               <div className="grid gap-2">
                 <Label htmlFor="program-template">提交块模板</Label>
                 <div className="flex items-center gap-2">
-                  <Select value={draft.platformTemplate || "auto"} onValueChange={(v) => patch({ platformTemplate: v === "auto" ? "" : v })}>
+                  <Select
+                    value={draft.platformTemplate || "auto"}
+                    onValueChange={(v) => patch({ platformTemplate: v === "auto" ? "" : v })}
+                  >
                     <SelectTrigger id="program-template">
                       <SelectValue />
                     </SelectTrigger>
@@ -1018,7 +1041,8 @@ function ProgramsTab() {
                       <SelectItem value="auto">自动识别（按平台名）</SelectItem>
                       {submitTemplates.map((t) => (
                         <SelectItem key={t.key} value={t.key}>
-                          {t.name}{t.custom ? "（自定义）" : ""}
+                          {t.name}
+                          {t.custom ? "（自定义）" : ""}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -1029,7 +1053,11 @@ function ProgramsTab() {
                     size="sm"
                     onClick={() => {
                       setTplDraft({
-                        key: "custom:", name: "", ruleUrl: "", ruleDate: "", header: "",
+                        key: "custom:",
+                        name: "",
+                        ruleUrl: "",
+                        ruleDate: "",
+                        header: "",
                         fieldsText: "Title|title|1\nSeverity|severity|1\nAsset|asset|1",
                       });
                       setTplOpen(true);
@@ -1039,7 +1067,8 @@ function ProgramsTab() {
                   </Button>
                 </div>
                 <p className="text-muted-foreground text-xs">
-                  只决定【提交信息】块的字段名/顺序，正文仍是同一份 8 块报告；模板内置日期见提交块，提交前按平台最新规则复核。
+                  只决定【提交信息】块的字段名/顺序，正文仍是同一份 8
+                  块报告；模板内置日期见提交块，提交前按平台最新规则复核。
                 </p>
               </div>
               <div className="grid gap-2">
@@ -1139,7 +1168,9 @@ function ProgramsTab() {
                           }
                           onChange={(e) =>
                             patch({
-                              scopeRows: draft.scopeRows.map((x, i) => (i === idx ? { ...x, value: e.target.value } : x)),
+                              scopeRows: draft.scopeRows.map((x, i) =>
+                                i === idx ? { ...x, value: e.target.value } : x,
+                              ),
                             })
                           }
                         />
@@ -1148,7 +1179,9 @@ function ProgramsTab() {
                           placeholder="备注（可选）"
                           onChange={(e) =>
                             patch({
-                              scopeRows: draft.scopeRows.map((x, i) => (i === idx ? { ...x, note: e.target.value } : x)),
+                              scopeRows: draft.scopeRows.map((x, i) =>
+                                i === idx ? { ...x, note: e.target.value } : x,
+                              ),
                             })
                           }
                         />
@@ -1493,20 +1526,22 @@ function ProgramsTab() {
               {submitTemplates.filter((t) => t.custom).length === 0 ? (
                 <p className="text-muted-foreground text-sm">还没有自定义模板。</p>
               ) : (
-                submitTemplates.filter((t) => t.custom).map((t) => (
-                  <div key={t.key} className="flex flex-wrap items-center gap-2 rounded border px-3 py-2 text-sm">
-                    <code className="text-xs">{t.key}</code>
-                    <span>{t.name}</span>
-                    <div className="ml-auto flex gap-1">
-                      <Button type="button" size="sm" variant="ghost" onClick={() => editTemplate(t)}>
-                        编辑
-                      </Button>
-                      <Button type="button" size="sm" variant="ghost" onClick={() => void removeTemplate(t.key)}>
-                        删除
-                      </Button>
+                submitTemplates
+                  .filter((t) => t.custom)
+                  .map((t) => (
+                    <div key={t.key} className="flex flex-wrap items-center gap-2 rounded border px-3 py-2 text-sm">
+                      <code className="text-xs">{t.key}</code>
+                      <span>{t.name}</span>
+                      <div className="ml-auto flex gap-1">
+                        <Button type="button" size="sm" variant="ghost" onClick={() => editTemplate(t)}>
+                          编辑
+                        </Button>
+                        <Button type="button" size="sm" variant="ghost" onClick={() => void removeTemplate(t.key)}>
+                          删除
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                ))
+                  ))
               )}
             </div>
             <div className="grid gap-3 border-t pt-4 sm:grid-cols-2">
@@ -1520,11 +1555,19 @@ function ProgramsTab() {
               </div>
               <div className="grid gap-1">
                 <Label htmlFor="tpl-rule-url">规则页 URL（可选）</Label>
-                <Input id="tpl-rule-url" value={tplDraft.ruleUrl} onChange={(e) => patchTpl({ ruleUrl: e.target.value })} />
+                <Input
+                  id="tpl-rule-url"
+                  value={tplDraft.ruleUrl}
+                  onChange={(e) => patchTpl({ ruleUrl: e.target.value })}
+                />
               </div>
               <div className="grid gap-1">
                 <Label htmlFor="tpl-rule-date">规则页日期（可选）</Label>
-                <Input id="tpl-rule-date" value={tplDraft.ruleDate} onChange={(e) => patchTpl({ ruleDate: e.target.value })} />
+                <Input
+                  id="tpl-rule-date"
+                  value={tplDraft.ruleDate}
+                  onChange={(e) => patchTpl({ ruleDate: e.target.value })}
+                />
               </div>
               <div className="grid gap-1 sm:col-span-2">
                 <Label htmlFor="tpl-header">头部说明（可选，原样插入提交块）</Label>

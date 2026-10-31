@@ -3,6 +3,7 @@
 import * as React from "react";
 
 import Link from "next/link";
+
 import { CheckCheckIcon, ListChecksIcon, RotateCcwIcon, ShieldAlertIcon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 
@@ -52,7 +53,9 @@ const KIND_TONE: Record<ReviewKind, string> = {
 function itemLabel(item: ReviewQueueItem): string {
   if (item.title) return item.title;
   if (item.asset_label) {
-    return item.area ? `${item.asset_label} · ${item.area}${item.item && item.item !== "*" ? `/${item.item}` : ""}` : item.asset_label;
+    return item.area
+      ? `${item.asset_label} · ${item.area}${item.item && item.item !== "*" ? `/${item.item}` : ""}`
+      : item.asset_label;
   }
   return item.ref_key;
 }
@@ -121,10 +124,17 @@ export function ReviewQueueDialog({ onChanged }: { onChanged?: () => void }) {
       const r = await api.reviewActions(action, selectedItems, note.trim());
       if (r.failed > 0) {
         toast.warning(`已处理 ${r.ok} 项，${r.failed} 项失败`, {
-          description: r.results.filter((x) => !x.ok).map((x) => x.error).filter(Boolean).slice(0, 3).join("；"),
+          description: r.results
+            .filter((x) => !x.ok)
+            .map((x) => x.error)
+            .filter(Boolean)
+            .slice(0, 3)
+            .join("；"),
         });
       } else {
-        toast.success(`已处理 ${r.ok} 项（${action === "accept" ? "接受" : action === "reject" ? "打回" : "退回重测"}）`);
+        toast.success(
+          `已处理 ${r.ok} 项（${action === "accept" ? "接受" : action === "reject" ? "打回" : "退回重测"}）`,
+        );
       }
       setNote("");
       setSelected(new Set());
@@ -156,9 +166,8 @@ export function ReviewQueueDialog({ onChanged }: { onChanged?: () => void }) {
             <ShieldAlertIcon className="size-4 text-amber-500" /> 人工复核队列
           </DialogTitle>
           <DialogDescription>
-            按严重度 × 不确定性 × 临界程度排序：报告缺段、复验存疑、疑似重复、预算停、
-            四件套全 N/A，以及台账 SLA（ready 未提交 / submitted 无结论 / accepted 未到账）。
-            可批量接受/打回/退回重测；已处理项不再重复出现。
+            按严重度 × 不确定性 × 临界程度排序：报告缺段、复验存疑、疑似重复、预算停、 四件套全 N/A，以及台账 SLA（ready
+            未提交 / submitted 无结论 / accepted 未到账）。 可批量接受/打回/退回重测；已处理项不再重复出现。
           </DialogDescription>
         </DialogHeader>
 
@@ -181,7 +190,13 @@ export function ReviewQueueDialog({ onChanged }: { onChanged?: () => void }) {
                 </span>
               ))}
             </span>
-            <Button size="sm" variant="ghost" className="ml-auto" onClick={() => void load()} disabled={loading || busy}>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="ml-auto"
+              onClick={() => void load()}
+              disabled={loading || busy}
+            >
               {loading ? <Spinner /> : <RotateCcwIcon />} 刷新
             </Button>
           </div>

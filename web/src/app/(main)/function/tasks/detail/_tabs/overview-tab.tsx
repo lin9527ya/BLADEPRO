@@ -1,11 +1,25 @@
 "use client";
 
-import { taskIsTerminal } from "@/lib/status";
-
 import * as React from "react";
-import { TaskInterceptRulesCard, TaskExplorationPolicyCard } from "./_components/task-policy-cards";
 
-import { ActivityIcon, AlertTriangleIcon, BugIcon, CheckIcon, ClockIcon, CoinsIcon, ListChecksIcon, PencilIcon, PlayIcon, PlusIcon, RefreshCwIcon, ShieldAlertIcon, ShieldCheckIcon, TargetIcon, Trash2Icon, XIcon } from "lucide-react";
+import {
+  ActivityIcon,
+  AlertTriangleIcon,
+  BugIcon,
+  CheckIcon,
+  ClockIcon,
+  CoinsIcon,
+  ListChecksIcon,
+  PencilIcon,
+  PlayIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  ShieldAlertIcon,
+  ShieldCheckIcon,
+  TargetIcon,
+  Trash2Icon,
+  XIcon,
+} from "lucide-react";
 
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
@@ -13,9 +27,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Progress } from "@/components/ui/progress";
-
+import { taskIsTerminal } from "@/lib/status";
 import { TaskConstraint, TaskScopeRow } from "@/lib/types";
 
+import { TaskExplorationPolicyCard, TaskInterceptRulesCard } from "./_components/task-policy-cards";
 import { useOverviewState } from "./_components/use-overview-state";
 
 // 紧凑格式化 token 数（12345 → 12.3k，2000000 → 2M）。
@@ -1005,4 +1020,3 @@ export function OverviewTab({ taskId }: { taskId: string }) {
     </div>
   );
 }
-

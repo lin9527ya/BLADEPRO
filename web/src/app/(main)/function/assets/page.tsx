@@ -196,9 +196,7 @@ export default function AssetsPage() {
   const saveTier = async (id: number, tier: string) => {
     try {
       await api.setAssetTier(id, tier);
-      setRows((prev) =>
-        prev.map((a) => (a.id === id ? { ...a, extra: { ...(a.extra ?? {}), asset_tier: tier } } : a)),
-      );
+      setRows((prev) => prev.map((a) => (a.id === id ? { ...a, extra: { ...(a.extra ?? {}), asset_tier: tier } } : a)));
       toast.success(tier ? `已标记为${ASSET_TIER_LABEL[tier] ?? tier}` : "已清除资产分级");
     } catch (error) {
       toast.error("保存分级失败：" + (error as Error).message);

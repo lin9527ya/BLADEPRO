@@ -105,7 +105,8 @@ export const MCP_CATALOG: MCPCatalogItem[] = [
     transport: "http",
     url: "http://127.0.0.1:7456/mcp",
     env: "X-API-Key=",
-    needs: "Docker 20.10+ 与 Docker Compose v2；先 clone 仓库执行 ./bin/bootstrap-local.sh --start，并把 .env 里的 MCP_API_KEY 填到 X-API-Key",
+    needs:
+      "Docker 20.10+ 与 Docker Compose v2；先 clone 仓库执行 ./bin/bootstrap-local.sh --start，并把 .env 里的 MCP_API_KEY 填到 X-API-Key",
     note: "社区实现，非 ZAP 官方；主动扫描会真实发包，SRC 项目先确认平台允许扫描器并调低并发。",
   },
 
@@ -187,7 +188,8 @@ export const MCP_CATALOG: MCPCatalogItem[] = [
     desc: "小程序安全调试台：运行时调试、WxAPI/云函数捕获与重放、wxapkg 还原、敏感信息扫描、session_key/微信 AK 提取。",
     transport: "http",
     url: "http://127.0.0.1:9527/mcp",
-    needs: "Windows 10/11（主）或 macOS Apple Silicon（能力受限）；微信桌面端已登录并打开目标小程序；Node.js 22+；先在 WxTap「系统→MCP 服务」启动",
+    needs:
+      "Windows 10/11（主）或 macOS Apple Silicon（能力受限）；微信桌面端已登录并打开目标小程序；Node.js 22+；先在 WxTap「系统→MCP 服务」启动",
     note: "Linux 桌面微信不在支持范围；仅限自有或已获书面授权的小程序。",
   },
 ];

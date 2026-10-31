@@ -192,10 +192,16 @@ export default function PlaybooksPage() {
                 return (
                   <TableRow key={p.id}>
                     <TableCell>
-                      <button type="button" className="text-left font-medium hover:underline" onClick={() => setSelected(p)}>
+                      <button
+                        type="button"
+                        className="text-left font-medium hover:underline"
+                        onClick={() => setSelected(p)}
+                      >
                         {p.title}
                       </button>
-                      {p.summary && <div className="mt-0.5 line-clamp-2 text-muted-foreground text-xs">{p.summary}</div>}
+                      {p.summary && (
+                        <div className="mt-0.5 line-clamp-2 text-muted-foreground text-xs">{p.summary}</div>
+                      )}
                     </TableCell>
                     <TableCell>
                       {parts.length === 0 ? (
@@ -216,11 +222,7 @@ export default function PlaybooksPage() {
                       {fmtTime(p.last_verified_at ?? p.updated_at)}
                     </TableCell>
                     <TableCell>
-                      {p.status === "active" ? (
-                        <Badge>启用</Badge>
-                      ) : (
-                        <Badge variant="secondary">已废弃</Badge>
-                      )}
+                      {p.status === "active" ? <Badge>启用</Badge> : <Badge variant="secondary">已废弃</Badge>}
                     </TableCell>
                     <TableCell>
                       <Button size="sm" variant="ghost" onClick={() => setSelected(p)}>
@@ -249,9 +251,7 @@ export default function PlaybooksPage() {
         <DialogContent className="max-h-[85vh] max-w-3xl overflow-hidden">
           <DialogHeader>
             <DialogTitle>{selected?.title}</DialogTitle>
-            <DialogDescription>
-              {selected?.summary || "无摘要"}
-            </DialogDescription>
+            <DialogDescription>{selected?.summary || "无摘要"}</DialogDescription>
           </DialogHeader>
           {selected && (
             <div className="max-h-[60vh] space-y-4 overflow-auto pr-1">
@@ -297,7 +297,9 @@ export default function PlaybooksPage() {
               {selected.evidence && (
                 <div>
                   <div className="mb-1 font-medium text-sm">原始证据（脱敏后）</div>
-                  <pre className="max-h-60 overflow-auto rounded-md border bg-muted/20 p-3 text-xs">{selected.evidence}</pre>
+                  <pre className="max-h-60 overflow-auto rounded-md border bg-muted/20 p-3 text-xs">
+                    {selected.evidence}
+                  </pre>
                 </div>
               )}
               {selected.last_note && (
@@ -332,9 +334,7 @@ export default function PlaybooksPage() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>废弃这张打法卡</DialogTitle>
-            <DialogDescription>
-              废弃后不再参与指纹匹配；理由会留在卡片上，供后来人判断。
-            </DialogDescription>
+            <DialogDescription>废弃后不再参与指纹匹配；理由会留在卡片上，供后来人判断。</DialogDescription>
           </DialogHeader>
           <Textarea
             value={reason}

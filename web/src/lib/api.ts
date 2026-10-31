@@ -31,7 +31,6 @@ import type {
   CommandRecord,
   Company,
   CompanyKnowledge,
-  Playbook,
   CompanyScopeMutation,
   CompanyScopeRule,
   ConstraintCompilePreview,
@@ -44,9 +43,6 @@ import type {
   DailyTokenBucket,
   DeleteTaskOptions,
   DeleteTaskResult,
-  ReviewActionResults,
-  ReviewQueue,
-  ReviewQueueItem,
   Edge,
   EvidenceBodyPreview,
   ExplorationNodePage,
@@ -95,9 +91,15 @@ import type {
   NotificationFilter,
   NotificationMeta,
   OpsecKnowledgeResponse,
+  Playbook,
   PolicyRuleDraft,
+  ProgramScopeInput,
+  ProgramScopeRow,
   PromptVar,
   PromptVersion,
+  ReviewActionResults,
+  ReviewQueue,
+  ReviewQueueItem,
   ScheduleFrequency,
   ScheduleTaskSpec,
   ScopeEnforcement,
@@ -107,18 +109,16 @@ import type {
   SkillCall,
   SkillItem,
   SrcCell,
-  SrcPrepareResult,
-  ProgramScopeInput,
-  ProgramScopeRow,
   SrcDuplicateGroup,
   SrcFunnel,
-  SrcSubmitField,
-  SrcSubmitTemplate,
+  SrcPrepareResult,
   SrcProgram,
   SrcProgramInput,
   SrcStats,
   SrcSubmission,
   SrcSubmissionEvent,
+  SrcSubmitField,
+  SrcSubmitTemplate,
   SrcTaskState,
   SSProject,
   SSTask,
@@ -558,10 +558,13 @@ export const api = {
       evidence_node_id?: number;
     },
   ) =>
-    post<{ check: Record<string, unknown>; gaps_total: number; checks_total: number; checks_done: number; finishable: boolean }>(
-      `/tasks/${id}/src/checks`,
-      input,
-    ),
+    post<{
+      check: Record<string, unknown>;
+      gaps_total: number;
+      checks_total: number;
+      checks_done: number;
+      finishable: boolean;
+    }>(`/tasks/${id}/src/checks`, input),
   // 人工放行收尾：必须写理由（进审计），只替 engine 做判定，不改覆盖格。
   forceFinishSrc: (id: string, reason: string) =>
     post<{ ok: boolean; status: string; gaps_total: number }>(`/tasks/${id}/src/force-finish`, { reason }),
@@ -577,9 +580,7 @@ export const api = {
     if (taskId) q.set("task_id", taskId);
     if (status) q.set("status", status);
     const suffix = q.toString();
-    return get<{ submissions: SrcSubmission[]; total: number }>(
-      `/src/submissions${suffix ? `?${suffix}` : ""}`,
-    );
+    return get<{ submissions: SrcSubmission[]; total: number }>(`/src/submissions${suffix ? `?${suffix}` : ""}`);
   },
   // 台账状态历史（新建/推进/关键字段变更）。
   srcSubmissionEvents: (id: number) =>
@@ -615,9 +616,7 @@ export const api = {
     const qs = new URLSearchParams();
     if (params?.taskId) qs.set("task_id", String(params.taskId));
     if (params?.limit) qs.set("limit", String(params.limit));
-    return get<{ groups: SrcDuplicateGroup[]; total: number }>(
-      `/src/duplicate-groups${qs.toString() ? `?${qs}` : ""}`,
-    );
+    return get<{ groups: SrcDuplicateGroup[]; total: number }>(`/src/duplicate-groups${qs.toString() ? `?${qs}` : ""}`);
   },
   srcFunnel: (params?: { days?: number; programId?: number }) => {
     const qs = new URLSearchParams();
@@ -626,8 +625,7 @@ export const api = {
     return get<SrcFunnel>(`/src/funnel${qs.toString() ? `?${qs}` : ""}`);
   },
   createSrcProgram: (input: SrcProgramInput) => post<SrcProgram>("/src/programs", input),
-  srcProgramScope: (id: number) =>
-    get<{ rows: ProgramScopeRow[]; total: number }>(`/src/programs/${id}/scope`),
+  srcProgramScope: (id: number) => get<{ rows: ProgramScopeRow[]; total: number }>(`/src/programs/${id}/scope`),
   saveSrcProgramScope: (id: number, rows: ProgramScopeInput[]) =>
     put<{ rows: ProgramScopeRow[]; total: number }>(`/src/programs/${id}/scope`, { rows }),
   updateSrcProgram: (id: number, input: SrcProgramInput) => patch<SrcProgram>(`/src/programs/${id}`, input),
@@ -1007,8 +1005,7 @@ export const api = {
   updateCampaign: (
     id: number,
     body: { name?: string; note?: string; company_id?: number; priority?: number; token_budget?: number },
-  ) =>
-    patch<Campaign>(`/campaigns/${id}`, body),
+  ) => patch<Campaign>(`/campaigns/${id}`, body),
   deleteCampaign: (id: number) => del<{ deleted: boolean; tasks_unbound: number }>(`/campaigns/${id}`),
   // 声明式：给出这次作业应当包含的全部任务，多退少补。
   setCampaignTasks: (id: number, taskIds: number[]) =>

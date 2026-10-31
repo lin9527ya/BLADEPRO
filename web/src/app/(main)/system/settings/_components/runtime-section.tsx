@@ -120,9 +120,7 @@ export function RuntimeSection({ s }: { s: ReturnType<typeof useSettingsState> }
                 <b>输入+输出</b>达到上限后，新意图会被拒绝，未完成的覆盖格自动转 budget_stop，预算转向其他资产；
                 任务本身不会因此收尾。建任务时快照，运行中改全局设置不影响已建任务。留空或 <b>0</b> = 关闭。
                 <br />
-                {Number(assetTokenBudget) > 0
-                  ? "已配置 · 单资产到量自动收口并转向"
-                  : "未配置 · 资产不设 token 上限"}
+                {Number(assetTokenBudget) > 0 ? "已配置 · 单资产到量自动收口并转向" : "未配置 · 资产不设 token 上限"}
               </>
             }
           >
@@ -184,9 +182,8 @@ export function RuntimeSection({ s }: { s: ReturnType<typeof useSettingsState> }
             htmlFor="area-tiers"
             hint={
               <>
-                仅在开启「模型自动分层」且任务/角色没有显式模型绑定时生效。高价值面用 strong，
-                清点/枚举面用 cheap；未列出的面用内建默认。JSON 对象，例如{" "}
-                <code>{'{"authz":"strong","paths":"cheap"}'}</code>。
+                仅在开启「模型自动分层」且任务/角色没有显式模型绑定时生效。高价值面用 strong， 清点/枚举面用
+                cheap；未列出的面用内建默认。JSON 对象，例如 <code>{'{"authz":"strong","paths":"cheap"}'}</code>。
               </>
             }
           >
@@ -199,12 +196,7 @@ export function RuntimeSection({ s }: { s: ReturnType<typeof useSettingsState> }
                 disabled={!loaded || savingAreaTiers}
                 onChange={(e) => setAreaTiers(e.target.value)}
               />
-              <Button
-                type="button"
-                className="w-fit"
-                onClick={saveAreaTiers}
-                disabled={!loaded || savingAreaTiers}
-              >
+              <Button type="button" className="w-fit" onClick={saveAreaTiers} disabled={!loaded || savingAreaTiers}>
                 保存
               </Button>
             </div>
@@ -217,8 +209,8 @@ export function RuntimeSection({ s }: { s: ReturnType<typeof useSettingsState> }
             htmlFor="asset-cost-budget"
             hint={
               <>
-                按 <code>llm_usage.cost_usd</code>（调用时 profile 单价折算）累计；达到上限后新意图被拒绝、
-                未完成格转 budget_stop，预算转向其他资产。建任务时快照；<b>0 = 关闭</b>。
+                按 <code>llm_usage.cost_usd</code>（调用时 profile 单价折算）累计；达到上限后新意图被拒绝、 未完成格转
+                budget_stop，预算转向其他资产。建任务时快照；<b>0 = 关闭</b>。
               </>
             }
           >
@@ -270,9 +262,8 @@ export function RuntimeSection({ s }: { s: ReturnType<typeof useSettingsState> }
             label="要求 SRC 任务在降权沙箱中运行"
             hint={
               <>
-                开启后，若服务端未真正启用 agent 降权（启动时未设置并成功应用{" "}
-                <code>BLADEPRO_AGENT_USER</code>），创建 SRC 任务会被拒绝。它防的是“以为隔离了、
-                实际与服务端同权”——目标内容里的提示注入就等于控制台全权。
+                开启后，若服务端未真正启用 agent 降权（启动时未设置并成功应用 <code>BLADEPRO_AGENT_USER</code>），创建
+                SRC 任务会被拒绝。它防的是“以为隔离了、 实际与服务端同权”——目标内容里的提示注入就等于控制台全权。
               </>
             }
           >
@@ -297,9 +288,8 @@ export function RuntimeSection({ s }: { s: ReturnType<typeof useSettingsState> }
             hint={
               <>
                 所有经过录制代理的目标流量（Bash/curl、run_execution、WebFetch、browser MCP）按
-                <b>全局</b>与<b>单 host</b>两级令牌桶排队；到达上限时等待而不是报错，超过排队上限后放行
-                （fail-open）。<b>0 = 关闭</b>。只治理经录制代理的流量；capture 关闭且未配置全局代理时目标直连，
-                不经过这里。
+                <b>全局</b>与<b>单 host</b>两级令牌桶排队；到达上限时等待而不是报错，超过排队上限后放行 （fail-open）。
+                <b>0 = 关闭</b>。只治理经录制代理的流量；capture 关闭且未配置全局代理时目标直连， 不经过这里。
               </>
             }
           >

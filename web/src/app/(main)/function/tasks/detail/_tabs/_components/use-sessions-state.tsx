@@ -1100,7 +1100,8 @@ export function useSessionsState(taskId: string) {
     // 运行中 = 实时注入（下一步动作前生效，拦掉那一次工具调用让模型改道）；
     // 已暂停 = 续发（消息作为下一轮输入）。其余状态不发。
     const steer = active.status === "running";
-    if (!intentId || active.inherited || (!steer && active.status !== "paused") || workerMessageSending || !message) return;
+    if (!intentId || active.inherited || (!steer && active.status !== "paused") || workerMessageSending || !message)
+      return;
     if (workerMessageCharCount(message) > MAX_WORKER_MESSAGE_CHARS) {
       toast.error(`消息不能超过 ${MAX_WORKER_MESSAGE_CHARS} 个字符`);
       return;

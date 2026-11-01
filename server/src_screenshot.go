@@ -34,9 +34,14 @@ func screenshotBrowser() string {
 			return v
 		}
 	}
-	for _, name := range []string{"chromium", "chromium-browser", "google-chrome", "google-chrome-stable"} {
+	for _, name := range screenshotBrowserCandidates() {
 		if p, err := exec.LookPath(name); err == nil {
 			return p
+		}
+		if filepath.IsAbs(name) {
+			if _, err := os.Stat(name); err == nil {
+				return name
+			}
 		}
 	}
 	return ""
@@ -85,7 +90,7 @@ func (s *Server) runSrcScreenshot(ctx context.Context, req agent.SrcScreenshotRe
 	}
 	browser := screenshotBrowser()
 	if browser == "" {
-		return nil, fmt.Errorf("未找到 chromium/google-chrome（可用 BLADEPRO_CHROMIUM 指定路径）")
+		return nil, fmt.Errorf("未找到 Chrome/Chromium/Edge（Windows 可设置 BLADEPRO_CHROMIUM=C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe）")
 	}
 	width, height := req.Width, req.Height
 	if width <= 0 {

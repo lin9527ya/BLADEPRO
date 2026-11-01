@@ -252,6 +252,8 @@ cp config.example.json config.json   # 填好 database 连接
 > 请用 `start.sh` / `start.bat` 启动，而不是直接跑 `./bladepro`。它是个守护脚本：程序退出后按退出码决定是否重新拉起，**页面上的[一键更新](#方式一页面一键更新推荐)靠它完成换装**。直接运行 `./bladepro` 时更新完就不会被拉起了。
 > 后台常驻：`nohup ./start.sh >bladepro.log 2>&1 &`。
 
+Windows 原生部署请使用 `start.bat`，并参考 **[docs/windows-deployment.md](docs/windows-deployment.md)**（Release 包内为 `deploy/windows/README-WINDOWS.md`）：本机 PostgreSQL 18、可写安装目录、Chrome/Edge、Node/Playwright MCP 与 MITM CA 导入都有单独说明。Windows Service（session 0）不适合浏览器/桌面 APP 自动化，请使用交互式用户会话或登录时 Task Scheduler。
+
 ### 方式四：从源码编译单二进制
 
 ```bash

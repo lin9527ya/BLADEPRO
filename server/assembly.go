@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/lin9527ya/Norma/skill"
@@ -343,11 +344,20 @@ func wireTools(pg *db.DB, domainReg map[string]actool.CoreTool) {
 				}
 			}
 		}
+		if runtime.GOOS == "windows" {
+			const windowsShellNote = "\n\n本机是 Windows：Bash 实际执行 PowerShell，不是 GNU bash。请使用 PowerShell 语法（Get-ChildItem、Invoke-WebRequest、$env:VAR、反引号转义），不要使用 bash heredoc、/dev/null 或 POSIX 单引号转义；Linux 专用工具请显式调用 wsl.exe 或改用 Windows 版本。"
+			for i, t := range out {
+				if t.Name() == "Bash" {
+					out[i] = agent.DecorateTool(t, t.Description()+windowsShellNote, t.InputSchema())
+					break
+				}
+			}
+		}
 		// interactive shell: gated purely by the agent's interactive_shell flag (like
 		// web_search), NOT by tools-table binding. When on, inject the 5 shell_* tools
 		// and COUPLE the Bash description addendum so it points at shell_open — and never
 		// dangles when off. See docs/交互式shell设计.md §14.2.
-		if !actool.InteractiveShellDisabled() {
+		if ptySupported && !actool.InteractiveShellDisabled() {
 			if a, err := pg.GetAgentByKey(agentKey); err == nil && a != nil && a.InteractiveShell {
 				out = append(out, actool.ShellSessionTools()...)
 				for i, t := range out {

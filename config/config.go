@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -118,6 +119,11 @@ func Load() Config {
 // 读取（/proc/<pid>/environ、ptrace 都在可达范围）。agent 的隔离是另一个问题，见
 // deploy/README.md 的「信任模型」。
 func tightenConfigPerms(path string) {
+	// Windows maps chmod to the read-only bit only; ACLs are the real control.
+	// The Windows installer restricts the install tree with icacls.
+	if runtime.GOOS == "windows" {
+		return
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		return

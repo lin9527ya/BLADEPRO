@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	actool "github.com/lin9527ya/Norma/tool"
@@ -45,7 +46,7 @@ func InstallFileRootGuard(dataDir, keyDir, skillDir string) error {
 		key = real
 	}
 	for _, root := range roots {
-		if root == key || strings.HasPrefix(key, root+string(os.PathSeparator)) {
+		if pathWithinOrEqual(root, key) {
 			return fmt.Errorf("文件工具允许根 %s 包含密钥/配置目录 %s", root, key)
 		}
 	}
@@ -105,7 +106,7 @@ func InstallAgentIsolation(dataDir, keyDir, skillDir string) error {
 	}
 	// keyDir 放 jwt.key 镜像、config.json 也在它旁边。它若落在 dataDir 里面，降权后
 	// agent 依然读得到——那就不用降权了。宁可拒绝启动，也不给一个"看着隔离、实则没隔"的状态。
-	if d, k := filepath.Clean(dataDir), filepath.Clean(keyDir); k == d || strings.HasPrefix(k, d+string(os.PathSeparator)) {
+	if d, k := filepath.Clean(dataDir), filepath.Clean(keyDir); pathWithinOrEqual(d, k) {
 		return fmt.Errorf("data 目录 %s 包含了密钥/配置目录 %s（jwt.key、config.json）："+
 			"隔离模式要求 -data 与可执行文件目录分开（默认 data/ 子目录即可）", d, k)
 	}
@@ -260,6 +261,17 @@ func agentEnvDenied(key string) bool {
 	return false
 }
 
+// pathWithin reports whether target is root or below it. Windows paths are
+// compared case-insensitively because the filesystem is case-insensitive.
+func pathWithinOrEqual(root, target string) bool {
+	root, target = filepath.Clean(root), filepath.Clean(target)
+	if runtime.GOOS == "windows" {
+		r, t := strings.ToLower(root), strings.ToLower(target)
+		return t == r || strings.HasPrefix(t, r+string(os.PathSeparator))
+	}
+	return target == root || strings.HasPrefix(target, root+string(os.PathSeparator))
+}
+
 // agentPathGuard 是隔离模式下文件工具的允许面：只放行配置的根（含其子路径）。
 // 它收到的是 Norma 解析过软链的真实路径，所以软链绕不过去。
 func agentPathGuard(abs string) error {
@@ -271,12 +283,12 @@ func agentPathGuard(abs string) error {
 		roots = fileGuard.roots
 	}
 	for _, root := range fileGuard.protected {
-		if abs == root || strings.HasPrefix(abs, root+string(os.PathSeparator)) {
+		if pathWithinOrEqual(root, abs) {
 			return fmt.Errorf("拒绝直接访问服务端证据存储；请使用已校验的证据/流量工具")
 		}
 	}
 	for _, root := range roots {
-		if abs == root || strings.HasPrefix(abs, root+string(os.PathSeparator)) {
+		if pathWithinOrEqual(root, abs) {
 			return nil
 		}
 	}

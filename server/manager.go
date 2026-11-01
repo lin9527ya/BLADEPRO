@@ -948,7 +948,7 @@ func (m *Manager) syncBrowserMCPProxy() {
 	env := decodeStrMap(srv.Env)
 	delete(env, "NODE_EXTRA_CA_CERTS")
 	if proxy != "" {
-		args = append(args, "--proxy-server", proxy)
+		args = append(args, "--proxy-server", proxy, "--ignore-https-errors")
 		if cert != "" {
 			env["NODE_EXTRA_CA_CERTS"] = cert
 		}
@@ -975,6 +975,9 @@ func stripProxyArgs(args []string) []string {
 		a := args[i]
 		if a == "--proxy-server" || a == "--proxy-bypass" {
 			i++ // skip the following value too
+			continue
+		}
+		if a == "--ignore-https-errors" {
 			continue
 		}
 		if strings.HasPrefix(a, "--proxy-server=") || strings.HasPrefix(a, "--proxy-bypass=") {

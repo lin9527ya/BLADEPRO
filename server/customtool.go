@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -499,8 +500,17 @@ func (s *Server) httpProxyTransport(spec httpExec) *http.Transport {
 
 func identity(s string) string { return s }
 
-// shellQuote single-quotes a value for safe shell interpolation.
-func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+// shellQuote single-quotes a value for the shell the agent actually uses.
+// Windows Bash is PowerShell, where a single quote inside a single-quoted string
+// is escaped by doubling it; POSIX uses the ”' dance.
+func shellQuote(s string) string { return shellQuoteFor(runtime.GOOS, s) }
+
+func shellQuoteFor(goos, s string) string {
+	if goos == "windows" {
+		return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
 
 // renderTemplate replaces {name} placeholders with each param's rendered value.
 func renderTemplate(tmpl string, params map[string]any, quote func(string) string) string {

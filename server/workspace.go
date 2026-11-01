@@ -39,7 +39,7 @@ func (s *Server) wsResolve(rel string) (string, bool) {
 	rel = strings.TrimPrefix(strings.TrimSpace(rel), "/")
 	clean := filepath.Clean("/" + rel) // e.g. "/a/../../etc" → "/etc" (still rooted at "/")
 	abs := filepath.Clean(filepath.Join(base, clean))
-	if abs != base && !strings.HasPrefix(abs, base+string(os.PathSeparator)) {
+	if !pathWithinOrEqual(base, abs) {
 		return "", false
 	}
 	// 工作区根本身可能就是软链（例如部署时 data -> 另一块盘）：先解析真实根再比。
@@ -51,7 +51,7 @@ func (s *Server) wsResolve(rel string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	if realAbs != realBase && !strings.HasPrefix(realAbs, realBase+string(os.PathSeparator)) {
+	if !pathWithinOrEqual(realBase, realAbs) {
 		return "", false
 	}
 	return abs, true

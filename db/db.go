@@ -208,7 +208,7 @@ func ensureDatabase(dsn string) error {
 	_ = admin.QueryRow(`SELECT true FROM pg_database WHERE datname=$1`, dbName).Scan(&exists)
 	if !exists {
 		if _, err := admin.Exec(`CREATE DATABASE "` + dbName + `"`); err != nil {
-			return fmt.Errorf("create database %q: %w", dbName, err)
+			return fmt.Errorf("create database %q: %w（请预建数据库并以应用角色为 owner，或授予该角色 CREATEDB）", dbName, err)
 		}
 	}
 	return nil
@@ -671,6 +671,47 @@ ON CONFLICT DO NOTHING`,
 		}
 	}
 	return d.SetSetting("intercept_default_rules_v2", "done")
+}
+
+// seedDefaultInterceptRulesV4 adds Windows-native destructive-command coverage.
+// The original rules are Unix-shaped (rm/mkfs/dd); PowerShell and cmd.exe have
+// different names for the same dangerous operations.
+func (d *DB) seedDefaultInterceptRulesV4() error {
+	if v, _, _ := d.GetSetting("intercept_default_rules_v4"); v == "done" {
+		return nil
+	}
+	rules := []struct {
+		name    string
+		pattern string
+		message string
+	}{
+		{
+			name:    "[内置] Windows 递归删除",
+			pattern: `(?i)\b(remove-item|del|erase|rd|rmdir)\b[^\r\n]*(?:-recurse|-force|/s\b|/q\b)`,
+			message: "Windows 递归/强制删除命令被拒绝（Remove-Item -Recurse/-Force、del /s /q、rd /s 等可能破坏系统或业务数据）",
+		},
+		{
+			name:    "[内置] Windows 磁盘与启动破坏",
+			pattern: `(?i)\b(format-volume|clear-disk|initialize-disk|diskpart\b[^\r\n]*\bclean|vssadmin\b[^\r\n]*\bdelete\b|bcdedit|bootrec|cipher\s+/w)\b`,
+			message: "Windows 磁盘/启动配置破坏命令被拒绝（Format-Volume、Clear-Disk、diskpart clean、vssadmin delete、bcdedit 等）",
+		},
+		{
+			name:    "[内置] Windows 安全与关机操作",
+			pattern: `(?i)\b(set-mppreference|add-mppreference|stop-computer|restart-computer|reg\s+delete\s+hklm)\b`,
+			message: "Windows 安全配置/关机/注册表删除命令被拒绝（Defender 排除、关机重启、删除 HKLM 键等）",
+		},
+	}
+	for _, r := range rules {
+		if _, err := d.Exec(`
+INSERT INTO intercept_rules(name, enabled, priority, match_target, match_type, pattern, action, message, timeout_enabled, timeout_seconds, timeout_action)
+SELECT $1, true, 100, 'tool_input', 'regex', $2, 'deny', $3, false, 60, 'deny'
+WHERE NOT EXISTS (SELECT 1 FROM intercept_rules WHERE name = $1)`,
+			r.name, r.pattern, r.message,
+		); err != nil {
+			return fmt.Errorf("rule %q: %w", r.name, err)
+		}
+	}
+	return d.SetSetting("intercept_default_rules_v4", "done")
 }
 
 // seedDefaultInterceptRulesV3 adds the delete-endpoint path rule. The v1 HTTP rules

@@ -177,6 +177,10 @@ package_binary() {
   # 直接跑 bladepro 本体的话更新完就再也起不来了。按目标系统只带对应的那一份。
   if [ "$goos" = "windows" ]; then
     cp start.bat "$package_root/"
+    if [ -d deploy/windows ]; then
+      mkdir -p "$package_root/deploy"
+      cp -R deploy/windows "$package_root/deploy/"
+    fi
   else
     cp start.sh "$package_root/"
     chmod +x "$package_root/start.sh"

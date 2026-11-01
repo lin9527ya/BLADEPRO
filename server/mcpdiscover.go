@@ -28,7 +28,11 @@ func connectMCP(ctx context.Context, m *db.MCPServer) (mcpClient, error) {
 		if m.Command == "" {
 			return nil, fmt.Errorf("stdio 传输缺少命令")
 		}
-		return mcp.NewStdioClient(ctx, m.Name, m.Command, jsonStrMap(m.Env), jsonStrSlice(m.Args)...)
+		exe, argv, err := stdioLaunch(m.Command, jsonStrSlice(m.Args))
+		if err != nil {
+			return nil, err
+		}
+		return mcp.NewStdioClient(ctx, m.Name, exe, jsonStrMap(m.Env), argv...)
 	case "http":
 		if m.URL == "" {
 			return nil, fmt.Errorf("http 传输缺少 URL")

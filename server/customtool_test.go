@@ -78,6 +78,9 @@ func TestShellQuote(t *testing.T) {
 	if got := shellQuote("a'b"); got != `'a'\''b'` {
 		t.Fatalf("shellQuote(a'b) = %q", got)
 	}
+	if got := shellQuoteFor("windows", "a'b"); got != `'a''b'` {
+		t.Fatalf("windows shellQuote(a'b) = %q", got)
+	}
 }
 
 // TestExecPython runs a real Python script end-to-end: it must read params from

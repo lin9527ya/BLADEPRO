@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -695,6 +696,9 @@ func pathWithin(root, p string) bool {
 	c := filepath.Clean(p)
 	if r == "" || c == r {
 		return false
+	}
+	if runtime.GOOS == "windows" {
+		r, c = strings.ToLower(r), strings.ToLower(c)
 	}
 	return strings.HasPrefix(c, r+string(filepath.Separator))
 }

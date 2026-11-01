@@ -1,27 +1,30 @@
 @echo off
-rem 控制台切 UTF-8，否则本文件里的中文在 GBK 终端下是乱码。
-chcp 65001 >nul 2>&1
-rem BLADEPRO 守护启动脚本（Windows）
+rem BLADEPRO launcher / supervisor (Windows).
 rem
-rem 用法：
-rem   start.bat                  前台运行（Ctrl-C 停止）
-rem   start.bat -addr :9000      额外参数原样透传给 bladepro
+rem Why ASCII-only: cmd.exe reads .bat files in the OEM code page (GBK on
+rem Chinese Windows), so UTF-8 comments desync the parser and corrupt the
+rem script. Keep this file free of non-ASCII bytes.
 rem
-rem 它只做一件事：把 bladepro.exe 跑起来，进程退出后按退出码决定要不要再拉起。
+rem Usage:
+rem   start.bat                  run in foreground (Ctrl-C stops)
+rem   start.bat -addr :9000      extra args are passed through to bladepro
 rem
-rem   0      用户正常停止     -> 退出循环
-rem   75     程序请求重启     -> 立刻重跑（页面点了"一键更新"或"回滚"）
-rem   其他   崩溃             -> 退避后重跑（1->2->4…最多 60 秒）
+rem It only does one thing: run bladepro.exe, then decide from the exit code
+rem whether to restart it.
 rem
-rem 下载、SHA256 校验、换装都不在这里，全部由 bladepro 自己在启动时完成
-rem （selfupdate 包）。脚本保持傻瓜化，详见 start.sh 顶部的说明。
+rem   0      user stop        -> exit loop
+rem   75     restart request  -> rerun at once (page one-click update/rollback)
+rem   other  crash            -> rerun after backoff (1->2->4 ... max 60s)
+rem
+rem Download, SHA256 check and swapping the binary are not handled here: the
+rem bladepro process does all of it at startup (selfupdate package).
 
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 set "BIN=bladepro.exe"
 if not exist "%BIN%" (
-	echo [bladepro] 找不到可执行文件 %BIN% 1>&2
+	echo [bladepro] executable not found: %BIN% 1>&2
 	exit /b 1
 )
 
@@ -30,23 +33,25 @@ set "MAX_DELAY=60"
 set /a delay=1
 
 :loop
-"%BIN%" %*
+rem Explicit path: works even when NoDefaultCurrentDirectoryInExePath=1.
+"%~dp0%BIN%" %*
 set "code=!ERRORLEVEL!"
 
 if "!code!"=="0" (
-	echo [bladepro] 正常退出
+	echo [bladepro] stopped normally
 	exit /b 0
 )
 
 if "!code!"=="%RESTART_CODE%" (
-	rem 更新/回滚已就绪：重跑后 bladepro 会在启动时完成换装。
-	echo [bladepro] 请求重启（应用新版本）…
+	rem Update/rollback staged: the new binary is swapped in at next startup.
+	echo [bladepro] restart requested - applying new version ...
 	set /a delay=1
 	goto loop
 )
 
-echo [bladepro] 异常退出 ^(code=!code!^)，!delay!s 后重启 1>&2
-rem timeout 在被重定向的控制台里会失败，用 ping 兜底（延时 N 秒需要 N+1 次）。
+echo [bladepro] abnormal exit ^(code=!code!^), restarting in !delay!s 1>&2
+rem "timeout" fails when the console is redirected; use ping as a fallback
+rem (N seconds needs N+1 pings).
 set /a pings=!delay!+1
 ping -n !pings! 127.0.0.1 >nul 2>&1
 set /a delay=!delay!*2

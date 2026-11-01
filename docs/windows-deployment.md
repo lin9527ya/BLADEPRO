@@ -85,6 +85,23 @@ REVOKE ALL ON DATABASE bladepro FROM PUBLIC;
 
 推荐预建数据库，不依赖应用角色的 `CREATEDB`。如果数据库不存在且角色无建库权限，启动会失败并给出提示。
 
+### 4.1 无管理员权限：便携式 PostgreSQL
+
+装不了 Windows 服务（非管理员账户）时，可以用 EDB 的免安装二进制包跑一个仅回环监听的实例：
+
+```powershell
+# 解压 postgresql-17.x-windows-x64-binaries.zip，得到 pgsql\ 运行时目录
+.\pgsql\bin\initdb.exe -D .\pgdata -U postgres --pwfile <口令文件> -A scram-sha-256 -E UTF8 --locale=C
+# 在 pgdata\postgresql.conf 末尾追加：
+#   port = 5433
+#   listen_addresses = '127.0.0.1'
+.\deploy\windows\pg-ctl.bat start
+```
+
+`pg-ctl.bat` 支持 `start` / `stop` / `status` / `restart`，默认按 `pgsql\` + `pgdata\` 相对仓库根目录定位。它不是服务：开机后需要手动执行，或自行注册登录时的交互式任务（见第 7 节的做法）。应用角色/数据库仍按上一节的 SQL 用管理员角色 `postgres` 创建。
+
+> 实测：便携包 18.6 在本机 `initdb` 阶段 bootstrap 子进程以 `0xC0000005` 退出（换 locale、换盘符、重解压均可复现，机器上有 360 安全卫士）；同机 17.11 正常。遇到同样现象先降到 16/17，再排查杀软注入。
+
 ## 5. 解压与配置
 
 从 Releases 下载 `bladepro-<version>-windows-amd64.zip`：
@@ -303,6 +320,8 @@ powershell -ExecutionPolicy Bypass -File .\deploy\windows\reset-password.ps1 `
 | 截图不可用 | 安装 Chrome/Edge，或设置 `BLADEPRO_CHROMIUM` |
 | 浏览器 HTTPS 失败 | 导入 MITM CA，确认 capture 已开启 |
 | 自更新不生效 | 必须通过 `start.bat` 启动；exe 目录必须可写 |
+| `initdb` 报子进程 0xC0000005 退出 | 换 PostgreSQL 16/17 便携包，或把 `pgsql\bin` 加入杀软白名单 |
+| `start.bat` 报“… was unexpected at this time”或执行了注释行 | 批处理必须保持纯 ASCII：cmd.exe 用 OEM 代码页读 .bat，UTF-8 中文会让解析错位 |
 | 取消任务后仍有子进程 | 当前构建使用 `taskkill /T /F`；记录进程树便于后续 Job Object 加固 |
 | PowerShell 命令不走代理 | .NET 可能忽略 `HTTP(S)_PROXY`；改用 `curl.exe` 或 Go 工具 |
 | 任务删除/归档报文件占用 | 先停止相关执行，关闭占用 `data\tasks` 的进程 |

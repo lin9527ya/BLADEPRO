@@ -365,6 +365,7 @@ var omissionMarkers = []string{
 	"[中间无关内容已省略]",
 	"...(中段省略)",
 	"……(中段省略)",
+	"[敏感字段已脱敏]",
 }
 
 // CheckReportMarkdown 对**成品 markdown** 再查一遍报文层的问题：

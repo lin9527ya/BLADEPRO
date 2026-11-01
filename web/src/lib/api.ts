@@ -118,6 +118,7 @@ import type {
   SrcSubmission,
   SrcSubmissionEvent,
   SrcSubmitField,
+  SrcSubmitPreview,
   SrcSubmitTemplate,
   SrcTaskBrief,
   SrcTaskState,
@@ -582,6 +583,7 @@ export const api = {
     input: { platform?: string; title?: string; description?: string; impact?: string; fix?: string },
   ) => post<SrcPrepareResult>(`/findings/${findingID}/src-submission`, input),
   // 台账列表（全局，可按任务过滤）；列表不回正文，只看状态。
+  srcSubmission: (id: number) => get<SrcSubmission>(`/src/submissions/${id}`),
   srcSubmissions: (taskId?: string, status?: string) => {
     const q = new URLSearchParams();
     if (taskId) q.set("task_id", taskId);
@@ -839,6 +841,36 @@ export const api = {
     if (!r.ok) throw new Error(`导出失败: ${r.status}`);
     const blob = await r.blob();
     let name = `finding-${findingId}.${format}`;
+    const cd = r.headers.get("Content-Disposition") ?? "";
+    const m = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+    if (m) {
+      try {
+        name = decodeURIComponent(m[1]);
+      } catch {
+        /* 保留回退文件名 */
+      }
+    }
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = objUrl;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(objUrl);
+  },
+
+  // 最终提交预览（不落台账）：Markdown/纯文本 + 平台字段 + issues。
+  previewSrcReport: (findingId: string) => get<SrcSubmitPreview>(`/findings/${findingId}/src-preview`),
+  // 单条发现的完整交付包：md/docx + PoC + 该发现自己的截图。
+  downloadSrcFindingZip: async (findingId: string) => {
+    const token = getToken();
+    const r = await fetch(`/api/findings/${findingId}/src-report.zip`, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    });
+    if (!r.ok) throw new Error(`导出失败: ${r.status}`);
+    const blob = await r.blob();
+    let name = `finding-${findingId}-交付包.zip`;
     const cd = r.headers.get("Content-Disposition") ?? "";
     const m = /filename\*=UTF-8''([^;]+)/i.exec(cd);
     if (m) {

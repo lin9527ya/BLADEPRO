@@ -6,11 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"log"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -228,11 +225,13 @@ func (s *Server) resolveAssetIDsForFindings(rows []*db.DBFinding) map[int64]stri
 
 // srcTargetLabel：优先锚定资产的展示标签，其次绑定流量的 URL（与单条导出同序）。
 func srcTargetLabel(f *db.DBFinding, assetLabel string, eps []db.FindingEndpoint) string {
-	if assetLabel != "" {
-		return assetLabel
+	if u := srcSubmissionAsset(assetLabel); u != "" {
+		return u
 	}
-	if len(eps) > 0 {
-		return eps[0].URL
+	for _, e := range eps {
+		if u := srcSubmissionAsset(e.URL); u != "" {
+			return u
+		}
 	}
 	return ""
 }
@@ -302,6 +301,8 @@ func (s *Server) buildSrcZip(ctx context.Context, t *Task, plan *srcBatchPlan) (
 			}
 		}
 	}
+	doc := s.srcDocForTask(parseIntDefault(t.ID))
+	seenShots := map[int64]bool{}
 	for _, e := range plan.Entries {
 		if !e.Included {
 			continue
@@ -310,79 +311,10 @@ func (s *Server) buildSrcZip(ctx context.Context, t *Task, plan *srcBatchPlan) (
 		if err != nil || f == nil {
 			return nil, fmt.Errorf("读取发现 #%d 失败: %v", e.ID, err)
 		}
-		in, warnings := s.buildSrcInput(ctx, f)
-		if len(warnings) > 0 {
-			log.Printf("[src] 交付包：发现 #%d 告警 %d 条", f.ID, len(warnings))
-		}
 		base := fmt.Sprintf("findings/%d-%s", e.ID, srcFileSlug(e.Title, e.VulnClass))
 		// 交付包与"准备交付件"用同一份成品口径：提交块 + 严格版式 + CRLF。
-		doc := s.srcDocForTask(parseIntDefault(t.ID))
-		if doc.StrictLayout {
-			in.Notes = warningNotes(in.Notes)
-		}
-		if issues := appendExportIssues(&in); len(issues) > 0 {
-			log.Printf("[src] 交付包：发现 #%d 正文校验 %d 条", f.ID, len(issues))
-		}
-		md := report.SrcMarkdown(in)
-		if err := add(base+".md", []byte(crlfText(md))); err != nil {
+		if err := s.addSrcFindingBundle(ctx, add, f, doc, base, seenShots); err != nil {
 			return nil, err
-		}
-		docx, err := report.SrcDOCX(in)
-		if err != nil {
-			return nil, err
-		}
-		if err := add(base+".docx", docx); err != nil {
-			return nil, err
-		}
-		// P1 PoC：从 proof/verification 绑定生成可执行复现件（attachments/…）。
-		if poc, err := s.buildSrcPoc(ctx, f); err == nil && poc != nil {
-			for name, data := range poc.Bodies {
-				if err := add(poc.Dir+"/"+name, data); err != nil {
-					return nil, err
-				}
-			}
-			for name, data := range map[string]string{
-				"poc.sh": poc.Script, "request.http": poc.HTTP, "README.txt": poc.Readme,
-			} {
-				if err := add(poc.Dir+"/"+name, []byte(data)); err != nil {
-					return nil, err
-				}
-			}
-		}
-	}
-	// P2 截图自动化：把本任务的图片产物放进 attachments/screenshots/，报告与截图同包交付。
-	if taskID := parseIntDefault(t.ID); taskID > 0 {
-		if artifacts, err := s.m.pg.ListEvidenceArtifacts(ctx, taskID); err == nil {
-			for _, a := range artifacts {
-				if !strings.HasPrefix(a.MIME, "image/") {
-					continue
-				}
-				rc, _, err := s.evidenceStore().OpenArtifact(ctx, a.ID)
-				if err != nil {
-					log.Printf("[src] 交付包：读取证据产物 #%d 失败: %v", a.ID, err)
-					continue
-				}
-				data, err := io.ReadAll(io.LimitReader(rc, 25<<20))
-				rc.Close()
-				if err != nil {
-					log.Printf("[src] 交付包：读取证据产物 #%d 失败: %v", a.ID, err)
-					continue
-				}
-				ext := strings.ToLower(filepath.Ext(a.Filename))
-				if ext == "" {
-					switch a.MIME {
-					case "image/jpeg":
-						ext = ".jpg"
-					default:
-						ext = ".png"
-					}
-				}
-				baseName := strings.TrimSuffix(a.Filename, filepath.Ext(a.Filename))
-				name := fmt.Sprintf("attachments/screenshots/%d-%s%s", a.ID, srcFileSlug(baseName, "screenshot"), ext)
-				if err := add(name, data); err != nil {
-					return nil, err
-				}
-			}
 		}
 	}
 	if err := zw.Close(); err != nil {

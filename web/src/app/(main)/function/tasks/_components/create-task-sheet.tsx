@@ -49,6 +49,7 @@ import type {
   ExplorationPolicyDefault,
   LLMProfile,
   SrcProgram,
+  SrcSubmitTemplate,
   Task,
   TaskCategory,
   TaskMode,
@@ -167,6 +168,7 @@ export function CreateTaskSheet({
   const [mode, setMode] = React.useState<TaskMode>("src");
   // P3 平台项目:仅 SRC 模式下可选,绑定的项目规则(禁用手段/写操作/限速/必做面)编译进本任务。
   const [srcPrograms, setSrcPrograms] = React.useState<SrcProgram[]>([]);
+  const [srcSubmitTemplates, setSrcSubmitTemplates] = React.useState<SrcSubmitTemplate[]>([]);
   const [srcProgramID, setSrcProgramID] = React.useState<number | undefined>(undefined);
   const [srcRequiredAreas, setSrcRequiredAreas] = React.useState("");
   const [srcFocusAreas, setSrcFocusAreas] = React.useState<string[]>([]);
@@ -265,6 +267,21 @@ export function CreateTaskSheet({
         setPolicyTech([...pd.effective.techniques]);
         setPolicyWrites([...pd.effective.forbidden_writes]);
         setPolicyRules((pd.effective.custom ?? []).map((r) => ({ ...r })));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [open]);
+
+  // 打开抽屉时拉一次提交模板（含自定义）；失败静默，内置选项仍可用。
+  React.useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    void api
+      .srcSubmitTemplates()
+      .then((rows) => {
+        if (alive) setSrcSubmitTemplates(rows);
       })
       .catch(() => {});
     return () => {
@@ -618,6 +635,13 @@ export function CreateTaskSheet({
                     <SelectItem value="vulbox">漏洞盒子</SelectItem>
                     <SelectItem value="edu">教育 SRC</SelectItem>
                     <SelectItem value="hackerone">HackerOne</SelectItem>
+                    {srcSubmitTemplates
+                      .filter((t) => t.custom)
+                      .map((t) => (
+                        <SelectItem key={t.key} value={t.key}>
+                          {t.name}（自定义）
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
                 <FieldDescription>只决定【提交信息】块的字段名/顺序；绑定平台项目时以项目规则为准。</FieldDescription>

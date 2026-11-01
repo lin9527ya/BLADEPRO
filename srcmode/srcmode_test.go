@@ -333,6 +333,95 @@ func TestAssetYieldCold(t *testing.T) {
 }
 
 // TestResolveValidatesAreaROI 钉住 ROI 快照的合法性：未知面/离谱乘子直接拒绝。
+func TestSubmitIssuesRequirePlatformFields(t *testing.T) {
+	doc := DefaultDoc()
+	doc.Platform = "补天"
+	doc.PlatformTemplate = "butian"
+	doc.Program = "Acme SRC"
+	doc.EgressIP = "203.0.113.9"
+	good := SubmitContext{
+		Title: "订单越权读取", SeverityLabel: "高危", CWE: "CWE-639",
+		Asset: "https://api.example.test/orders/1", Unit: "Acme 集团",
+	}
+	if issues := SubmitIssues(doc, good); len(issues) != 0 {
+		t.Fatalf("complete butian context rejected: %v", issues)
+	}
+	bad := good
+	bad.CWE = ""
+	bad.Asset = "GET /orders/1"
+	joined := strings.Join(SubmitIssues(doc, bad), "；")
+	if !strings.Contains(joined, "漏洞类型") {
+		t.Fatalf("missing CWE not reported: %s", joined)
+	}
+	if !strings.Contains(joined, "资产/URL") || !strings.Contains(joined, "http(s)") {
+		t.Fatalf("invalid asset not reported: %s", joined)
+	}
+	doc.Program = ""
+	doc.EgressIP = ""
+	joined = strings.Join(SubmitIssues(doc, good), "；")
+	if !strings.Contains(joined, "所属应用/项目") || !strings.Contains(joined, "测试源IP") {
+		t.Fatalf("butian program/egress not required: %s", joined)
+	}
+	noUnit := good
+	noUnit.Unit = ""
+	joined = strings.Join(SubmitIssues(doc, noUnit), "；")
+	if !strings.Contains(joined, "所属单位/厂商") {
+		t.Fatalf("butian unit not required: %s", joined)
+	}
+	generic := DefaultDoc()
+	if issues := SubmitIssues(generic, SubmitContext{}); len(issues) == 0 {
+		t.Fatal("generic submit context with no fields must be rejected")
+	}
+}
+
+func TestParseSubmitFieldsAndCustomTemplate(t *testing.T) {
+	fields := ParseSubmitFields("## 【提交信息】\n- 标题：越权\n- 描述：第一行\n- 空值：\n")
+	if len(fields) != 3 || fields[0].Label != "标题" || fields[0].Value != "越权" || fields[2].Value != "" {
+		t.Fatalf("parsed fields=%+v", fields)
+	}
+	doc := DefaultDoc()
+	doc.PlatformTemplate = "custom:acme"
+	doc.Program = "Acme 项目"
+	doc.EgressIP = "203.0.113.9"
+	block := SubmitInfoForCustom(doc, SubmitContext{
+		Title: "越权", SeverityLabel: "高危", Unit: "Acme 集团",
+		Description: "描述正文", Impact: "危害正文", Fix: "修复正文",
+		Steps: "1、复现", Endpoints: "1、GET https://api.example.test/x",
+	}, &CustomSubmitTemplate{
+		Key: "custom:acme", Name: "Acme 表单",
+		Fields: []CustomSubmitField{
+			{Label: "单位", Source: "unit", Required: true},
+			{Label: "描述", Source: "description", Required: true},
+			{Label: "步骤", Source: "steps", Required: true},
+			{Label: "接口", Source: "endpoints", Required: true},
+		},
+	})
+	for _, want := range []string{"单位：Acme 集团", "描述：描述正文", "步骤：1、复现", "接口：1、GET https://api.example.test/x"} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("custom block missing %q:\n%s", want, block)
+		}
+	}
+}
+
+func TestProgramKeepsCustomPlatformTemplate(t *testing.T) {
+	p := &Program{Rules: ProgramRules{PlatformTemplate: "custom:acme"}}
+	out := p.ApplyToModeDoc(DefaultDoc())
+	if out.PlatformTemplate != "custom:acme" {
+		t.Fatalf("custom template lost: %q", out.PlatformTemplate)
+	}
+}
+
+func TestSubmitBlockPlaceholders(t *testing.T) {
+	block := "## 【提交信息 · 补天】\n- 标题：（待补）\n- 漏洞类型：CWE-639\n- 资产/URL：（待补）\n"
+	got := SubmitBlockPlaceholders(block)
+	if len(got) != 2 || got[0] != "标题" || got[1] != "资产/URL" {
+		t.Fatalf("placeholders=%v", got)
+	}
+	if got := SubmitBlockPlaceholders("## 【提交信息】\n- 标题：越权\n"); len(got) != 0 {
+		t.Fatalf("complete block reported placeholders: %v", got)
+	}
+}
+
 func TestResolveValidatesAreaROI(t *testing.T) {
 	if _, _, err := Resolve(ModeSrc, []byte(`{"area_roi":{"nope":1.2}}`)); err == nil {
 		t.Fatal("未知风险面的 ROI 应拒绝")

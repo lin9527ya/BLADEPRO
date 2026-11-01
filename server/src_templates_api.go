@@ -17,6 +17,8 @@ var submitFieldSources = map[string]bool{
 	"title": true, "severity": true, "cwe": true, "cvss": true, "asset": true,
 	"repro_env": true, "attachments": true, "platform": true, "program": true,
 	"egress_ip": true, "test_accounts": true,
+	"unit": true, "description": true, "impact": true, "fix": true,
+	"steps": true, "endpoints": true,
 }
 
 type srcSubmitTemplateDTO struct {

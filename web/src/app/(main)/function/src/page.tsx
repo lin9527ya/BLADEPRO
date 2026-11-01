@@ -7,6 +7,7 @@ import Link from "next/link";
 import { BugIcon, PencilIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 
+import { CopyButton } from "@/components/copy-button";
 import { SrcAreaPicker } from "@/components/src-area-picker";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -333,6 +334,9 @@ function LedgerTab() {
   const [error, setError] = React.useState("");
 
   const [target, setTarget] = React.useState<SrcSubmission | null>(null);
+  const [detail, setDetail] = React.useState<SrcSubmission | null>(null);
+  const [detailLoading, setDetailLoading] = React.useState(false);
+  const [detailError, setDetailError] = React.useState("");
   const [nextStatus, setNextStatus] = React.useState("");
   const [externalID, setExternalID] = React.useState("");
   const [reward, setReward] = React.useState("");
@@ -360,6 +364,19 @@ function LedgerTab() {
   React.useEffect(() => {
     void load();
   }, [load]);
+
+  const openDetail = async (sub: SrcSubmission) => {
+    setDetail(sub);
+    setDetailLoading(true);
+    setDetailError("");
+    try {
+      setDetail(await api.srcSubmission(sub.id));
+    } catch (e) {
+      setDetailError(errText(e));
+    } finally {
+      setDetailLoading(false);
+    }
+  };
 
   const openLedger = (sub: SrcSubmission) => {
     setTarget(sub);
@@ -500,6 +517,9 @@ function LedgerTab() {
                     <TableCell className="text-xs">{sub.reward || "—"}</TableCell>
                     <TableCell className="text-muted-foreground text-xs">{fmtTime(sub.updated_at)}</TableCell>
                     <TableCell className="text-right whitespace-nowrap">
+                      <Button size="sm" variant="ghost" onClick={() => void openDetail(sub)}>
+                        详情
+                      </Button>
                       <Button size="sm" variant="ghost" onClick={() => openLedger(sub)}>
                         改状态
                       </Button>
@@ -601,6 +621,61 @@ function LedgerTab() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog
+        open={detail !== null}
+        onOpenChange={(open) => {
+          if (!open) setDetail(null);
+        }}
+      >
+        <DialogContent className="flex max-h-[88vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
+          <DialogHeader className="border-b p-5">
+            <DialogTitle>提交台账详情</DialogTitle>
+            <DialogDescription>{detail ? `#${detail.finding_id} ${detail.title}` : "加载中…"}</DialogDescription>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto p-5">
+            {detailError ? <p className="text-destructive text-sm">{detailError}</p> : null}
+            {detailLoading ? <p className="text-muted-foreground text-sm">加载中…</p> : null}
+            {detail ? (
+              <div className="grid gap-3">
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <Badge variant="outline">{detail.platform || "本任务台账"}</Badge>
+                  <Badge variant="outline">{detail.status}</Badge>
+                  <span className="text-muted-foreground">等级 {detail.platform_level || detail.severity || "—"}</span>
+                  {detail.external_id ? <span className="text-muted-foreground">编号 {detail.external_id}</span> : null}
+                  <CopyButton
+                    text={detail.report_md}
+                    label="复制报告正文"
+                    className="ml-auto h-7 px-2 text-xs"
+                    successMessage="已复制台账报告正文"
+                  />
+                </div>
+                {detail.description ? (
+                  <div>
+                    <div className="text-muted-foreground text-xs">漏洞描述</div>
+                    <p className="text-sm whitespace-pre-wrap">{detail.description}</p>
+                  </div>
+                ) : null}
+                {detail.impact ? (
+                  <div>
+                    <div className="text-muted-foreground text-xs">漏洞危害</div>
+                    <p className="text-sm whitespace-pre-wrap">{detail.impact}</p>
+                  </div>
+                ) : null}
+                {detail.fix ? (
+                  <div>
+                    <div className="text-muted-foreground text-xs">修复建议</div>
+                    <p className="text-sm whitespace-pre-wrap">{detail.fix}</p>
+                  </div>
+                ) : null}
+                <pre className="max-h-[55vh] overflow-auto rounded-md border bg-muted/30 p-4 text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">
+                  {detail.report_md || "（该台账没有保存报告正文）"}
+                </pre>
+              </div>
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -621,6 +696,12 @@ const SUBMIT_FIELD_SOURCES = [
   "program",
   "egress_ip",
   "test_accounts",
+  "unit",
+  "description",
+  "impact",
+  "fix",
+  "steps",
+  "endpoints",
 ];
 
 function fieldsToText(fields?: SrcSubmitField[]): string {

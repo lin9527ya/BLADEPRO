@@ -309,8 +309,9 @@ func (p *Program) ApplyToModeDoc(doc ModeDoc) ModeDoc {
 		out.RequireScreenshots = true
 	}
 	if t := strings.TrimSpace(p.Rules.PlatformTemplate); t != "" {
-		// 非法 key 由 Validate 拒绝；这里静默跳过，不能提前 return 掉后续规则。
-		if _, ok := FindPlatformTemplate(t); ok {
+		// 非法 key 由 Validate 拒绝；custom:* 由 server 在任务创建时查库确认存在。
+		// 这里不能只认内置 key，否则项目绑定的自定义模板会被静默丢弃。
+		if _, ok := FindPlatformTemplate(t); ok || strings.HasPrefix(strings.ToLower(t), "custom:") {
 			out.PlatformTemplate = strings.ToLower(t)
 		}
 	}

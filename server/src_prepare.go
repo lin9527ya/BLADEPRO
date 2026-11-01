@@ -46,6 +46,7 @@ func (s *Server) registerSrcDelivery(mux routeRegistrar) {
 	mux.HandleFunc("POST /api/findings/{id}/src-submission", s.postFindingSrcSubmission)
 	mux.HandleFunc("PATCH /api/findings/{id}/src-dedupe", s.patchFindingSrcDedupe)
 	mux.HandleFunc("GET /api/src/submissions", s.listSrcSubmissions)
+	mux.HandleFunc("GET /api/src/submissions/{id}", s.getSrcSubmission)
 	mux.HandleFunc("PATCH /api/src/submissions/{id}", s.patchSrcSubmission)
 	mux.HandleFunc("GET /api/src/submissions/{id}/events", s.listSrcSubmissionEvents)
 	// 重复组：同指纹的发现聚在一起看；只读，不自动合并。
@@ -120,14 +121,17 @@ func (s *Server) prepareSrcSubmission(ctx context.Context, req agent.SrcPrepareR
 	}
 	description := strings.TrimSpace(req.Description)
 	if description == "" {
-		// 回落顺序与导出面一致：详细报告优先，其次摘要。
-		description = strings.TrimSpace(f.Report)
-		if description == "" {
-			description = strings.TrimSpace(f.Summary)
-		}
+		// 只取详细报告的“概述”，绝不把 12 节长报告整段塞进漏洞描述。
+		description = srcDeliveryDescription(f)
 	}
 	impact := strings.TrimSpace(req.Impact)
+	if impact == "" {
+		impact = srcDeliveryImpact(f)
+	}
 	fix := strings.TrimSpace(req.Fix)
+	if fix == "" {
+		fix = srcDeliveryFix(f)
+	}
 
 	// 八段正文先渲染：后面的报文级校验与提交块都要看成品。
 	// 接口清单/复现整包仍由证据生成（与导出面同一份 buildSrcInput），
@@ -149,14 +153,28 @@ func (s *Server) prepareSrcSubmission(ctx context.Context, req agent.SrcPrepareR
 	// 提交块里的危害等级优先用平台映射后的等级（严重/高危 vs critical/high），
 	// 没有映射时回落到内部等级的交付用语。台账与提交块共用同一口径。
 	platformLevel, programID := s.srcPlatformInfo(ctx, req.TaskID, f.Severity)
-	in.SubmitBlock = s.srcSubmitBlock(ctx, req.TaskID, f, in, doc)
+	submitCtx := s.srcSubmitContext(ctx, req.TaskID, f, in, doc)
+	in.SubmitBlock = s.srcSubmitBlockWithContext(ctx, doc, submitCtx)
 	markdown := report.SrcMarkdown(in)
 
 	var issues []string
+	if !db.ValidSeverity(f.Severity) {
+		issues = append(issues, "发现等级为空或未知："+f.Severity+"（平台会按中危处理或直接退回）")
+	}
 	for _, is := range srcmode.CheckCompliance(f.Severity, steps) {
 		issues = append(issues, "证据不合规："+is.Detail)
 	}
 	issues = append(issues, srcmode.ValidateReportText(title, description, impact, fix)...)
+	if doc.IsSrc() {
+		issues = append(issues, srcmode.SubmitIssues(doc, submitCtx)...)
+		// Custom templates define their own required labels; the renderer marks
+		// them as （待补）, so validate the finished block as well.
+		if strings.HasPrefix(strings.TrimSpace(doc.PlatformTemplate), "custom:") {
+			for _, label := range srcmode.SubmitBlockPlaceholders(in.SubmitBlock) {
+				issues = append(issues, "提交信息缺"+label+"（仍是待补）")
+			}
+		}
+	}
 	// P1：medium+ 必须有独立复验 reproduced。没有就在这一刻自动发起（干净会话、
 	// 只按原始证据最小重放）；首次准备不会是 ready，等复验结论回来后再准备一次。
 	if srcmode.IsMediumPlus(f.Severity) && doc.RequireRetest {
@@ -298,15 +316,43 @@ func (s *Server) srcSubmitBlock(ctx context.Context, taskID int64, f *db.DBFindi
 	if taskID <= 0 || f == nil {
 		return ""
 	}
+	return s.srcSubmitBlockWithContext(ctx, doc, s.srcSubmitContext(ctx, taskID, f, in, doc))
+}
+
+func (s *Server) srcSubmitContext(ctx context.Context, taskID int64, f *db.DBFinding, in report.SrcInput, doc srcmode.ModeDoc) srcmode.SubmitContext {
 	label := report.SrcSeverityLabel(f.Severity)
 	if lv, _ := s.srcPlatformInfo(ctx, taskID, f.Severity); lv != "" {
 		label = lv
 	}
-	submitCtx := srcmode.SubmitContext{
+	return srcmode.SubmitContext{
 		Title: in.Title, SeverityLabel: label, CWE: in.CWE, CVSS: in.CVSSVector,
-		Asset: in.TargetURL, ReproEnv: in.ReproEnv,
-		Attachments: s.srcAttachmentSummary(ctx, taskID, f),
+		Asset: in.TargetURL, Unit: s.m.pg.Assets().TaskCompanyName(taskID),
+		ReproEnv: in.ReproEnv, Description: in.Description, Impact: in.Impact, Fix: in.Fix,
+		Steps: srcStepsText(in.Steps), Endpoints: srcEndpointsText(in.Endpoints),
+		Attachments: s.srcAttachmentSummary(ctx, f),
 	}
+}
+
+func srcStepsText(steps []report.SrcStep) string {
+	var b strings.Builder
+	for i, st := range steps {
+		fmt.Fprintf(&b, "%d、%s\n", i+1, st.Desc)
+		if raw := strings.TrimSpace(st.Raw); raw != "" {
+			b.WriteString("```\n" + raw + "\n```\n")
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func srcEndpointsText(endpoints []report.SrcEndpoint) string {
+	var b strings.Builder
+	for i, ep := range endpoints {
+		fmt.Fprintf(&b, "%d、%s %s\n", i+1, ep.Method, ep.URL)
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func (s *Server) srcSubmitBlockWithContext(ctx context.Context, doc srcmode.ModeDoc, submitCtx srcmode.SubmitContext) string {
 	if key := strings.TrimSpace(doc.PlatformTemplate); strings.HasPrefix(key, "custom:") {
 		if row, err := s.m.PG().Src().GetSrcSubmitTemplate(ctx, key); err == nil && row != nil {
 			fields := make([]srcmode.CustomSubmitField, 0, len(row.Fields))
@@ -324,21 +370,13 @@ func (s *Server) srcSubmitBlock(ctx context.Context, taskID int64, f *db.DBFindi
 
 // srcAttachmentSummary lists what the delivery package will actually contain, so
 // the platform form does not claim attachments that were never generated.
-func (s *Server) srcAttachmentSummary(ctx context.Context, taskID int64, f *db.DBFinding) []string {
+func (s *Server) srcAttachmentSummary(ctx context.Context, f *db.DBFinding) []string {
 	out := []string{}
 	if poc, err := s.buildSrcPoc(ctx, f); err == nil && poc != nil {
 		out = append(out, poc.Dir+"/poc.sh", poc.Dir+"/request.http")
 	}
-	if arts, err := s.m.pg.ListEvidenceArtifacts(ctx, taskID); err == nil {
-		n := 0
-		for _, a := range arts {
-			if strings.HasPrefix(a.MIME, "image/") {
-				n++
-			}
-		}
-		if n > 0 {
-			out = append(out, fmt.Sprintf("attachments/screenshots/（%d 张）", n))
-		}
+	if n := len(s.srcFindingScreenshots(ctx, f)); n > 0 {
+		out = append(out, fmt.Sprintf("attachments/screenshots/（%d 张，按发现归属）", n))
 	}
 	if len(out) == 0 {
 		out = append(out, "复现整包见正文")
@@ -451,6 +489,27 @@ func (s *Server) listSrcSubmissions(w http.ResponseWriter, r *http.Request) {
 		rows[i].ReportMD = ""
 	}
 	writeJSON(w, 200, map[string]any{"submissions": rows, "total": len(rows)})
+}
+
+// getSrcSubmission returns one ledger row including the frozen report body. The
+// list endpoint deliberately strips report_md; the detail endpoint is the place
+// to inspect exactly what was prepared.
+func (s *Server) getSrcSubmission(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(strings.TrimSpace(r.PathValue("id")), 10, 64)
+	if id <= 0 {
+		writeErr(w, 400, "bad submission id")
+		return
+	}
+	sub, err := s.m.PG().Src().GetSrcSubmission(r.Context(), id)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if sub == nil {
+		writeErr(w, 404, "台账不存在")
+		return
+	}
+	writeJSON(w, 200, sub)
 }
 
 // patchSrcSubmission 推进台账状态机（提交/受理/重复/驳回/到账/撤回）。

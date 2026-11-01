@@ -1200,6 +1200,7 @@ export interface SrcSubmission {
   description?: string;
   impact?: string;
   fix?: string;
+  report_md?: string;
   reward: string;
   note: string;
   /** 平台驳回原因码（not_reproducible/duplicate/insufficient_info/...）。 */
@@ -1208,6 +1209,27 @@ export interface SrcSubmission {
   verdict_at?: string;
   created_at?: string;
   updated_at?: string;
+}
+
+/** 最终提交预览：Markdown/纯文本 + 平台字段 + 阻断项。 */
+export interface SrcSubmitPreview {
+  ready: boolean;
+  platform_level?: string;
+  markdown: string;
+  plain_text: string;
+  submit_block: string;
+  fields: { label: string; value: string }[];
+  warnings: string[];
+  issues: string[];
+  steps: number;
+  endpoints: number;
+  platform_template?: {
+    key: string;
+    name: string;
+    rule_url?: string;
+    rule_date?: string;
+    explicit?: string;
+  };
 }
 
 /** 准备交付件的结果：issues 非空 = 还不能交（台账落 draft）。 */

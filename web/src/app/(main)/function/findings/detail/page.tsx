@@ -5,7 +5,14 @@ import * as React from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
-import { ArrowLeftIcon, ArrowUpRightIcon, FileDownIcon, FileTextIcon, ShieldAlertIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ArrowUpRightIcon,
+  FileDownIcon,
+  FileTextIcon,
+  PackageIcon,
+  ShieldAlertIcon,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { CopyButton } from "@/components/copy-button";
@@ -18,13 +25,14 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api";
 import { statusMeta } from "@/lib/status";
-import type { Finding, FindingStatus, Severity } from "@/lib/types";
+import type { Finding, FindingStatus, Severity, SrcSubmitPreview } from "@/lib/types";
 
 import { FindingLineageView } from "./lineage";
 
@@ -71,18 +79,41 @@ function FindingDetailInner() {
   const [finding, setFinding] = React.useState<Finding | null>(null);
   const [loaded, setLoaded] = React.useState(false);
   const [tab, setTab] = React.useState("overview");
-  // SRC 交付件导出中（md/docx），用于禁用按钮。
-  const [exporting, setExporting] = React.useState<"md" | "docx" | null>(null);
-  async function exportSrc(format: "md" | "docx") {
+  // SRC 交付件导出中（md/docx/zip），用于禁用按钮。
+  const [exporting, setExporting] = React.useState<"md" | "docx" | "zip" | null>(null);
+  const [previewOpen, setPreviewOpen] = React.useState(false);
+  const [preview, setPreview] = React.useState<SrcSubmitPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = React.useState(false);
+  const [previewError, setPreviewError] = React.useState("");
+  const [previewPlain, setPreviewPlain] = React.useState(false);
+  async function exportSrc(format: "md" | "docx" | "zip") {
     if (exporting) return;
     setExporting(format);
     try {
-      await api.downloadSrcReport(id, format);
-      toast.success(format === "docx" ? "已导出 docx（可提交件）" : "已导出 SRC 简报（Markdown）");
+      if (format === "zip") {
+        await api.downloadSrcFindingZip(id);
+        toast.success("已导出单条交付包（md/docx + PoC + 截图）");
+      } else {
+        await api.downloadSrcReport(id, format);
+        toast.success(format === "docx" ? "已导出 docx（可提交件）" : "已导出 SRC 简报（Markdown）");
+      }
     } catch (e) {
       toast.error(`导出失败：${(e as Error).message}`);
     } finally {
       setExporting(null);
+    }
+  }
+
+  async function openPreview() {
+    setPreviewOpen(true);
+    setPreviewLoading(true);
+    setPreviewError("");
+    try {
+      setPreview(await api.previewSrcReport(id));
+    } catch (e) {
+      setPreviewError(String((e as Error).message || e));
+    } finally {
+      setPreviewLoading(false);
     }
   }
 
@@ -180,6 +211,17 @@ function FindingDetailInner() {
               size="sm"
               variant="outline"
               className="h-7 px-2 text-xs"
+              disabled={previewLoading}
+              onClick={() => void openPreview()}
+              title="预览最终提交正文、平台字段与阻断项，可逐项复制"
+            >
+              <FileTextIcon className="size-3.5" />
+              预览提交件
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-2 text-xs"
               disabled={exporting !== null}
               onClick={() => void exportSrc("md")}
               title="按 src-dig 报告规范导出 Markdown 简报（标题/URL/等级/接口清单/整包，描述与危害留规范占位）"
@@ -197,6 +239,17 @@ function FindingDetailInner() {
             >
               <FileDownIcon className="size-3.5" />
               docx
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-2 text-xs"
+              disabled={exporting !== null}
+              onClick={() => void exportSrc("zip")}
+              title="下载单条完整交付包：md/docx + PoC + 该发现自己的截图"
+            >
+              <PackageIcon className="size-3.5" />
+              交付包
             </Button>
           </div>
         </div>
@@ -446,6 +499,99 @@ function FindingDetailInner() {
           <FindingLineageView findingId={finding.id} />
         </TabsContent>
       </div>
+
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="flex max-h-[90vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl">
+          <DialogHeader className="border-b p-5">
+            <DialogTitle>提交件预览</DialogTitle>
+            <DialogDescription>最终正文与平台字段来自同一份交付输入；issues 未清零时不能标记 ready。</DialogDescription>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto p-5">
+            {previewLoading ? <p className="text-muted-foreground text-sm">加载中…</p> : null}
+            {previewError ? <p className="text-destructive text-sm">{previewError}</p> : null}
+            {preview ? (
+              <div className="grid gap-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge
+                    variant="outline"
+                    className={
+                      preview.ready
+                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                        : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                    }
+                  >
+                    {preview.ready ? "可提交" : "仍有阻断项"}
+                  </Badge>
+                  {preview.platform_template ? (
+                    <span className="text-muted-foreground text-xs">
+                      {preview.platform_template.name}
+                      {preview.platform_template.rule_date ? ` · 模板日期 ${preview.platform_template.rule_date}` : ""}
+                      {preview.platform_level ? ` · 平台等级 ${preview.platform_level}` : ""}
+                    </span>
+                  ) : null}
+                  <span className="text-muted-foreground text-xs">
+                    {preview.steps} 步 · {preview.endpoints} 个接口
+                  </span>
+                  <div className="ml-auto flex gap-1.5">
+                    <CopyButton text={preview.markdown} successMessage="已复制 Markdown" label="复制 Markdown" />
+                    <CopyButton text={preview.plain_text} successMessage="已复制纯文本" label="复制纯文本" />
+                    <Button size="sm" variant="outline" onClick={() => setPreviewPlain((v) => !v)}>
+                      {previewPlain ? "看 Markdown" : "看纯文本"}
+                    </Button>
+                  </div>
+                </div>
+                {preview.warnings.length > 0 ? (
+                  <Alert variant="destructive">
+                    <AlertDescription>
+                      <span className="font-medium">证据门：</span>
+                      {preview.warnings.join("；")}
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+                {preview.issues.length > 0 ? (
+                  <Alert>
+                    <AlertDescription>
+                      <span className="font-medium">提交阻断项：</span>
+                      {preview.issues.join("；")}
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+                <div className="grid gap-4 lg:grid-cols-[22rem_1fr]">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-sm">平台字段</CardTitle>
+                    </CardHeader>
+                    <CardContent className="grid gap-2">
+                      {preview.fields.length === 0 ? (
+                        <p className="text-muted-foreground text-xs">当前任务没有绑定平台模板。</p>
+                      ) : (
+                        preview.fields.map((field, idx) => (
+                          <div key={`${field.label}-${idx}`} className="grid gap-1 border-b pb-2 last:border-0">
+                            <span className="text-muted-foreground text-xs">{field.label}</span>
+                            <div className="flex items-start gap-2">
+                              <span className="min-w-0 flex-1 text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">
+                                {field.value || "—"}
+                              </span>
+                              <CopyButton text={field.value} label="复制" className="h-6 px-2 text-[11px]" />
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </CardContent>
+                  </Card>
+                  <Card className="min-w-0">
+                    <CardContent className="p-0">
+                      <pre className="max-h-[55vh] overflow-auto p-4 text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">
+                        {previewPlain ? preview.plain_text : preview.markdown}
+                      </pre>
+                    </CardContent>
+                  </Card>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
     </Tabs>
   );
 }

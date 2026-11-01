@@ -222,6 +222,17 @@ func (s *Server) prepareTaskCreate(ctx context.Context, req createTaskReq) (*pre
 			return nil, taskErr(500, err.Error())
 		}
 	}
+	// 自定义提交模板必须在库里存在；否则任务会静默回落到通用模板，提交块
+	// 和平台表单对不上。内置 key 已由 srcmode.Validate 校验。
+	if key := strings.TrimSpace(srcDoc.PlatformTemplate); strings.HasPrefix(key, "custom:") {
+		row, err := s.m.PG().Src().GetSrcSubmitTemplate(ctx, key)
+		if err != nil {
+			return nil, taskErr(500, err.Error())
+		}
+		if row == nil {
+			return nil, taskErr(400, "自定义提交模板不存在："+key)
+		}
+	}
 	// 侦察先行闸：mode_doc 显式给了就用自己的；没给则继承全局设置。
 	if srcDoc.IsSrc() && srcDoc.ReconGate == nil {
 		if s.srcReconGate() {

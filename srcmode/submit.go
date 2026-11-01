@@ -1,6 +1,9 @@
 package srcmode
 
-import "strings"
+import (
+	"net/url"
+	"strings"
+)
 
 // 提交块（src-dig vuln-report-format.md §〇）：平台表单要的那几项，直接抄。
 //
@@ -17,7 +20,13 @@ type SubmitContext struct {
 	CWE           string
 	CVSS          string
 	Asset         string
+	Unit          string
 	ReproEnv      string
+	Description   string
+	Impact        string
+	Fix           string
+	Steps         string
+	Endpoints     string
 	Attachments   []string
 }
 
@@ -75,6 +84,7 @@ func SubmitInfoFor(doc ModeDoc, in SubmitContext) string {
 	switch tpl.Key {
 	case "butian":
 		required("标题", in.Title)
+		required("所属单位/厂商", in.Unit)
 		line("所属应用/项目", program)
 		required("漏洞类型", in.CWE)
 		required("危害等级", in.SeverityLabel)
@@ -86,6 +96,7 @@ func SubmitInfoFor(doc ModeDoc, in SubmitContext) string {
 		ruleLine()
 	case "vulbox":
 		required("标题", in.Title)
+		required("所属单位/厂商", in.Unit)
 		line("所属项目", program)
 		required("漏洞类型", in.CWE)
 		required("危害等级", in.SeverityLabel)
@@ -132,6 +143,101 @@ func SubmitInfoFor(doc ModeDoc, in SubmitContext) string {
 		line("附件", attachments)
 	}
 	return b.String()
+}
+
+// SubmitBlockPlaceholders returns the labels whose rendered value is still the
+// "（待补）" placeholder. Export checks use it so a complete-looking block cannot
+// silently carry empty required fields.
+func SubmitBlockPlaceholders(block string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(block, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "- ") {
+			continue
+		}
+		label, value, ok := strings.Cut(strings.TrimPrefix(line, "- "), "：")
+		if !ok {
+			label, value, ok = strings.Cut(strings.TrimPrefix(line, "- "), ":")
+		}
+		if !ok || strings.TrimSpace(value) != "（待补）" {
+			continue
+		}
+		label = strings.TrimSpace(label)
+		if label != "" && !seen[label] {
+			seen[label] = true
+			out = append(out, label)
+		}
+	}
+	return out
+}
+
+// SubmitField is one rendered form row. It is returned to the preview UI so a
+// submitter can copy each platform field independently.
+type SubmitField struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
+// ParseSubmitFields parses the rendered "- label：value" submit block. Rule-page
+// reminders are included as normal fields so the preview never hides context.
+func ParseSubmitFields(block string) []SubmitField {
+	var out []SubmitField
+	for _, line := range strings.Split(block, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "- ") {
+			continue
+		}
+		body := strings.TrimPrefix(line, "- ")
+		label, value, ok := strings.Cut(body, "：")
+		if !ok {
+			label, value, ok = strings.Cut(body, ":")
+		}
+		if !ok || strings.TrimSpace(label) == "" {
+			continue
+		}
+		out = append(out, SubmitField{Label: strings.TrimSpace(label), Value: strings.TrimSpace(value)})
+	}
+	return out
+}
+
+// SubmitIssues is the platform-facing readiness check. Unlike the generic
+// evidence gate it validates the exact fields a submission form will contain:
+// title, vulnerability type/CWE, severity and a real http(s) asset URL. Butian
+// and Vulbox additionally need the project/unit and test-source IP because those
+// fields are otherwise omitted from the rendered block.
+func SubmitIssues(doc ModeDoc, in SubmitContext) []string {
+	// Custom templates declare their own required labels; the rendered block's
+	// （待补） markers are validated by the caller. Do not impose built-in fields.
+	if strings.HasPrefix(strings.TrimSpace(doc.PlatformTemplate), "custom:") {
+		return nil
+	}
+	var issues []string
+	require := func(label, value string) {
+		if strings.TrimSpace(value) == "" {
+			issues = append(issues, "提交信息缺"+label)
+		}
+	}
+	require("标题", in.Title)
+	require("漏洞类型（CWE/平台分类）", in.CWE)
+	require("危害等级", in.SeverityLabel)
+	require("资产/URL", in.Asset)
+	if asset := strings.TrimSpace(in.Asset); asset != "" {
+		u, err := url.Parse(asset)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			issues = append(issues, "提交信息资产/URL不是合法的 http(s) 链接："+asset)
+		}
+	}
+	tpl := ResolvePlatformTemplate(doc)
+	switch tpl.Key {
+	case "butian", "vulbox":
+		require("所属单位/厂商", in.Unit)
+		require("所属应用/项目", doc.Program)
+		require("测试源IP", doc.EgressIP)
+	case "edu":
+		require("所属项目", doc.Program)
+	}
+	return issues
 }
 
 // CustomSubmitField / CustomSubmitTemplate are the user-defined form layout.
@@ -186,6 +292,18 @@ func SubmitInfoForCustom(doc ModeDoc, in SubmitContext, tpl *CustomSubmitTemplat
 			return egress
 		case "test_accounts":
 			return accounts
+		case "description":
+			return in.Description
+		case "impact":
+			return in.Impact
+		case "fix":
+			return in.Fix
+		case "steps":
+			return in.Steps
+		case "endpoints":
+			return in.Endpoints
+		case "unit":
+			return in.Unit
 		}
 		return ""
 	}

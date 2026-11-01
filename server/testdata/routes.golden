@@ -81,8 +81,10 @@ GET /api/exploration/intents	server.(*Server).intents-fm
 GET /api/exploration/main-sessions	server.(*Server).mainSessions-fm
 GET /api/exploration/nodes	server.(*Server).explorationNodes-fm
 GET /api/exploration/tokens	server.(*Server).tokenStats-fm
+GET /api/findings/{id}/src-preview	server.(*Server).getFindingSrcPreview-fm
 GET /api/findings/{id}/src-report	server.(*Server).getFindingSrcReport-fm
 GET /api/findings/{id}/src-report.docx	server.(*Server).getFindingSrcReportDocx-fm
+GET /api/findings/{id}/src-report.zip	server.(*Server).getFindingSrcReportZip-fm
 GET /api/findings/{id}/src-report/check	server.(*Server).getFindingSrcReportCheck-fm
 GET /api/health	server.(*Server).health-fm
 GET /api/intercept/history	server.(*Server).interceptHistory-fm
@@ -134,6 +136,7 @@ GET /api/src/programs/{id}	server.(*Server).getSrcProgram-fm
 GET /api/src/programs/{id}/scope	server.(*Server).getSrcProgramScope-fm
 GET /api/src/stats	server.(*Server).getSrcStats-fm
 GET /api/src/submissions	server.(*Server).listSrcSubmissions-fm
+GET /api/src/submissions/{id}	server.(*Server).getSrcSubmission-fm
 GET /api/src/submissions/{id}/events	server.(*Server).listSrcSubmissionEvents-fm
 GET /api/stats	server.(*Server).stats-fm
 GET /api/storage/report	server.(*Server).getStorageReport-fm

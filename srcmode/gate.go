@@ -90,6 +90,18 @@ type Report struct {
 	// 侦察不是收尾才能做的杂项：先清点再打 payload，才能知道到底有哪些路径/JS
 	// 入口。它不新增阻塞（收尾门照样会报缺口），但 planner 应优先把它清零。
 	ReconPending []ReconAsset `json:"recon_pending,omitempty"`
+	// SoftDebt 是 focus 面尚未形成终态的提示；它不影响 Finishable，只用于排序/展示。
+	SoftDebt []SoftDebt `json:"soft_debt,omitempty"`
+}
+
+// SoftDebt is a focus-area observation that is not an acceptance gap.
+type SoftDebt struct {
+	AssetID   int64  `json:"asset_id"`
+	Asset     string `json:"asset"`
+	AssetType string `json:"asset_type"`
+	Area      string `json:"area"`
+	Item      string `json:"item"`
+	Reason    string `json:"reason"`
 }
 
 // ReconAsset 是一个待完成侦察的资产及其缺的清点项。
@@ -200,6 +212,26 @@ func CheckFinish(ctx context.Context, store *db.SrcStore, taskID int64, doc Mode
 				byArea[cell.Area] = map[string]db.SrcCell{}
 			}
 			byArea[cell.Area][cell.Item] = cell
+		}
+		// Focus areas are soft: surface missing observations without adding a gap.
+		brief := doc.EffectiveBrief()
+		for _, focusArea := range brief.FocusAreas {
+			if containsArea(areas, focusArea) {
+				continue // required areas are already represented by the hard gate
+			}
+			terminal := false
+			for _, cell := range byArea[focusArea] {
+				switch cell.State {
+				case db.SrcStateFound, db.SrcStateClear, db.SrcStateNA, db.SrcStateBudgetStop:
+					terminal = true
+				}
+			}
+			if !terminal {
+				rep.SoftDebt = append(rep.SoftDebt, SoftDebt{
+					AssetID: asset.ID, Asset: asset.Label, AssetType: asset.Type,
+					Area: focusArea, Item: "*", Reason: "focus 面尚未形成终态（软提示，不阻塞收尾）",
+				})
+			}
 		}
 		for _, area := range areas {
 			// 一格的计数单位是"必做项"：有 hard_items 时该面要点亮多项，否则只有 '*'
@@ -406,6 +438,15 @@ func cellGap(asset db.SrcAsset, area string, cell db.SrcCell, doc ModeDoc, asset
 	return base, false
 }
 
+func containsArea(areas []string, want string) bool {
+	for _, area := range areas {
+		if area == want {
+			return true
+		}
+	}
+	return false
+}
+
 // cellPriority 是补格优先级：资产价值 × 面权重 ÷ (已尝试次数 + 1)。
 // 用整数除法就够了——它只用来排序，不需要精确。
 func cellPriority(assetType, area string, attempts int, doc ModeDoc, assetMult float64) int {
@@ -425,7 +466,7 @@ func cellPriority(assetType, area string, attempts int, doc ModeDoc, assetMult f
 	if roi > 5 {
 		roi = 5
 	}
-	base := float64(AssetValue(assetType)*AreaWeight(area)) * roi * assetMult
+	base := float64(AssetValue(assetType)*AreaWeight(area)) * roi * assetMult * doc.BriefWeight(assetType, area)
 	if base <= 0 {
 		return 0
 	}

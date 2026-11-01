@@ -8,9 +8,14 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/lin9527ya/bladepro/agent"
 	"github.com/lin9527ya/bladepro/db"
@@ -80,6 +85,112 @@ func (s *Server) getTaskSrc(w http.ResponseWriter, r *http.Request) {
 		snap["claimable_intents"], snap["intent_states"] = claimable, states
 	}
 	writeJSON(w, 200, snap)
+}
+
+// patchTaskSrcBrief updates only the soft exploration preferences. Required
+// areas, scope, ProgramBrief and policy are hard boundaries and stay read-only
+// after task creation.
+func (s *Server) patchTaskSrcBrief(w http.ResponseWriter, r *http.Request) {
+	t, doc, taskID, ok := s.srcTask(w, r)
+	if t == nil {
+		return
+	}
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "该任务不是 SRC 挖掘模式")
+		return
+	}
+	if isTerminalStatus(t.lifecycleSnapshot().Status) {
+		writeErr(w, http.StatusConflict, "任务已终态，不能再调整探索偏好")
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad body: "+err.Error())
+		return
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
+		writeErr(w, http.StatusBadRequest, "bad json: 需要 JSON 对象")
+		return
+	}
+	// 运行期只开放软偏好。硬边界字段必须显式拒绝，不能因为 Go 的未知字段
+	// 忽略语义而“看起来成功、实际没改”。
+	allowed := map[string]bool{"focus_areas": true, "exclude_areas": true, "notes": true, "revision": true}
+	var rejected []string
+	for k := range fields {
+		if !allowed[k] {
+			rejected = append(rejected, k)
+		}
+	}
+	if len(rejected) > 0 {
+		sort.Strings(rejected)
+		writeErr(w, http.StatusBadRequest, "字段 "+strings.Join(rejected, "、")+" 不能通过探索偏好接口修改；硬边界请调整 Program 或新建任务")
+		return
+	}
+	var req struct {
+		FocusAreas   []string `json:"focus_areas"`
+		ExcludeAreas []string `json:"exclude_areas"`
+		Notes        []string `json:"notes"`
+		Revision     int      `json:"revision"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad json: "+err.Error())
+		return
+	}
+	current := 0
+	if doc.SoftBrief != nil {
+		current = doc.SoftBrief.Revision
+	}
+	if req.Revision != current {
+		writeErr(w, http.StatusConflict, fmt.Sprintf("探索偏好已被其他操作修改（当前 revision=%d）", current))
+		return
+	}
+	brief := srcmode.TaskBrief{
+		FocusAreas: req.FocusAreas, ExcludeAreas: req.ExcludeAreas, Notes: req.Notes,
+		Revision: current + 1, UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if err := srcmode.ValidateTaskBrief(&brief); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// ProgramBrief is frozen and authoritative: a runtime soft edit cannot
+	// exclude a platform focus area (or focus a platform exclude area).
+	if err := srcmode.ValidateBriefPair(doc.ProgramBrief, &brief); err != nil {
+		writeErr(w, http.StatusBadRequest, "软偏好与 Program 预设冲突："+err.Error())
+		return
+	}
+	raw, err := json.Marshal(brief)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	updated, err := s.m.PG().UpdateTaskSoftBrief(r.Context(), taskID, current, raw)
+	if err != nil {
+		if errors.Is(err, db.ErrSoftBriefRevision) {
+			writeErr(w, http.StatusConflict, "探索偏好已被其他操作修改，请刷新后重试")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.m.UpdateTaskModeDoc(t.ID, updated)
+	var warnings []string
+	warned := map[string]bool{}
+	for _, area := range brief.ExcludeAreas {
+		for _, assetType := range srcmode.AssetTypes {
+			for _, required := range doc.RequiredFor(assetType) {
+				if required == area && !warned[area] {
+					warned[area] = true
+					warnings = append(warnings, fmt.Sprintf("%s 是必做面，排除偏好不会降低验收要求", area))
+				}
+			}
+		}
+	}
+	s.engine.emitActivity(t, db.Activity{Worker: "system", Kind: "text",
+		Summary: "探索偏好已更新",
+		Detail:  fmt.Sprintf("重点面：%s；排除面：%s；备注：%s", strings.Join(brief.FocusAreas, "、"), strings.Join(brief.ExcludeAreas, "、"), strings.Join(brief.Notes, "；"))})
+	t.NotifyHint([]string{"探索偏好已更新：重点 " + strings.Join(brief.FocusAreas, "、") + "；排除 " + strings.Join(brief.ExcludeAreas, "、")})
+	writeJSON(w, http.StatusOK, map[string]any{"brief": brief, "warnings": warnings})
 }
 
 // postTaskSrcCell lets a human re-mark (or reset) one coverage cell. The same

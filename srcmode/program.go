@@ -51,6 +51,11 @@ type ProgramRules struct {
 	MaxAttemptsPerCell int                 `json:"max_attempts_per_cell,omitempty"`
 	MaxIntentsPerAsset int                 `json:"max_intents_per_asset,omitempty"`
 	RequiredAreas      map[string][]string `json:"required_areas,omitempty"`
+	// FocusAreas / ExcludeAreas are soft exploration preferences inherited by
+	// tasks. They never affect the finish gate.
+	FocusAreas   []string `json:"focus_areas,omitempty"`
+	ExcludeAreas []string `json:"exclude_areas,omitempty"`
+	BriefNote    []string `json:"brief_note,omitempty"`
 
 	// ---- F2：收尾闸档位与平台红线 ----
 	// CheckTier: full（默认）/ platform（平台档案档）/ off。
@@ -138,6 +143,9 @@ func (p *Program) Validate() error {
 			if !IsAssetType(assetType) {
 				return fmt.Errorf("未知资产类型：%s", assetType)
 			}
+			if len(areas) == 0 {
+				return fmt.Errorf("资产类型 %s 的必做面不能为空", assetType)
+			}
 			for _, area := range areas {
 				if !IsArea(area) {
 					return fmt.Errorf("未知风险面：%s（资产类型 %s）", area, assetType)
@@ -145,6 +153,11 @@ func (p *Program) Validate() error {
 			}
 		}
 	}
+	brief := TaskBrief{FocusAreas: p.Rules.FocusAreas, ExcludeAreas: p.Rules.ExcludeAreas, Notes: p.Rules.BriefNote}
+	if err := ValidateTaskBrief(&brief); err != nil {
+		return err
+	}
+	p.Rules.FocusAreas, p.Rules.ExcludeAreas, p.Rules.BriefNote = brief.FocusAreas, brief.ExcludeAreas, brief.Notes
 	for internal, level := range p.SeverityMap {
 		if !isInternalSeverity(internal) {
 			return fmt.Errorf("severity_map 的键必须是 critical/high/medium/low：%s", internal)
@@ -203,7 +216,7 @@ func (p *Program) Validate() error {
 }
 
 // ApplyToModeDoc 把 program 的规则编译进任务模式快照（调用方在创建任务时用）。
-// 规则只会让任务更严：额度取更小、必做面以 program 为准（平台要求什么就测什么）。
+// 规则只会让任务更严：额度取更小、必做面按资产类型 union（Program 是下限，任务只能追加）。
 func (p *Program) ApplyToModeDoc(doc ModeDoc) ModeDoc {
 	out := doc
 	if p.Platform != "" {
@@ -219,14 +232,58 @@ func (p *Program) ApplyToModeDoc(doc ModeDoc) ModeDoc {
 		out.MaxIntentsPerAsset = r
 	}
 	if len(p.Rules.RequiredAreas) > 0 {
+		// Program required areas are a floor: union per asset type so a task can
+		// add its own required surfaces but cannot remove the platform's.
 		merged := make(map[string][]string, len(out.RequiredAreas)+len(p.Rules.RequiredAreas))
 		for k, v := range out.RequiredAreas {
-			merged[k] = v
+			merged[k] = append([]string(nil), v...)
 		}
 		for k, v := range p.Rules.RequiredAreas {
-			merged[k] = v
+			seen := map[string]bool{}
+			for _, area := range merged[k] {
+				seen[area] = true
+			}
+			for _, area := range v {
+				if !seen[area] {
+					seen[area] = true
+					merged[k] = append(merged[k], area)
+				}
+			}
 		}
 		out.RequiredAreas = merged
+	}
+	if len(p.Rules.FocusAreas) > 0 || len(p.Rules.ExcludeAreas) > 0 || len(p.Rules.BriefNote) > 0 {
+		out.ProgramBrief = &TaskBrief{
+			FocusAreas:   append([]string(nil), p.Rules.FocusAreas...),
+			ExcludeAreas: append([]string(nil), p.Rules.ExcludeAreas...),
+			Notes:        append([]string(nil), p.Rules.BriefNote...),
+		}
+	}
+	// Soft preferences are additive and must not undo a platform preset. Drop
+	// task-side entries that contradict the frozen Program brief instead of
+	// letting "exclude wins" silently demote a platform focus area.
+	if out.ProgramBrief != nil && out.SoftBrief != nil {
+		progFocus, progExclude := map[string]bool{}, map[string]bool{}
+		for _, a := range out.ProgramBrief.FocusAreas {
+			progFocus[strings.TrimSpace(a)] = true
+		}
+		for _, a := range out.ProgramBrief.ExcludeAreas {
+			progExclude[strings.TrimSpace(a)] = true
+		}
+		soft := *out.SoftBrief
+		soft.FocusAreas = soft.FocusAreas[:0:0]
+		for _, a := range out.SoftBrief.FocusAreas {
+			if !progExclude[strings.TrimSpace(a)] {
+				soft.FocusAreas = append(soft.FocusAreas, a)
+			}
+		}
+		soft.ExcludeAreas = soft.ExcludeAreas[:0:0]
+		for _, a := range out.SoftBrief.ExcludeAreas {
+			if !progFocus[strings.TrimSpace(a)] {
+				soft.ExcludeAreas = append(soft.ExcludeAreas, a)
+			}
+		}
+		out.SoftBrief = &soft
 	}
 	if p.Rules.AllowBudgetStop != nil {
 		out.AllowBudgetStop = *p.Rules.AllowBudgetStop

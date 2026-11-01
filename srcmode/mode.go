@@ -29,6 +29,17 @@ const (
 	DocVersion                = 1
 )
 
+// TaskBrief is the soft exploration preference layer. It is intentionally
+// separate from RequiredAreas: focus/exclude only affect ordering and prompt
+// guidance, never the SRC finish gate.
+type TaskBrief struct {
+	FocusAreas   []string `json:"focus_areas,omitempty"`
+	ExcludeAreas []string `json:"exclude_areas,omitempty"`
+	Notes        []string `json:"notes,omitempty"`
+	Revision     int      `json:"revision,omitempty"`
+	UpdatedAt    string   `json:"updated_at,omitempty"`
+}
+
 // ModeDoc 是任务的模式快照（tasks.mode_doc）。创建时解析、运行中只读——
 // 与 ExplorationPolicy 同一套快照语义：改全局默认不影响已建任务。
 type ModeDoc struct {
@@ -47,6 +58,13 @@ type ModeDoc struct {
 	ProgramNote string `json:"program_note,omitempty"`
 	// RequiredAreas 覆盖"资产类型 → 必做风险面"的默认映射；只允许收窄/新增已知类型。
 	RequiredAreas map[string][]string `json:"required_areas,omitempty"`
+	// ProgramBrief is the Program's frozen soft exploration preference, copied
+	// when the task is created. It is not editable at runtime.
+	ProgramBrief *TaskBrief `json:"program_brief,omitempty"`
+	// SoftBrief is the only exploration field editable after task creation.
+	// Effective values are ProgramBrief ∪ SoftBrief (soft preferences can only
+	// add focus/exclude, never remove a platform preset).
+	SoftBrief *TaskBrief `json:"soft_brief,omitempty"`
 	// AllowBudgetStop=true 时 budget_stop 也算终态（放行收尾），但报告备注必须写明缺口。
 	AllowBudgetStop bool `json:"allow_budget_stop"`
 	// MaxAttemptsPerCell 是同一格的尝试上限；超过必须 budget_stop 并写原因。
@@ -203,6 +221,12 @@ func Resolve(mode string, raw json.RawMessage) (json.RawMessage, ModeDoc, error)
 			return nil, ModeDoc{}, err
 		}
 	}
+	if err := ValidateTaskBrief(doc.ProgramBrief); err != nil {
+		return nil, ModeDoc{}, fmt.Errorf("program_brief: %w", err)
+	}
+	if err := ValidateTaskBrief(doc.SoftBrief); err != nil {
+		return nil, ModeDoc{}, fmt.Errorf("soft_brief: %w", err)
+	}
 	if t := strings.TrimSpace(doc.PlatformTemplate); t != "" {
 		// custom: 前缀留给用户自定义模板；存在性由 server 在创建任务时查库校验。
 		if _, ok := FindPlatformTemplate(t); !ok && !strings.HasPrefix(strings.ToLower(t), "custom:") {
@@ -288,6 +312,135 @@ func (d ModeDoc) PlatformExemptAllowed(area string) bool {
 		}
 	}
 	return false
+}
+
+func normalizeBriefAreas(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := map[string]bool{}
+	for _, raw := range in {
+		area := strings.TrimSpace(raw)
+		if area == "" || seen[area] {
+			continue
+		}
+		seen[area] = true
+		out = append(out, area)
+	}
+	return out
+}
+
+// NormalizeTaskBrief trims/deduplicates area lists in place.
+func NormalizeTaskBrief(b *TaskBrief) {
+	if b == nil {
+		return
+	}
+	b.FocusAreas = normalizeBriefAreas(b.FocusAreas)
+	b.ExcludeAreas = normalizeBriefAreas(b.ExcludeAreas)
+}
+
+// ValidateTaskBrief validates the soft preference contract. Focus and exclude
+// must name known areas and must not contradict each other. A required area may
+// also be excluded; required wins and the UI should show a warning.
+func ValidateTaskBrief(b *TaskBrief) error {
+	if b == nil {
+		return nil
+	}
+	NormalizeTaskBrief(b)
+	if b.Revision < 0 {
+		return fmt.Errorf("revision 不能为负")
+	}
+	notes := b.Notes[:0:0]
+	for _, note := range b.Notes {
+		if note = strings.TrimSpace(note); note != "" {
+			notes = append(notes, note)
+		}
+	}
+	b.Notes = notes
+	if len([]rune(strings.Join(b.Notes, "；"))) > 2000 {
+		return fmt.Errorf("探索备注不能超过 2000 个字符")
+	}
+	focus := map[string]bool{}
+	for _, area := range b.FocusAreas {
+		if !IsArea(area) {
+			return fmt.Errorf("未知 focus_areas 风险面：%s", area)
+		}
+		focus[area] = true
+	}
+	for _, area := range b.ExcludeAreas {
+		if !IsArea(area) {
+			return fmt.Errorf("未知 exclude_areas 风险面：%s", area)
+		}
+		if focus[area] {
+			return fmt.Errorf("风险面 %s 不能同时出现在 focus_areas 和 exclude_areas", area)
+		}
+	}
+	return nil
+}
+
+// ValidateBriefPair checks that a task-side SoftBrief only adds to the frozen
+// ProgramBrief. Contradictions are rejected, so a platform focus area cannot be
+// demoted by a runtime exclusion (and vice versa).
+func ValidateBriefPair(program, soft *TaskBrief) error {
+	merged := TaskBrief{}
+	for _, b := range []*TaskBrief{program, soft} {
+		if b == nil {
+			continue
+		}
+		merged.FocusAreas = append(merged.FocusAreas, b.FocusAreas...)
+		merged.ExcludeAreas = append(merged.ExcludeAreas, b.ExcludeAreas...)
+		merged.Notes = append(merged.Notes, b.Notes...)
+	}
+	return ValidateTaskBrief(&merged)
+}
+
+// EffectiveBrief returns ProgramBrief ∪ SoftBrief. Soft preferences are additive
+// so a running task cannot silently remove a platform preset.
+func (d ModeDoc) EffectiveBrief() TaskBrief {
+	var out TaskBrief
+	seenFocus, seenExclude := map[string]bool{}, map[string]bool{}
+	for _, b := range []*TaskBrief{d.ProgramBrief, d.SoftBrief} {
+		if b == nil {
+			continue
+		}
+		for _, area := range b.FocusAreas {
+			area = strings.TrimSpace(area)
+			if area != "" && !seenFocus[area] {
+				seenFocus[area] = true
+				out.FocusAreas = append(out.FocusAreas, area)
+			}
+		}
+		for _, area := range b.ExcludeAreas {
+			area = strings.TrimSpace(area)
+			if area != "" && !seenExclude[area] {
+				seenExclude[area] = true
+				out.ExcludeAreas = append(out.ExcludeAreas, area)
+			}
+		}
+		out.Notes = append(out.Notes, b.Notes...)
+	}
+	return out
+}
+
+// BriefWeight is a soft priority multiplier for a cell. Required areas remain
+// required; the multiplier only changes ordering. Exclude wins over focus if a
+// malformed brief somehow contains both.
+func (d ModeDoc) BriefWeight(assetType, area string) float64 {
+	for _, required := range d.RequiredFor(assetType) {
+		if required == area {
+			return 1
+		}
+	}
+	b := d.EffectiveBrief()
+	for _, excluded := range b.ExcludeAreas {
+		if excluded == area {
+			return 0.4
+		}
+	}
+	for _, focused := range b.FocusAreas {
+		if focused == area {
+			return 1.5
+		}
+	}
+	return 1
 }
 
 // RequiredFor 返回某资产类型的必做风险面（mode_doc 覆盖优先，否则用 taxonomy 默认）。

@@ -85,7 +85,8 @@ func TestCheckFinishAgainstRealCells(t *testing.T) {
 		t.Fatalf("范围内资产应为 1 个（%d），got %+v", assetID, assets)
 	}
 
-	// 3) 一格没点 → 全是缺口，不许收尾。
+	// 3) 一格没点 → 全是缺口，不许收尾。focus 面只产生软提示，不能进硬缺口。
+	doc.SoftBrief = &TaskBrief{FocusAreas: []string{"logic"}, Revision: 1}
 	rep, err := CheckFinish(ctx, store, task.ID, doc)
 	if err != nil {
 		t.Fatalf("check finish: %v", err)
@@ -96,6 +97,9 @@ func TestCheckFinishAgainstRealCells(t *testing.T) {
 	}
 	if rep.GapsTotal != len(required) || rep.Finishable {
 		t.Fatalf("空格应全部算缺口且不可收尾：gaps=%d finishable=%v", rep.GapsTotal, rep.Finishable)
+	}
+	if len(rep.SoftDebt) != 1 || rep.SoftDebt[0].Area != "logic" {
+		t.Fatalf("focus 面应只产生 soft debt：%+v", rep.SoftDebt)
 	}
 	for _, g := range rep.Gaps {
 		if g.Kind != GapBlank {
@@ -127,6 +131,9 @@ func TestCheckFinishAgainstRealCells(t *testing.T) {
 	}
 	if rep.CellsMeasured != len(required) {
 		t.Fatalf("cells_measured = %d, want %d", rep.CellsMeasured, len(required))
+	}
+	if len(rep.SoftDebt) != 1 || rep.SoftDebt[0].Area != "logic" {
+		t.Fatalf("soft debt should remain visible after hard gaps close：%+v", rep.SoftDebt)
 	}
 
 	// 5) 范围外资产不能点格。

@@ -1093,6 +1093,25 @@ export interface SrcMatrixAsset {
   cells: SrcMatrixCell[];
 }
 
+/** 探索 Brief：重点/排除面是软偏好，永远不改变必做面的硬验收。 */
+export interface SrcTaskBrief {
+  focus_areas?: string[];
+  exclude_areas?: string[];
+  notes?: string[];
+  revision?: number;
+  updated_at?: string;
+}
+
+/** focus 面尚未形成终态时的软提示：只展示，不阻塞收尾。 */
+export interface SrcSoftDebt {
+  asset_id: number;
+  asset: string;
+  asset_type: string;
+  area: string;
+  item?: string;
+  reason?: string;
+}
+
 /** SRC 收尾闸：一个资产 × 一项收尾（JS 抽全/路径枚举/…）。空 state = 还没做。 */
 export interface SrcCheckMetricField {
   key: string;
@@ -1243,6 +1262,16 @@ export interface SrcTaskState {
   checks?: SrcCheckAsset[];
   finishable?: boolean;
   legend?: string;
+  /** ProgramBrief ∪ SoftBrief 后的有效探索偏好（软引导，不阻塞收尾）。 */
+  brief?: SrcTaskBrief;
+  /** Program 预设的软偏好（创建时冻结，只读，运行期不能删除）。 */
+  program_brief?: SrcTaskBrief;
+  /** 运行期可编辑的软偏好；它只增不减地叠加到 ProgramBrief 上。 */
+  soft_brief?: SrcTaskBrief;
+  /** Program/任务创建时冻结的必做面覆盖（硬验收）。 */
+  required_areas?: Record<string, string[]>;
+  /** focus 面尚未形成终态的软提示；不计入 gaps_total / finishable。 */
+  soft_debt?: SrcSoftDebt[];
   /** 调度快照（只读）：本任务 worker 池、空闲槽、可领意图数。 */
   workers?: number;
   idle_slots?: number;
@@ -1339,6 +1368,12 @@ export interface SrcProgramRules {
   max_attempts_per_cell?: number;
   max_intents_per_asset?: number;
   required_areas?: Record<string, string[]>;
+  /** 软探索偏好：重点面（提高补格优先级）。 */
+  focus_areas?: string[];
+  /** 软探索偏好：排除面（降低优先级；必做面仍然硬验收）。 */
+  exclude_areas?: string[];
+  /** 软探索备注（逐条进 Planner/Worker 提示词）。 */
+  brief_note?: string[];
   /** 收尾闸档位：full（默认）/ platform（手工等价物）/ off。 */
   check_tier?: "full" | "platform" | "off";
   /** 按指标名覆盖内建门槛（如 { paths: 0, manual_paths: 1 }）。 */

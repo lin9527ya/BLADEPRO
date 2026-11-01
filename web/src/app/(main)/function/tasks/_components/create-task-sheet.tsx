@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { AssetInterceptRulesEditor } from "@/components/asset-intercept-rules-editor";
 import { CustomRulesEditor } from "@/components/custom-rules-editor";
+import { SrcAreaPicker } from "@/components/src-area-picker";
 import { StatusBadge } from "@/components/status-badge";
 import { TaskLLMProfileChain } from "@/components/task-llm-profile-chain";
 import { TaskTemplateControls } from "@/components/task-template-controls";
@@ -55,6 +56,23 @@ import type {
 
 import { CategoryPicker, CompanyPicker } from "./task-categories";
 import { appendUploads, MAX_SOURCE_TASKS } from "./task-helpers";
+
+// 必做面按资产类型追加：一行 "subdomain: takeover, host"。留空=用默认。
+function parseSrcRequiredAreas(text: string): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const line of text.split("\n")) {
+    const idx = line.search(/[:：=]/);
+    if (idx <= 0) continue;
+    const kind = line.slice(0, idx).trim();
+    const areas = line
+      .slice(idx + 1)
+      .split(/[\s,，、]+/)
+      .map((x) => x.trim())
+      .filter(Boolean);
+    if (kind && areas.length > 0) out[kind] = [...new Set(areas)];
+  }
+  return out;
+}
 
 // CreateTaskSheet is the 新建任务 drawer. Its form state lives HERE, not in TasksPage: with
 // 描述/目标 held by the page component every keystroke re-rendered the whole task table
@@ -150,6 +168,10 @@ export function CreateTaskSheet({
   // P3 平台项目:仅 SRC 模式下可选,绑定的项目规则(禁用手段/写操作/限速/必做面)编译进本任务。
   const [srcPrograms, setSrcPrograms] = React.useState<SrcProgram[]>([]);
   const [srcProgramID, setSrcProgramID] = React.useState<number | undefined>(undefined);
+  const [srcRequiredAreas, setSrcRequiredAreas] = React.useState("");
+  const [srcFocusAreas, setSrcFocusAreas] = React.useState<string[]>([]);
+  const [srcExcludeAreas, setSrcExcludeAreas] = React.useState<string[]>([]);
+  const [srcBriefNotes, setSrcBriefNotes] = React.useState("");
   // P2 跨任务覆盖继承：把近期同项目/同企业的 tested_clear 与收尾数字带进新任务。
   const [inheritCoverage, setInheritCoverage] = React.useState(false);
   // P2 资产级 token 预算（0 = 跟随系统全局默认）。
@@ -268,6 +290,12 @@ export function CreateTaskSheet({
   // 单任务与批量扇出共用同一份输入，避免两条创建路径的字段逐渐漂移。
   function buildCreateInput() {
     const timeoutSec = Math.max(0, Math.floor(Number(timeoutMin) || 0)) * 60;
+    const requiredAreas = parseSrcRequiredAreas(srcRequiredAreas);
+    const briefNotes = srcBriefNotes
+      .split("\n")
+      .map((x) => x.trim())
+      .filter(Boolean);
+    const hasBrief = srcFocusAreas.length > 0 || srcExcludeAreas.length > 0 || briefNotes.length > 0;
     const heartbeatSec = Math.max(10, Math.floor(Number(heartbeatMin) || 10)) * 60; // 下限 10min，与后端归一一致
     return {
       name: name.trim(),
@@ -292,6 +320,15 @@ export function CreateTaskSheet({
               asset_time_budget_minutes: Math.max(0, Number(assetTimeBudget) || 0),
               asset_cost_budget_usd: Math.max(0, Number(assetCostBudget) || 0),
               platform_template: platformTemplate || undefined,
+              required_areas: Object.keys(requiredAreas).length > 0 ? requiredAreas : undefined,
+              soft_brief: hasBrief
+                ? {
+                    focus_areas: srcFocusAreas,
+                    exclude_areas: srcExcludeAreas,
+                    notes: briefNotes,
+                    revision: 0,
+                  }
+                : undefined,
             }
           : undefined,
       interceptRules: interceptRules.map((r) => ({ ...r, pattern: r.pattern.trim() })).filter((r) => r.pattern !== ""),
@@ -315,6 +352,13 @@ export function CreateTaskSheet({
     if (sourceTaskIDs.length > MAX_SOURCE_TASKS) {
       toast.error(`最多关联 ${MAX_SOURCE_TASKS} 个来源任务`);
       return false;
+    }
+    if (mode === "src") {
+      const overlap = srcFocusAreas.filter((a) => srcExcludeAreas.includes(a));
+      if (overlap.length > 0) {
+        toast.error(`同一个风险面不能同时设为重点和排除：${overlap.join("、")}`);
+        return false;
+      }
     }
     if (batchFanout && companyIDs.length === 0 && sourceTaskIDs.length === 0) {
       toast.error("批量扇出需要先选择关联企业或来源任务，才能确定资产范围");
@@ -382,6 +426,10 @@ export function CreateTaskSheet({
       setGoal("");
       setMode("");
       setSrcProgramID(undefined);
+      setSrcRequiredAreas("");
+      setSrcFocusAreas([]);
+      setSrcExcludeAreas([]);
+      setSrcBriefNotes("");
       setInheritCoverage(false);
       setAssetTokenBudget("0");
       setAssetTimeBudget("0");
@@ -506,6 +554,10 @@ export function CreateTaskSheet({
                       // 切回普通渗透时清掉项目绑定(普通渗透不吃项目规则,留着会误发)。
                       if (opt.value !== "src") {
                         setSrcProgramID(undefined);
+                        setSrcRequiredAreas("");
+                        setSrcFocusAreas([]);
+                        setSrcExcludeAreas([]);
+                        setSrcBriefNotes("");
                         setInheritCoverage(false);
                       }
                     }}
@@ -570,6 +622,49 @@ export function CreateTaskSheet({
                 </Select>
                 <FieldDescription>只决定【提交信息】块的字段名/顺序；绑定平台项目时以项目规则为准。</FieldDescription>
               </Field>
+            )}
+            {mode === "src" && (
+              <div className="grid gap-3 rounded-md border p-3">
+                <div>
+                  <p className="text-sm font-medium">探索边界（可选）</p>
+                  <p className="text-muted-foreground text-xs">
+                    必做面是硬验收；重点/排除只是软引导，不会让必做面变成 N/A，也不影响授权范围。
+                  </p>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="create-src-required-areas">必做面追加（一行一个资产类型）</Label>
+                  <Textarea
+                    id="create-src-required-areas"
+                    className="min-h-16 font-mono text-xs"
+                    value={srcRequiredAreas}
+                    placeholder={"subdomain: takeover, host\napp: authz, injection"}
+                    onChange={(e) => setSrcRequiredAreas(e.target.value)}
+                  />
+                  <p className="text-muted-foreground text-xs">
+                    留空 = 用默认必做面；绑定项目时项目必做面是下限，本任务只能追加。
+                  </p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="grid gap-1.5">
+                    <Label>重点面（软）</Label>
+                    <SrcAreaPicker value={srcFocusAreas} onChange={setSrcFocusAreas} />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label>排除面（软）</Label>
+                    <SrcAreaPicker tone="exclude" value={srcExcludeAreas} onChange={setSrcExcludeAreas} />
+                  </div>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="create-src-brief-notes">探索备注（一行一条）</Label>
+                  <Textarea
+                    id="create-src-brief-notes"
+                    className="min-h-16"
+                    value={srcBriefNotes}
+                    placeholder={"先打登录/改绑链路\n重点对照高低权限响应差异"}
+                    onChange={(e) => setSrcBriefNotes(e.target.value)}
+                  />
+                </div>
+              </div>
             )}
             {mode === "src" && (
               <Field>

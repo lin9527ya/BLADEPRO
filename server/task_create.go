@@ -182,7 +182,23 @@ func (s *Server) prepareTaskCreate(ctx context.Context, req createTaskReq) (*pre
 	if err != nil {
 		return nil, taskErr(400, err.Error())
 	}
+	// ProgramBrief is a frozen preset compiled from a selected Program, never a
+	// client-supplied mode_doc field. Task creation may still provide SoftBrief.
+	if srcDoc.ProgramBrief != nil {
+		srcDoc.ProgramBrief = nil
+		modeDoc, err = json.Marshal(srcDoc)
+		if err != nil {
+			return nil, taskErr(500, err.Error())
+		}
+	}
 	if program != nil {
+		progBrief := &srcmode.TaskBrief{
+			FocusAreas: program.Rules.FocusAreas, ExcludeAreas: program.Rules.ExcludeAreas,
+			Notes: program.Rules.BriefNote,
+		}
+		if err := srcmode.ValidateBriefPair(progBrief, srcDoc.SoftBrief); err != nil {
+			return nil, taskErr(400, "软偏好与 Program 预设冲突："+err.Error())
+		}
 		srcDoc = program.ApplyToModeDoc(srcDoc)
 		note := program.Describe()
 		if fb := s.programFeedbackNote(ctx, program.ID); fb != "" {

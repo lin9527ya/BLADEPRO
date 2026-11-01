@@ -7,6 +7,7 @@ import Link from "next/link";
 import { BugIcon, PencilIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 
+import { SrcAreaPicker } from "@/components/src-area-picker";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -148,6 +149,29 @@ function severityMapText(map?: Record<string, string>): string {
   return entries.map(([k, v]) => `${k}→${v}`).join(" · ");
 }
 
+// 必做面按资产类型配置：一行 "资产类型: 面1, 面2"，例如 subdomain: takeover, host。
+function requiredAreasText(map?: Record<string, string[]>): string {
+  return Object.entries(map ?? {})
+    .map(([kind, areas]) => `${kind}: ${(areas ?? []).join(", ")}`)
+    .join("\n");
+}
+
+function parseRequiredAreas(text: string): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const line of text.split("\n")) {
+    const idx = line.search(/[:：=]/);
+    if (idx <= 0) continue;
+    const kind = line.slice(0, idx).trim();
+    const areas = line
+      .slice(idx + 1)
+      .split(/[\s,，、]+/)
+      .map((x) => x.trim())
+      .filter(Boolean);
+    if (kind && areas.length > 0) out[kind] = [...new Set(areas)];
+  }
+  return out;
+}
+
 interface ProgramDraft {
   name: string;
   platform: string;
@@ -179,6 +203,12 @@ interface ProgramDraft {
   strictLayout: boolean;
   egressIP: string;
   testAccounts: string;
+  // L1 硬验收：按资产类型追加必做面；留空=用 taxonomy 默认。
+  requiredAreas: string;
+  // L2 软探索偏好：只影响优先级与提示词，不改变 finishable。
+  focusAreas: string[];
+  excludeAreas: string[];
+  briefNote: string;
 }
 
 function emptyDraft(): ProgramDraft {
@@ -212,6 +242,10 @@ function emptyDraft(): ProgramDraft {
     strictLayout: false,
     egressIP: "",
     testAccounts: "",
+    requiredAreas: "",
+    focusAreas: [],
+    excludeAreas: [],
+    briefNote: "",
   };
 }
 
@@ -252,6 +286,10 @@ function draftFromProgram(p: SrcProgram): ProgramDraft {
     strictLayout: rules.strict_layout === true,
     egressIP: rules.egress_ip ?? "",
     testAccounts: rules.test_accounts ?? "",
+    requiredAreas: requiredAreasText(rules.required_areas),
+    focusAreas: [...(rules.focus_areas ?? [])],
+    excludeAreas: [...(rules.exclude_areas ?? [])],
+    briefNote: (rules.brief_note ?? []).join("\n"),
   };
 }
 
@@ -751,6 +789,11 @@ function ProgramsTab() {
       setFormError("作业时间窗格式不对：示例 09:00-18:00 或 09:00-12:00,13:00-18:00");
       return;
     }
+    const overlap = draft.focusAreas.filter((a) => draft.excludeAreas.includes(a));
+    if (overlap.length > 0) {
+      setFormError(`同一个风险面不能同时设为重点和排除：${overlap.join("、")}`);
+      return;
+    }
     const severityMap: Record<string, string> = {};
     for (const key of SEVERITY_ROWS) {
       const mapped = draft.severityMap[key];
@@ -784,6 +827,13 @@ function ProgramsTab() {
         strict_layout: draft.strictLayout,
         egress_ip: draft.egressIP.trim(),
         test_accounts: draft.testAccounts.trim(),
+        required_areas: parseRequiredAreas(draft.requiredAreas),
+        focus_areas: draft.focusAreas,
+        exclude_areas: draft.excludeAreas,
+        brief_note: draft.briefNote
+          .split("\n")
+          .map((x) => x.trim())
+          .filter(Boolean),
         platform_template: draft.platformTemplate || undefined,
       },
       rate_limit: toCount(draft.rateLimit),
@@ -1236,6 +1286,51 @@ function ProgramsTab() {
                     onChange={(e) => patch({ timeWindow: e.target.value })}
                   />
                   <p className="text-muted-foreground text-xs">留空 = 不限；格式 HH:MM-HH:MM，多段用逗号分隔</p>
+                </div>
+              </div>
+
+              <div className="grid gap-2 rounded-md border p-3">
+                <span className="text-sm font-medium">探索边界（Brief）</span>
+                <p className="text-muted-foreground text-xs">
+                  必做面是 L1 硬验收；重点/排除只是 L2 软引导，不会释放授权，也不会把必做面变成 N/A。
+                </p>
+                <div className="grid gap-2">
+                  <Label htmlFor="program-required-areas">必做面追加（一行一个资产类型）</Label>
+                  <Textarea
+                    id="program-required-areas"
+                    className="min-h-20 font-mono text-xs"
+                    value={draft.requiredAreas}
+                    placeholder={"subdomain: takeover, host, paths\napp: authz, injection, rce"}
+                    onChange={(e) => patch({ requiredAreas: e.target.value })}
+                  />
+                  <p className="text-muted-foreground text-xs">
+                    资产类型：root_domain / subdomain / ip / app / service / endpoint。留空 =
+                    用默认必做面；任务只能追加，不能删除。
+                  </p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="grid gap-1.5">
+                    <Label>重点面（提高补格优先级）</Label>
+                    <SrcAreaPicker value={draft.focusAreas} onChange={(v) => patch({ focusAreas: v })} />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label>排除面（降低优先级，必做面仍验收）</Label>
+                    <SrcAreaPicker
+                      tone="exclude"
+                      value={draft.excludeAreas}
+                      onChange={(v) => patch({ excludeAreas: v })}
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="program-brief-note">探索备注（一行一条，软提示）</Label>
+                  <Textarea
+                    id="program-brief-note"
+                    className="min-h-20"
+                    value={draft.briefNote}
+                    placeholder={"先打登录/改绑链路\n重点对照高低权限响应差异"}
+                    onChange={(e) => patch({ briefNote: e.target.value })}
+                  />
                 </div>
               </div>
 

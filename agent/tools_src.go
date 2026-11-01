@@ -178,6 +178,11 @@ func (t *ToolSet) srcSnapshot(ctx context.Context) (map[string]any, error) {
 	leases, _ := t.srcStore.ListActiveSrcLeases(ctx, t.taskID)
 	return map[string]any{
 		"mode":               srcmode.ModeSrc,
+		"brief":              t.srcDoc.EffectiveBrief(),
+		"program_brief":      t.srcDoc.ProgramBrief,
+		"soft_brief":         t.srcDoc.SoftBrief,
+		"required_areas":     t.srcDoc.RequiredAreas,
+		"soft_debt":          rep.SoftDebt,
 		"summary":            rep,
 		"gaps":               rep.Gaps,
 		"leases":             leases,
@@ -277,6 +282,9 @@ func (t *ToolSet) srcOverviewBlock(ctx context.Context) (map[string]any, error) 
 		"cells_done":            rep.CellsTerminal,
 		"cells_measured":        rep.CellsMeasured,
 		"assets":                rep.Assets,
+		"brief":                 t.srcDoc.EffectiveBrief(),
+		"required_areas":        t.srcDoc.RequiredAreas,
+		"soft_debt":             rep.SoftDebt,
 		"finishable":            rep.Finishable,
 		"blocked_finish":        !rep.Finishable,
 		"blocked_reason":        rep.BlockedReason,

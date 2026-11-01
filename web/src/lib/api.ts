@@ -119,6 +119,7 @@ import type {
   SrcSubmissionEvent,
   SrcSubmitField,
   SrcSubmitTemplate,
+  SrcTaskBrief,
   SrcTaskState,
   SSProject,
   SSTask,
@@ -532,6 +533,11 @@ export const api = {
   taskCoverageGraph: (id: string) => get<CoverageGraphData>(`/tasks/${id}/coverage-graph`),
   // SRC 挖掘：覆盖矩阵（资产 × 必做风险面）+ 缺口 + 收尾门；非 src 任务返回 enabled=false。
   taskSrc: (id: string) => get<SrcTaskState>(`/tasks/${id}/src`),
+  // 运行期只改软偏好（focus/exclude/notes）；硬边界（required_areas/scope/policy）会被服务端拒绝。
+  patchSrcBrief: (
+    id: string,
+    input: { focus_areas: string[]; exclude_areas: string[]; notes: string[]; revision: number },
+  ) => patch<{ brief: SrcTaskBrief; warnings?: string[] }>(`/tasks/${id}/src/brief`, input),
   // 人工点格：与 agent 的 src_mark_cell 同一套校验，证据要求绕不过去。
   markSrcCell: (
     id: string,

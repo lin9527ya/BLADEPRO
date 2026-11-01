@@ -206,6 +206,7 @@ PATCH /api/tasks/{id}/category	server.(*Server).updateTaskCategory-fm
 PATCH /api/tasks/{id}/constraints/{cid}	server.(*Server).editConstraint-fm
 PATCH /api/tasks/{id}/goals/{gid}	server.(*Server).editGoal-fm
 PATCH /api/tasks/{id}/policy	server.(*Server).patchTaskPolicy-fm
+PATCH /api/tasks/{id}/src/brief	server.(*Server).patchTaskSrcBrief-fm
 PATCH /api/triggers/{id}	server.(*Server).pgUpdateTrigger-fm
 POST /api/active	server.(*Server).setActive-fm
 POST /api/ad/import	server.(*Server).adImportApply-fm

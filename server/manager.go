@@ -2237,3 +2237,16 @@ func (m *Manager) SetSrcProgress(t *Task, p pgdb.SrcProgress) {
 	t.SrcGapsTotal = p.GapsTotal
 	m.mu.Unlock()
 }
+
+// UpdateTaskModeDoc updates the in-memory mode snapshot after a committed soft
+// brief write. It does not persist anything; callers must commit the DB first.
+func (m *Manager) UpdateTaskModeDoc(id string, raw json.RawMessage) {
+	if m == nil || id == "" {
+		return
+	}
+	m.mu.Lock()
+	if t := m.tasks[id]; t != nil {
+		t.ModeDoc = append(json.RawMessage(nil), raw...)
+	}
+	m.mu.Unlock()
+}

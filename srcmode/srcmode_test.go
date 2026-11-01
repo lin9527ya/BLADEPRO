@@ -137,6 +137,31 @@ func TestCellPriorityFavorsUntriedHighValue(t *testing.T) {
 	}
 }
 
+func TestCellPriorityUsesSoftBrief(t *testing.T) {
+	doc := DefaultDoc()
+	plain := cellPriority("subdomain", "logic", 0, doc, 1)
+
+	focus := DefaultDoc()
+	focus.SoftBrief = &TaskBrief{FocusAreas: []string{"logic"}, Revision: 1}
+	if got := cellPriority("subdomain", "logic", 0, focus, 1); got <= plain {
+		t.Fatalf("focus area should raise priority: %d vs %d", got, plain)
+	}
+
+	exclude := DefaultDoc()
+	exclude.SoftBrief = &TaskBrief{ExcludeAreas: []string{"logic"}, Revision: 1}
+	if got := cellPriority("subdomain", "logic", 0, exclude, 1); got >= plain || got < 1 {
+		t.Fatalf("excluded area should lower priority but stay positive: %d vs %d", got, plain)
+	}
+
+	// Required wins over exclude: the hard gate must not be softened by a brief.
+	required := DefaultDoc()
+	required.RequiredAreas = map[string][]string{"subdomain": {"logic"}}
+	required.SoftBrief = &TaskBrief{ExcludeAreas: []string{"logic"}, Revision: 1}
+	if got := cellPriority("subdomain", "logic", 0, required, 1); got != plain {
+		t.Fatalf("required area must ignore exclude weight: %d vs %d", got, plain)
+	}
+}
+
 func TestValidateCellStructuralRules(t *testing.T) {
 	doc := DefaultDoc()
 	ctx := context.Background()
@@ -536,5 +561,76 @@ func TestCustomSubmitTemplateRenders(t *testing.T) {
 	// custom: 前缀在 Resolve 中合法（存在性由 server 查库）。
 	if _, _, err := Resolve(ModeSrc, []byte(`{"platform_template":"custom:acme"}`)); err != nil {
 		t.Fatalf("custom template key rejected: %v", err)
+	}
+}
+
+func TestTaskBriefEffectiveWeightsAndValidation(t *testing.T) {
+	doc := DefaultDoc()
+	doc.ProgramBrief = &TaskBrief{FocusAreas: []string{"authz", "takeover"}}
+	doc.SoftBrief = &TaskBrief{FocusAreas: []string{"takeover"}, ExcludeAreas: []string{"host"}, Notes: []string{"先打登录口"}}
+	b := doc.EffectiveBrief()
+	if len(b.FocusAreas) != 2 || len(b.ExcludeAreas) != 1 || len(b.Notes) != 1 {
+		t.Fatalf("effective brief=%+v", b)
+	}
+	// required authz keeps weight 1; focus takes effect only on non-required areas.
+	if got := doc.BriefWeight("app", "authz"); got != 1 {
+		t.Fatalf("required area weight=%v", got)
+	}
+	if got := doc.BriefWeight("app", "takeover"); got != 1.5 {
+		t.Fatalf("focus weight=%v", got)
+	}
+	if got := doc.BriefWeight("app", "host"); got != 0.4 {
+		t.Fatalf("exclude weight=%v", got)
+	}
+	if err := ValidateTaskBrief(&TaskBrief{FocusAreas: []string{"injection"}, ExcludeAreas: []string{"injection"}}); err == nil {
+		t.Fatal("focus/exclude overlap accepted")
+	}
+	if err := ValidateTaskBrief(&TaskBrief{FocusAreas: []string{"not-a-real-area"}}); err == nil {
+		t.Fatal("unknown area accepted")
+	}
+	if err := ValidateBriefPair(
+		&TaskBrief{FocusAreas: []string{"authz"}},
+		&TaskBrief{ExcludeAreas: []string{"authz"}},
+	); err == nil {
+		t.Fatal("soft brief undid a Program focus area")
+	}
+	if err := ValidateBriefPair(
+		&TaskBrief{ExcludeAreas: []string{"xss"}},
+		&TaskBrief{FocusAreas: []string{"logic"}},
+	); err != nil {
+		t.Fatalf("non-conflicting pair rejected: %v", err)
+	}
+}
+
+func TestProgramRequiredAreasUnionAndFrozenBrief(t *testing.T) {
+	p := &Program{Rules: ProgramRules{
+		RequiredAreas: map[string][]string{"app": {"idor"}},
+		FocusAreas:    []string{"authz"},
+		ExcludeAreas:  []string{"xss"},
+		BriefNote:     []string{"重点看登录"},
+	}}
+	doc := DefaultDoc()
+	doc.RequiredAreas = map[string][]string{"app": {"injection"}}
+	// 任务侧软偏好不能反向覆盖平台预设：xss 是 Program exclude，authz 是 Program focus。
+	doc.SoftBrief = &TaskBrief{FocusAreas: []string{"logic", "xss"}, ExcludeAreas: []string{"authz"}}
+	out := p.ApplyToModeDoc(doc)
+	got := map[string]bool{}
+	for _, area := range out.RequiredFor("app") {
+		got[area] = true
+	}
+	if !got["injection"] || !got["idor"] {
+		t.Fatalf("program/task required union lost an area: %v", out.RequiredFor("app"))
+	}
+	if out.ProgramBrief == nil || len(out.ProgramBrief.FocusAreas) != 1 || out.ProgramBrief.ExcludeAreas[0] != "xss" {
+		t.Fatalf("program brief=%+v", out.ProgramBrief)
+	}
+	if out.SoftBrief == nil || len(out.SoftBrief.FocusAreas) != 1 || out.SoftBrief.FocusAreas[0] != "logic" {
+		t.Fatalf("soft brief should keep only non-conflicting focus: %+v", out.SoftBrief)
+	}
+	if len(out.SoftBrief.ExcludeAreas) != 0 {
+		t.Fatalf("soft exclude overrode Program focus: %+v", out.SoftBrief)
+	}
+	if doc.RequiredAreas["app"][0] != "injection" {
+		t.Fatal("ApplyToModeDoc mutated input")
 	}
 }

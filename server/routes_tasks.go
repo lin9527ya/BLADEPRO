@@ -65,6 +65,7 @@ func (s *Server) registerTaskRoutes(mux routeRegistrar) {
 	mux.HandleFunc("POST /api/tasks/{id}/src/cells", s.postTaskSrcCell)
 	mux.HandleFunc("POST /api/tasks/{id}/src/checks", s.postTaskSrcCheck)
 	mux.HandleFunc("POST /api/tasks/{id}/src/force-finish", s.postTaskSrcForceFinish)
+	mux.HandleFunc("PATCH /api/tasks/{id}/src/brief", s.patchTaskSrcBrief)
 	mux.HandleFunc("GET /api/tasks/{id}/asset-refs", s.taskAssetRefs)
 	mux.HandleFunc("POST /api/tasks/{id}/assets", s.attachTaskAssets)
 	mux.HandleFunc("DELETE /api/tasks/{id}/assets/{assetID}", s.detachTaskAsset)

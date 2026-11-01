@@ -5,6 +5,7 @@ import * as React from "react";
 import { CheckCircle2Icon, FilePlus2Icon, RefreshCwIcon, ShieldAlertIcon } from "lucide-react";
 import { toast } from "sonner";
 
+import { SrcAreaPicker } from "@/components/src-area-picker";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -168,6 +169,13 @@ export function SrcTab({ taskId }: { taskId: string }) {
   const [error, setError] = React.useState("");
   const [notice, setNotice] = React.useState("");
 
+  // L2 软探索偏好：可运行期修改；必做面/ProgramBrief/scope 仍是只读硬边界。
+  const [briefFocus, setBriefFocus] = React.useState<string[]>([]);
+  const [briefExclude, setBriefExclude] = React.useState<string[]>([]);
+  const [briefNotes, setBriefNotes] = React.useState("");
+  const [briefError, setBriefError] = React.useState("");
+  const [briefSaving, setBriefSaving] = React.useState(false);
+
   const [target, setTarget] = React.useState<MarkTarget | null>(null);
   const [cellState, setCellState] = React.useState<SrcCell["state"] | "">("");
   const [cellReason, setCellReason] = React.useState("");
@@ -230,6 +238,15 @@ export function SrcTab({ taskId }: { taskId: string }) {
   React.useEffect(() => {
     void load();
   }, [load]);
+
+  // 只编辑 SoftBrief；ProgramBrief 是冻结预设，服务端会把它并回来，运行期删不掉。
+  const briefRevision = data?.soft_brief?.revision ?? 0;
+  React.useEffect(() => {
+    if (!data?.enabled) return;
+    setBriefFocus([...(data.soft_brief?.focus_areas ?? [])]);
+    setBriefExclude([...(data.soft_brief?.exclude_areas ?? [])]);
+    setBriefNotes((data.soft_brief?.notes ?? []).join("\n"));
+  }, [data?.enabled, data?.soft_brief]);
 
   const summary = data?.summary;
   const enabled = data?.enabled === true;
@@ -413,6 +430,35 @@ export function SrcTab({ taskId }: { taskId: string }) {
     }
   };
 
+  const saveBrief = async () => {
+    const overlap = briefFocus.filter((a) => briefExclude.includes(a));
+    if (overlap.length > 0) {
+      setBriefError(`同一个风险面不能同时设为重点和排除：${overlap.join("、")}`);
+      return;
+    }
+    const notes = briefNotes
+      .split("\n")
+      .map((x) => x.trim())
+      .filter(Boolean);
+    setBriefSaving(true);
+    setBriefError("");
+    try {
+      const r = await api.patchSrcBrief(taskId, {
+        focus_areas: briefFocus,
+        exclude_areas: briefExclude,
+        notes,
+        revision: briefRevision,
+      });
+      setNotice(`探索偏好已更新（revision ${r.brief.revision ?? briefRevision + 1}）`);
+      if ((r.warnings ?? []).length > 0) toast.warning((r.warnings ?? []).join("；"));
+      await load();
+    } catch (e) {
+      setBriefError(String((e as Error).message || e));
+    } finally {
+      setBriefSaving(false);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -533,6 +579,93 @@ export function SrcTab({ taskId }: { taskId: string }) {
             <Badge variant="outline">可领 {data.claimable_intents ?? 0}</Badge>
             <Badge variant="outline">租约 {(data.leases ?? []).length}</Badge>
           </div>
+
+          {/* 软偏好与覆盖矩阵分开展示：它只引导优先级，不改变硬验收。 */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">探索偏好（软）</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-3">
+              <p className="text-muted-foreground text-xs">
+                focus 面会提高补格优先级，exclude 面降低优先级；必做面仍然硬验收，不会因为排除而变成 N/A。
+                硬边界（必做面、授权范围、Program 预设）只能通过新建任务或调整 Program。
+              </p>
+              {(data.program_brief?.focus_areas?.length ?? 0) > 0 ||
+              (data.program_brief?.exclude_areas?.length ?? 0) > 0 ||
+              (data.program_brief?.notes?.length ?? 0) > 0 ? (
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                  <span className="text-muted-foreground">Program 预设（只读）：</span>
+                  {(data.program_brief?.focus_areas ?? []).map((a) => (
+                    <Badge key={`pf-${a}`} variant="outline" className="border-sky-500/40">
+                      重点 · {areaTitle(a)}
+                    </Badge>
+                  ))}
+                  {(data.program_brief?.exclude_areas ?? []).map((a) => (
+                    <Badge key={`pe-${a}`} variant="outline" className="border-amber-500/40">
+                      排除 · {areaTitle(a)}
+                    </Badge>
+                  ))}
+                  {(data.program_brief?.notes ?? []).length > 0 ? (
+                    <span className="text-muted-foreground">{data.program_brief?.notes?.join("；")}</span>
+                  ) : null}
+                </div>
+              ) : null}
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-1.5">
+                  <Label>重点面（focus）</Label>
+                  <SrcAreaPicker value={briefFocus} onChange={setBriefFocus} disabled={briefSaving} />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>排除面（exclude）</Label>
+                  <SrcAreaPicker
+                    tone="exclude"
+                    value={briefExclude}
+                    onChange={setBriefExclude}
+                    disabled={briefSaving}
+                  />
+                </div>
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="task-src-brief-notes">探索备注（一行一条，软提示）</Label>
+                <Textarea
+                  id="task-src-brief-notes"
+                  className="min-h-16"
+                  value={briefNotes}
+                  disabled={briefSaving}
+                  placeholder={"先打登录/改绑链路\n重点对照高低权限响应差异"}
+                  onChange={(e) => setBriefNotes(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                  {(data.soft_debt ?? []).length > 0 ? (
+                    <>
+                      <span className="text-muted-foreground">重点面尚未形成终态（不阻塞收尾）：</span>
+                      {(data.soft_debt ?? []).slice(0, 8).map((d, idx) => (
+                        <Badge
+                          key={`${d.asset_id}-${d.area}-${idx}`}
+                          variant="outline"
+                          title={d.reason}
+                          className="border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+                        >
+                          {d.asset} · {areaTitle(d.area)}
+                        </Badge>
+                      ))}
+                      {(data.soft_debt ?? []).length > 8 ? (
+                        <span className="text-muted-foreground">+{(data.soft_debt ?? []).length - 8}</span>
+                      ) : null}
+                    </>
+                  ) : (
+                    <span className="text-muted-foreground">暂无重点面软提示</span>
+                  )}
+                </div>
+                <Button size="sm" variant="outline" disabled={briefSaving} onClick={() => void saveBrief()}>
+                  {briefSaving ? <Spinner /> : null} 保存偏好
+                </Button>
+              </div>
+              {briefError ? <p className="text-destructive text-xs">{briefError}</p> : null}
+            </CardContent>
+          </Card>
 
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <Stat label="中危+ 发现" value={summary?.findings_medium_plus ?? 0} />

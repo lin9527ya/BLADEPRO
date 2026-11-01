@@ -1,7 +1,5 @@
 "use client";
 
-import * as React from "react";
-
 import { FlaskConicalIcon, KeyboardIcon } from "lucide-react";
 
 import { Field, Section, SubBlock, SwitchRow } from "@/components/page-sections";

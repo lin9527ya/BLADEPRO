@@ -1,7 +1,5 @@
 "use client";
 
-import * as React from "react";
-
 import { EyeOffIcon, LanguagesIcon, OctagonXIcon, ScanSearchIcon, ShieldAlertIcon } from "lucide-react";
 
 import { CustomRulesEditor } from "@/components/custom-rules-editor";

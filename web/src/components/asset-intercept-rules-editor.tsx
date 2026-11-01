@@ -1,7 +1,5 @@
 "use client";
 
-import * as React from "react";
-
 import { PlusIcon, Trash2Icon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -48,7 +46,6 @@ export function AssetInterceptRulesEditor({
       {value.map((r, i) => {
         const ph = ASSET_INTERCEPT_KIND_OPTIONS.find((o) => o.value === r.kind)?.placeholder ?? "";
         return (
-          // biome-ignore lint/suspicious/noArrayIndexKey: 行无稳定 id，按索引受控即可
           <div key={i} className="flex items-center gap-2">
             <NativeSelect
               size="sm"

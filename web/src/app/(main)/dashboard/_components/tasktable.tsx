@@ -1,7 +1,5 @@
 "use client";
 
-import * as React from "react";
-
 import Link from "next/link";
 
 import { ArrowUpRightIcon, ClockIcon } from "lucide-react";

@@ -2,12 +2,9 @@
 
 import * as React from "react";
 
-import Link from "next/link";
-
 import { ArchiveIcon, PauseIcon, PlayIcon, SearchIcon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 
-import { CustomRulesEditor } from "@/components/custom-rules-editor";
 import { ReviewQueueDialog } from "@/components/review-queue-dialog";
 import { ScheduleTasksDialog } from "@/components/schedule-tasks-dialog";
 import { TablePagination } from "@/components/table-pagination";
@@ -15,60 +12,17 @@ import { TablePagination } from "@/components/table-pagination";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import {
-  Combobox,
-  ComboboxChip,
-  ComboboxChips,
-  ComboboxChipsInput,
-  ComboboxContent,
-  ComboboxEmpty,
-  ComboboxItem,
-  ComboboxList,
-  ComboboxValue,
-} from "@/components/ui/combobox";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
-import { Label } from "@/components/ui/label";
-/* removed: @/components/ui/progress */
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { Switch } from "@/components/ui/switch";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
 import { usePolling } from "@/hooks/use-polling";
 /* removed: @/components/ui/tooltip */
 import { api } from "@/lib/api";
 import { getLocalStorageValue, setLocalStorageValue } from "@/lib/local-storage.client";
-import { type SortDirection, useStoredSortPreference } from "@/lib/sort-preference";
-import {
-  AssetInterceptRuleInput,
-  ChatAttachment,
-  Company,
-  CustomRule,
-  type DeleteTaskOptions,
-  DeleteTaskResult,
-  ExplorationPolicyDefault,
-  LLMProfile,
-  type Task,
-  type TaskCategory,
-  type TaskStatus,
-} from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { useStoredSortPreference } from "@/lib/sort-preference";
+import type { DeleteTaskOptions, Task, TaskCategory, TaskStatus } from "@/lib/types";
 
 import { CreateTaskSheet } from "./_components/create-task-sheet";
 import { ARCHIVABLE_STATUSES, ArchiveConfirmDialog, TaskArchivesPanel } from "./_components/task-archives";
@@ -79,7 +33,6 @@ import {
   type DeleteCounts,
   deleteDetails,
   deleteSummary,
-  fmtBytes,
   POLL_MS,
   STATUS_OPTIONS,
   TASK_FILTER_PREFERENCE_KEY,

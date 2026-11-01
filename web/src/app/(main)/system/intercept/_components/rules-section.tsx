@@ -2,7 +2,7 @@
 
 import * as React from "react";
 
-import { BotIcon, ListFilterIcon, PencilIcon, PlusIcon, ShieldAlertIcon, Trash2Icon } from "lucide-react";
+import { ListFilterIcon, PencilIcon, PlusIcon, ShieldAlertIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -22,19 +22,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
-import type {
-  InterceptAction,
-  InterceptRule,
-  InterceptRuleTestResult,
-  JudgeConfig,
-  JudgeDayUsage,
-  JudgeUsage,
-  LLMProfile,
-  Tool,
-} from "@/lib/types";
+import type { InterceptAction, InterceptRule, InterceptRuleTestResult, Tool } from "@/lib/types";
 
 // fmtTokens 把 token 数压成紧凑写法(1.2k / 3.4M),用于审批用量统计。
 

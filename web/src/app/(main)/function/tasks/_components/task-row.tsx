@@ -21,7 +21,6 @@ import {
 import { toast } from "sonner";
 
 import { StatusBadge } from "@/components/status-badge";
-import { AlertDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -51,7 +50,6 @@ import {
   fmtDateTime,
   fmtDuration,
   fmtTokens,
-  POLL_MS,
   type TaskSortField,
   taskControlAction,
   taskDuration,

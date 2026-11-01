@@ -39,7 +39,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -340,10 +339,9 @@ export function AssetsTab({ taskId }: { taskId: string }) {
   }, [tab]);
 
   // Query / tab / page-size changes restart server pagination.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: these controls intentionally reset server pagination.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: controls intentionally reset server pagination
   React.useEffect(() => setPage(0), [tab, size, query]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey is an explicit manual-reload trigger.
   usePolling(
     async (alive) => {
       const dsl = query.trim();

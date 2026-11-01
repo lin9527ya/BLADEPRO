@@ -1,7 +1,5 @@
 "use client";
 
-import * as React from "react";
-
 import { Section } from "@/components/page-sections";
 
 import { UpdateCard } from "./update-card";

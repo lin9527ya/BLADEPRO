@@ -1,7 +1,5 @@
 "use client";
 
-import * as React from "react";
-
 import { ActivityIcon, BugIcon, NetworkIcon, TargetIcon, ZapIcon } from "lucide-react";
 
 import { Card, CardContent, CardHeader } from "@/components/ui/card";

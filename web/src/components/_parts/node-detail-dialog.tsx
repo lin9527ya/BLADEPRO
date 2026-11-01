@@ -12,16 +12,7 @@ import { api } from "@/lib/api";
 import type { TaskNode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-import {
-  collapseDigestGraph,
-  digestMemberIds,
-  nodeSummary,
-  prioTone,
-  summaryFields,
-  TypeMeta,
-  typeMeta,
-  viewKind,
-} from "./graph-helpers";
+import { digestMemberIds, nodeSummary, typeMeta, viewKind } from "./graph-helpers";
 
 // 节点详情弹窗：字段行、payload 的可展开/美化视图与「显示密钥」开关。
 
@@ -205,7 +196,7 @@ export function PayloadValue({ k, v }: { k: string; v: unknown }) {
 // 只有点过「显示明文」之后才由受控入口取回、并只对当前这条节点生效——所以换节点自动回到脱敏，
 // 不需要额外的清理逻辑。明文入口那一次服务端会写留痕（谁、什么时候看了哪条凭据的明文）。
 export function withRevealedSecret(n: TaskNode | null, revealed: string | null): TaskNode | null {
-  if (!n || n.type !== "credential" || revealed === null) return n;
+  if (n?.type !== "credential" || revealed === null) return n;
   let data: Record<string, unknown> | null = null;
   try {
     const parsed: unknown = JSON.parse(n.payload ?? "");

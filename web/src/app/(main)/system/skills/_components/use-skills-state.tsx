@@ -19,15 +19,7 @@ import { api } from "@/lib/api";
 import type { Agent, MCPServer, MissingSkill, SkillCall, SkillItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-import {
-  buildTree,
-  type Creating,
-  fmtTime,
-  type PendingDelete,
-  type Selected,
-  sortNodes,
-  type TreeNode,
-} from "./skills-helpers";
+import type { Creating, PendingDelete, Selected, TreeNode } from "./skills-helpers";
 
 // 技能页的状态与取数：技能树、选中节点、新建/编辑/删除、可见性与调用统计。
 

@@ -25,11 +25,13 @@ export const auth = {
     // 这里做不到 HttpOnly——cookie 由 JS 写，而且 token 本来就存在 localStorage 里；
     // 要真正挡住 XSS 读凭据，得整体改成服务端 Set-Cookie 的 HttpOnly 方案，属架构级改动。
     const secure = location.protocol === "https:" ? "; Secure" : "";
+    // biome-ignore lint/suspicious/noDocumentCookie: client-side auth cookie is the existing architecture
     document.cookie = `${TOKEN_KEY}=${encodeURIComponent(token)}; path=/; max-age=${COOKIE_MAX_AGE}; SameSite=Lax${secure}`;
   },
 
   clearToken(): void {
     localStorage.removeItem(TOKEN_KEY);
+    // biome-ignore lint/suspicious/noDocumentCookie: client-side auth cookie is the existing architecture
     document.cookie = `${TOKEN_KEY}=; path=/; max-age=0`;
   },
 

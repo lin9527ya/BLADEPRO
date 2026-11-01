@@ -18,7 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { MCP_CATALOG } from "@/lib/mcp-catalog";
-import type { Agent, MCPServer } from "@/lib/types";
+import type { MCPServer } from "@/lib/types";
 
 // MCP 页尾部的三个弹窗：推荐目录（只预填不安装）、添加/编辑服务器、删除确认。
 // 抽出来是为了让页面本体只剩列表与明细两栏。

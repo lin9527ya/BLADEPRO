@@ -1,7 +1,5 @@
 "use client";
 
-import * as React from "react";
-
 // 工具参数行的解析/回写与相关常量（编辑表单和页面共用）。
 
 export const TRAFFIC_TOOL_KEYS = new Set(["traffic_search", "traffic_get"]);
@@ -20,8 +18,7 @@ export type ParamRow = {
   parentKey?: string; // set when this is a sub-field of an array param's items
 };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function toRows(schema: Record<string, any>): ParamRow[] {
+export function toRows(schema: Record<string, unknown>): ParamRow[] {
   const props = (schema?.properties ?? {}) as Record<string, Record<string, unknown>>;
   const required = new Set<string>((schema?.required as string[]) ?? []);
   const rows: ParamRow[] = [];
@@ -38,10 +35,8 @@ export function toRows(schema: Record<string, any>): ParamRow[] {
     });
     // Expand items.properties for array params so sub-fields are editable.
     if (type === "array") {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const itemProps = (p as any)?.items?.properties as Record<string, Record<string, unknown>> | undefined;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const itemRequired = new Set<string>(((p as any)?.items?.required as string[]) ?? []);
+      const itemProps = (p as { items?: { properties?: Record<string, Record<string, unknown>> } }).items?.properties;
+      const itemRequired = new Set<string>((p as { items?: { required?: string[] } }).items?.required ?? []);
       if (itemProps) {
         for (const [subName, subP] of Object.entries(itemProps)) {
           const subType = String((subP as Record<string, unknown>)?.type ?? "");
@@ -76,15 +71,13 @@ export function coerceDefault(type: string, raw: string): unknown {
 }
 
 // applyRows writes edited rows back into a deep-copied schema (structure untouched).
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function applyRows(schema: Record<string, any>, rows: ParamRow[]): Record<string, any> {
+export function applyRows(schema: Record<string, unknown>, rows: ParamRow[]): Record<string, unknown> {
   const next = structuredClone(schema ?? {});
   const props = (next.properties ?? {}) as Record<string, Record<string, unknown>>;
   for (const r of rows) {
     if (r.parentKey) {
       // Sub-field of an array param's items.properties
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const parent = props[r.parentKey] as any;
+      const parent = props[r.parentKey] as { items?: { properties?: Record<string, Record<string, unknown>> } };
       const subP = parent?.items?.properties?.[r.name] as Record<string, unknown> | undefined;
       if (!subP) continue;
       subP.description = r.description;

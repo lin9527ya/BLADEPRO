@@ -29,8 +29,7 @@ import { Spinner } from "@/components/ui/spinner";
 import type { Agent, Conversation } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-import { type AgentGroup, conversationIsPinned, fmtBytes, fmtTokens, HISTORY_PAGE } from "./chat-helpers";
-import { ChatView, Composer, DraftChat, LLMProfileRow } from "./chat-messages";
+import { type AgentGroup, conversationIsPinned } from "./chat-helpers";
 
 // 对话页左侧会话列表：会话条目（含置顶/重命名/删除）与按 agent 分组的分组头。
 

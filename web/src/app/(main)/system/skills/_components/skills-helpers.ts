@@ -1,7 +1,5 @@
 "use client";
 
-import * as React from "react";
-
 // 技能页的类型与纯函数：技能树构建/排序、选中/新建/待删三态。
 
 export function fmtTime(ts?: string) {
@@ -27,8 +25,9 @@ export function buildTree(entries: string[]): TreeNode[] {
   const root: TreeNode[] = [];
   const dirMap = new Map<string, TreeNode>();
 
-  function ensureDir(dirPath: string, parentNodes: TreeNode[]): TreeNode[] {
-    if (dirMap.has(dirPath)) return dirMap.get(dirPath)!.children;
+  function ensureDir(dirPath: string, _parentNodes: TreeNode[]): TreeNode[] {
+    const existing = dirMap.get(dirPath);
+    if (existing) return existing.children;
     const parts = dirPath.split("/");
     let nodes = root;
     let cur = "";
@@ -39,7 +38,8 @@ export function buildTree(entries: string[]): TreeNode[] {
         nodes.push(d);
         dirMap.set(cur, d);
       }
-      nodes = dirMap.get(cur)!.children;
+      const node = dirMap.get(cur);
+      if (node) nodes = node.children;
     }
     return nodes;
   }
@@ -60,7 +60,8 @@ export function buildTree(entries: string[]): TreeNode[] {
           nodes.push(d);
           dirMap.set(cur, d);
         }
-        nodes = dirMap.get(cur)!.children;
+        const node = dirMap.get(cur);
+        if (node) nodes = node.children;
       }
       const fname = parts[parts.length - 1];
       if (fname) nodes.push({ name: fname, path: entry, type: "file", children: [] });

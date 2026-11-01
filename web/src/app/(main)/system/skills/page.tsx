@@ -1,7 +1,5 @@
 "use client";
 
-import * as React from "react";
-
 import {
   AlertTriangleIcon,
   ChevronRightIcon,
@@ -46,7 +44,6 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { Agent } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 import { buildTree, fmtTime } from "./_components/skills-helpers";
@@ -56,29 +53,18 @@ import { useSkillsState } from "./_components/use-skills-state";
 export default function SkillsPage() {
   const {
     skills,
-    setSkills,
     agents,
-    setAgents,
     selected,
     setSelected,
     visibility,
-    setVisibility,
     expanded,
-    setExpanded,
     fileContent,
     setFileContent,
     fileLoading,
-    setFileLoading,
     dirty,
     setDirty,
     saving,
-    setSaving,
     creating,
-    setCreating,
-    newEntryName,
-    setNewEntryName,
-    inlineRef,
-    cancelRef,
     newOpen,
     setNewOpen,
     newName,
@@ -96,42 +82,25 @@ export default function SkillsPage() {
     newVisibility,
     setNewVisibility,
     mcpOptions,
-    setMcpOptions,
     creatingSkill,
-    setCreatingSkill,
     uploading,
-    setUploading,
     uploadRef,
     detailMcps,
-    setDetailMcps,
     pendingDelete,
     setPendingDelete,
     deleting,
-    setDeleting,
     usageCalls,
-    setUsageCalls,
     usageLoading,
-    setUsageLoading,
     missing,
-    setMissing,
     skillQuery,
     setSkillQuery,
     filteredSkills,
-    load,
     onUploadPick,
     toggleExpanded,
-    ensureExpanded,
     startCreate,
-    creatingRef,
-    newEntryRef,
-    cancelCreate,
     inlineInputJSX,
     renderTree,
     selectedSkill,
-    uploadZip,
-    commitCreate,
-    deletePath,
-    deleteSkill,
     runPendingDelete,
     saveFile,
     toggleSkillMcp,

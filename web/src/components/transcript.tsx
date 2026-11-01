@@ -394,8 +394,9 @@ function ToolBlock({
     : ok
       ? "text-emerald-600 dark:text-emerald-400"
       : "text-red-600 dark:text-red-400";
-  const rawCmd =
-    use && use.summary.startsWith(toolName) ? use.summary.slice(toolName.length).trimStart() : (use?.summary ?? "");
+  const rawCmd = use?.summary.startsWith(toolName)
+    ? use.summary.slice(toolName.length).trimStart()
+    : (use?.summary ?? "");
   const cmd = toolInputText(toolName, rawCmd);
   // status only — the full result lives behind the expand (【输出】), not previewed inline
   const statusText = running ? "执行中…" : ok ? "✓" : "✕ 失败";

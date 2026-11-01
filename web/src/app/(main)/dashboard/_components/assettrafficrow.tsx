@@ -1,7 +1,5 @@
 "use client";
 
-import * as React from "react";
-
 import Link from "next/link";
 
 import { ActivityIcon, ArrowUpRightIcon, NetworkIcon, ShieldCheckIcon } from "lucide-react";

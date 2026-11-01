@@ -68,10 +68,6 @@ function extraColumns(rows: IntelAsset[]): string[] {
   return seen;
 }
 
-function csvCell(v: string): string {
-  return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
-}
-
 export function FofaSearchDialog({ onImported }: { onImported: () => void }) {
   const [open, setOpen] = React.useState(false);
   const [expr, setExpr] = React.useState("");

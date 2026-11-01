@@ -1,7 +1,5 @@
 "use client";
 
-import * as React from "react";
-
 import { ZapIcon } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 
@@ -14,7 +12,6 @@ import type { useDashboardState } from "./use-dashboard-state";
 
 export function RowTokenCard({ s }: { s: ReturnType<typeof useDashboardState>["tokenCard"] }) {
   const {
-    activity,
     llmProfiles,
     defaultProfileId,
     tokenVersion,
@@ -140,19 +137,19 @@ export function RowTokenCard({ s }: { s: ReturnType<typeof useDashboardState>["t
                   {
                     label: "输入(未命中)",
                     value: displayedTokens.input - displayedTokens.cacheRead,
-                    barColor: dailyTrendConfig.input.color!,
+                    barColor: dailyTrendConfig.input.color as string,
                     text: "text-blue-400",
                   },
                   {
                     label: "缓存命中",
                     value: displayedTokens.cacheRead,
-                    barColor: dailyTrendConfig.cacheRead.color!,
+                    barColor: dailyTrendConfig.cacheRead.color as string,
                     text: "text-emerald-400",
                   },
                   {
                     label: "输出",
                     value: displayedTokens.output,
-                    barColor: dailyTrendConfig.output.color!,
+                    barColor: dailyTrendConfig.output.color as string,
                     text: "text-violet-400",
                   },
                 ].map(({ label, value, barColor, text }) => {

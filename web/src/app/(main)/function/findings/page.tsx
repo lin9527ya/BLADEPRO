@@ -4,18 +4,7 @@ import * as React from "react";
 
 import Link from "next/link";
 
-import {
-  ArrowUpRightIcon,
-  BugIcon,
-  ChevronRightIcon,
-  ClockIcon,
-  DownloadIcon,
-  InfoIcon,
-  SearchIcon,
-  ShieldAlertIcon,
-  TriangleAlertIcon,
-} from "lucide-react";
-import { toast } from "sonner";
+import { ArrowUpRightIcon, BugIcon, ChevronRightIcon, DownloadIcon, SearchIcon } from "lucide-react";
 
 import { FindingRetestDialog } from "@/components/finding-retest-dialog";
 import { StatusBadge } from "@/components/status-badge";
@@ -38,45 +27,13 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { usePolling } from "@/hooks/use-polling";
-import { api } from "@/lib/api";
-import { getLocalStorageValue, setLocalStorageValue } from "@/lib/local-storage.client";
 import { statusMeta } from "@/lib/status";
-import type {
-  ActiveFindingRetest,
-  Finding,
-  FindingAssetNode,
-  FindingGroup,
-  FindingStats,
-  FindingStatus,
-  Severity,
-} from "@/lib/types";
+import type { ActiveFindingRetest, FindingStatus, Severity } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-import { AssetTree, assetPathOf } from "./_components/asset-tree";
-import {
-  AssetTreeState,
-  EMPTY_ASSET_TREE,
-  EMPTY_FLAT_STATE,
-  EMPTY_STATS,
-  FINDING_LIST_PREFERENCE_KEY,
-  FINDING_VIEWS,
-  type FindingView,
-  FlatFindingsState,
-  findingGroupKey,
-  GroupFindingsState,
-} from "./_components/findings-helpers";
-import {
-  FINDING_STATUSES,
-  type FindingEdit,
-  type FindingReport,
-  FindingsTable,
-  findingRowKey,
-  fmtTime,
-  isSameFinding,
-  SEVERITIES,
-  UNASSIGNED_TASK,
-} from "./_components/findings-table";
+import { AssetTree } from "./_components/asset-tree";
+import { type FindingView, findingGroupKey } from "./_components/findings-helpers";
+import { FINDING_STATUSES, FindingsTable, fmtTime, SEVERITIES, UNASSIGNED_TASK } from "./_components/findings-table";
 import { useFindingsState } from "./_components/use-findings-state";
 
 export default function FindingsPage() {
@@ -95,36 +52,15 @@ export default function FindingsPage() {
     setSort,
     search,
     setSearch,
-    query,
-    setQuery,
-    expanded,
-    setExpanded,
     flat,
-    setFlat,
-    flatPage,
-    setFlatPage,
-    flatPageSize,
-    setFlatPageSize,
     assetTree,
-    setAssetTree,
     assetScope,
     setAssetScope,
     groups,
-    setGroups,
     groupTotal,
-    setGroupTotal,
     expandedGroups,
-    setExpandedGroups,
     groupFindings,
-    setGroupFindings,
-    total,
-    setTotal,
     stats,
-    setStats,
-    statsLoaded,
-    setStatsLoaded,
-    preferencesHydrated,
-    setPreferencesHydrated,
     page,
     setPage,
     pageSize,
@@ -133,19 +69,12 @@ export default function FindingsPage() {
     setDeepenFinding,
     retestFinding,
     setRetestFinding,
-    activeRetests,
     setActiveRetests,
-    activeRetestFingerprint,
     retestRefreshVersion,
     deepenDescription,
     setDeepenDescription,
     deepening,
-    setDeepening,
-    filterFingerprint,
-    activeFilterFingerprint,
-    setFindings,
     selectedIds,
-    setSelectedIds,
     exportOpen,
     setExportOpen,
     exportScope,
@@ -153,36 +82,10 @@ export default function FindingsPage() {
     exportFormat,
     setExportFormat,
     exporting,
-    setExporting,
-    toggleSelected,
-    toggleSelectedPage,
     openExport,
-    flatRequest,
-    assetTreeRequest,
-    groupRequests,
-    groupsRequest,
-    flatStateRef,
-    expandedGroupsRef,
-    groupFindingsRef,
-    visibleGroupKeysRef,
-    activeAssetScope,
-    loadFlat,
     loadAssetTree,
-    refreshGroups,
     loadGroup,
     toggleGroup,
-    refreshAfterMutation,
-    updateStatus,
-    reports,
-    setReports,
-    edit,
-    setEdit,
-    saving,
-    setSaving,
-    toggleRow,
-    saveEdit,
-    deleteFinding,
-    openDeepen,
     statCards,
     filteredTotal,
     assetPath,

@@ -1,7 +1,5 @@
 "use client";
 
-import * as React from "react";
-
 import Link from "next/link";
 
 import { ActivityIcon, ArrowUpRightIcon, BugIcon } from "lucide-react";
@@ -15,7 +13,7 @@ import { fmtRel } from "./dashboard-helpers";
 import type { useDashboardState } from "./use-dashboard-state";
 
 export function RowActivity({ s }: { s: ReturnType<typeof useDashboardState>["activityRow"] }) {
-  const { tasks, findings, activity, recentFindings, recentActivity, kindLabel, workerBg } = s;
+  const { activity, recentFindings, recentActivity, kindLabel, workerBg } = s;
 
   return (
     <>

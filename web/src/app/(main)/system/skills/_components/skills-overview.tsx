@@ -4,7 +4,7 @@ import * as React from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { MissingSkill, SkillItem } from "@/lib/types";
+import type { MissingSkill, SkillItem } from "@/lib/types";
 
 import { fmtTime } from "./skills-helpers";
 
@@ -26,7 +26,7 @@ export function SkillsOverview({
     const neverUsed = skills.filter((s) => s.calls === 0);
     const recent = skills
       .filter((s) => s.last_used)
-      .sort((a, b) => (a.last_used! < b.last_used! ? 1 : -1))
+      .sort((a, b) => ((a.last_used ?? "") < (b.last_used ?? "") ? 1 : -1))
       .slice(0, 6);
     const missingCalls = missing.reduce((n, m) => n + m.calls, 0);
     return {

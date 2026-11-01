@@ -1,14 +1,11 @@
 "use client";
 
-import * as React from "react";
-
 import { SearchIcon } from "lucide-react";
 
 import { Advanced, Field, Section, SubBlock, SwitchRow } from "@/components/page-sections";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { api } from "@/lib/api";
 
 import type { useSettingsState } from "./use-settings-state";
 

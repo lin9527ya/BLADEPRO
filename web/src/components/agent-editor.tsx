@@ -26,16 +26,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { api } from "@/lib/api";
-import {
-  Agent,
-  type AgentDetail,
-  type MCPServer,
-  type PromptVar,
-  type PromptVersion,
-  type Settings,
-  type SkillItem,
-  type Tool,
-} from "@/lib/types";
+import type { AgentDetail, MCPServer, PromptVar, PromptVersion, Settings, SkillItem, Tool } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 import { AgentTriggersTab, DiffView } from "./_parts/agent-triggers-tab";

@@ -444,7 +444,7 @@ export function useFindingsState() {
   // 等偏好水合后再发首个请求,否则会先按默认视图/筛选白拉一次。
   // 只轮询非资产视图：资产视图的左树是导航结构，没必要每 5 秒重算（intervalMs=0 → 只跑一次）。
   usePolling(
-    (alive) => {
+    (_alive) => {
       if (!preferencesHydrated) return;
       void activeRetestFingerprint; // 包括不定时轮询的资产视图，也在复测结束后刷新处置状态。
       if (view === "flat" || view === "asset") {

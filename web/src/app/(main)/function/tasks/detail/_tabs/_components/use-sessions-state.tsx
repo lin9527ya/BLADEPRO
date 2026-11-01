@@ -25,10 +25,6 @@ import type {
 
 import {
   emptyState,
-  fmtBytes,
-  fmtDuration,
-  fmtTokens,
-  intentStatus,
   intentToSession,
   keyForSession,
   MAIN_ID,
@@ -41,19 +37,13 @@ import {
   mergeBySeq,
   newWorkerMessageRequestID,
   PAGE,
-  PLANNER_ID,
   PLANNER_SESSION,
-  resolutionLabel,
-  roleMeta,
   type SessionState,
   type SessionStore,
   STREAM_WINDOW_MS,
-  SYSTEM_ID,
   SYSTEM_SCAN_PAGE,
   SYSTEM_SESSION,
   sessionKeyOf,
-  statusIcon,
-  TokenMetrics,
   workerMessageCharCount,
 } from "./session-helpers";
 

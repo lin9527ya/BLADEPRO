@@ -172,7 +172,7 @@ export function CustomToolDialog({
     };
     try {
       if (isNew) await api.createCustomTool({ key: key.trim(), ...payload });
-      else await api.updateCustomTool(tool!.key, payload);
+      else if (tool) await api.updateCustomTool(tool.key, payload);
       toast.success(isNew ? "已创建自定义工具" : "已保存");
       onSaved();
     } catch (e) {

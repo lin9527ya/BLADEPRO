@@ -1,6 +1,6 @@
 "use client";
 
-import * as React from "react";
+import type * as React from "react";
 
 import {
   ActivityIcon,
@@ -28,7 +28,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Progress } from "@/components/ui/progress";
 import { taskIsTerminal } from "@/lib/status";
-import { TaskConstraint, TaskScopeRow } from "@/lib/types";
+import type { TaskConstraint, TaskScopeRow } from "@/lib/types";
 
 import { TaskExplorationPolicyCard, TaskInterceptRulesCard } from "./_components/task-policy-cards";
 import { useOverviewState } from "./_components/use-overview-state";
@@ -116,61 +116,40 @@ function StatCard({
 export function OverviewTab({ taskId }: { taskId: string }) {
   const {
     task,
-    setTask,
     stats,
-    setStats,
     intents,
-    setIntents,
-    findings,
-    setFindings,
     coverage,
-    setCoverage,
     rerunning,
-    setRerunning,
     resuming,
-    setResuming,
     scope,
-    setScope,
     scopeKind,
     setScopeKind,
     scopeValueInput,
     setScopeValueInput,
     scopeBusy,
-    setScopeBusy,
     scopeErr,
-    setScopeErr,
     modelTokens,
-    setModelTokens,
     tokenBudget,
-    setTokenBudget,
     goals,
-    setGoals,
     goalText,
     setGoalText,
     goalVuln,
     setGoalVuln,
     goalBusy,
-    setGoalBusy,
     goalErr,
-    setGoalErr,
     editingGoalId,
-    setEditingGoalId,
     editText,
     setEditText,
     editVuln,
     setEditVuln,
     constraints,
-    setConstraints,
     conText,
     setConText,
     conKind,
     setConKind,
     conBusy,
-    setConBusy,
     conErr,
-    setConErr,
     editingConId,
-    setEditingConId,
     editConText,
     setEditConText,
     editConKind,
@@ -180,16 +159,11 @@ export function OverviewTab({ taskId }: { taskId: string }) {
     compileResult,
     setCompileResult,
     compileBusy,
-    setCompileBusy,
-    loadTokens,
-    loadScope,
-    loadGoals,
     addGoal,
     startEditGoal,
     cancelEditGoal,
     saveEditGoal,
     removeGoal,
-    loadConstraints,
     addConstraint,
     startEditConstraint,
     cancelEditConstraint,
@@ -199,7 +173,6 @@ export function OverviewTab({ taskId }: { taskId: string }) {
     applyCompile,
     addScope,
     removeScope,
-    markRerun,
     rerunOne,
     rerunAll,
     resumeTerminal,
@@ -616,7 +589,7 @@ export function OverviewTab({ taskId }: { taskId: string }) {
       </Card>
       <TaskExplorationPolicyCard taskId={taskId} />
       <TaskInterceptRulesCard taskId={taskId} />
-      {coverage && coverage.enabled && coverage.scope_rows > 0 && (
+      {coverage?.enabled && coverage.scope_rows > 0 && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">

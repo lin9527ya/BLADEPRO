@@ -1,7 +1,5 @@
 "use client";
 
-import * as React from "react";
-
 import { CpuIcon, GaugeIcon } from "lucide-react";
 
 import { Field, Section, SubBlock } from "@/components/page-sections";

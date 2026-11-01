@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
-import {
+import type {
   AssetInterceptKind,
   AssetInterceptRule,
   ConstraintCompilePreview,

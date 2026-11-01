@@ -182,6 +182,7 @@ export async function http<T>(path: string, init?: RequestInit): Promise<T> {
   if (r.status === 401) {
     if (typeof window !== "undefined") {
       localStorage.removeItem("bladepro_token");
+      // biome-ignore lint/suspicious/noDocumentCookie: client-side auth cookie is the existing architecture
       document.cookie = "bladepro_token=; path=/; max-age=0";
       window.location.href = "/login";
     }

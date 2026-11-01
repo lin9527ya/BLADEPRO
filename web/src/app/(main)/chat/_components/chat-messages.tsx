@@ -23,7 +23,7 @@ import { isBtwCommand } from "@/lib/side-questions";
 import type { Activity, Agent, ChatAttachment, Conversation, LLMProfile } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-import { fmtBytes, fmtDuration, fmtTokens, HISTORY_PAGE } from "./chat-helpers";
+import { fmtBytes, fmtTokens, HISTORY_PAGE } from "./chat-helpers";
 
 // 对话正文：消息视图、输入框（含附件）、LLM 配置行与草稿会话。
 

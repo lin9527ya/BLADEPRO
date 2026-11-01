@@ -1,9 +1,6 @@
 "use client";
 
-import * as React from "react";
-
 import dynamic from "next/dynamic";
-import Link from "next/link";
 
 import { RowActivity } from "./_components/activityrow";
 import { RowAssetTraffic } from "./_components/assettrafficrow";

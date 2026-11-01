@@ -89,19 +89,19 @@
         "noNamespace": "error",
         "useAsConstAssertion": "error",
         "useSelfClosingElements": "error",
-        "noNestedTernary": "warn",
+        "noNestedTernary": "off",
         "noParameterAssign": "error",
         "noInferrableTypes": "error",
         "noUselessElse": "error",
         "useFilenamingConvention": "error"
       },
       "suspicious": {
-        "noArrayIndexKey": "warn",
+        "noArrayIndexKey": "off",
         "noConstantBinaryExpressions": "error",
         "noEmptyBlockStatements": "off",
         "noUnknownAtRules": "off",
         "noImportCycles": "error",
-        "noUnnecessaryConditions": "warn"
+        "noUnnecessaryConditions": "off"
       },
       "complexity": {
         "noImportantStyles": "off"

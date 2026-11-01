@@ -150,6 +150,12 @@ const maxReportGaps = 50
 // CheckFinish 是 SRC 模式的收尾门：把"范围内资产 × 必做面"逐个对账，返回缺口。
 // 只读、无副作用；有缺口时调用方（engine）负责拒绝 done 并注入提示。
 func CheckFinish(ctx context.Context, store *db.SrcStore, taskID int64, doc ModeDoc) (Report, error) {
+	// 只做信息收集的任务没有覆盖格/交付件：走专门的侦察收尾门（资产数 > 0）。
+	// 放在这里是因为 engine 的收尾闸、completeSrcTask、forceCompleteSrcTask 与
+	// src_state 都读同一个判定点。
+	if doc.ReconOnly {
+		return checkReconFinish(ctx, store, taskID, doc)
+	}
 	rep := Report{TaskID: taskID, GapsByArea: map[string]int{}, Gaps: []Gap{}}
 	if store == nil || taskID <= 0 {
 		// 没有 SRC 存储（单测 / 未接线）时不臆造缺口：放行由调用方决定。

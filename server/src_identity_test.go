@@ -110,3 +110,73 @@ func TestIdentityDiffRejectsAbsoluteAndForeignPaths(t *testing.T) {
 		}
 	}
 }
+
+// TestIdentityDiffBatchReturnsItemsAndCount 覆盖批量模式：一次对照多条路径，
+// 返回逐条结果与 distinct_count；失败路径只记在该条上，不拖垮整批。
+func TestIdentityDiffBatchReturnsItemsAndCount(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/public" {
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.Header.Get("Cookie") == "tenant-a-secret" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"tenant":"a","id":1}`))
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"forbidden"}`))
+	}))
+	defer target.Close()
+	m, err := NewManager(t.TempDir(), "")
+	if err != nil {
+		t.Skipf("postgres unavailable (%v)", err)
+	}
+	defer m.Close()
+	doc := srcmode.DefaultDoc()
+	doc.TestIdentities = []srcmode.TestIdentity{
+		{Label: "A", Role: "tenant-a", CredentialEnv: "BLADEPRO_TEST_IDENTITY_A"},
+		{Label: "B", Role: "tenant-b", CredentialEnv: "BLADEPRO_TEST_IDENTITY_B"},
+	}
+	raw, _ := json.Marshal(doc)
+	task, err := m.CreateTaskWithOptions("identity-batch", "identity", db.TaskCreateOptions{
+		Mode: "src", ModeDoc: raw,
+		ScopeRows: []db.TaskScopeInput{{Kind: "ip", Net: "127.0.0.1/32"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.pg.DeleteTask(parseIntDefault(task.ID))
+	var asset int64
+	if err := m.pg.QueryRow(`INSERT INTO assets(type,url,ip) VALUES('service',$1,'127.0.0.1') RETURNING id`, target.URL).Scan(&asset); err != nil {
+		t.Fatal(err)
+	}
+	defer m.pg.Exec(`DELETE FROM assets WHERE id=$1`, asset)
+	t.Setenv("BLADEPRO_TEST_IDENTITY_A", "tenant-a-secret")
+	t.Setenv("BLADEPRO_TEST_IDENTITY_B", "tenant-b-secret")
+	s := &Server{m: m}
+	res, err := s.runSrcIdentityDiff(context.Background(), agent.SrcIdentityRequest{
+		TaskID: parseIntDefault(task.ID), AssetID: asset,
+		Paths:     []string{"/api/users/1", "/public"},
+		IdentityA: "A", IdentityB: "B",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Items) != 2 {
+		t.Fatalf("items = %d, want 2", len(res.Items))
+	}
+	if res.DistinctCount != 1 {
+		t.Fatalf("distinct_count = %d, want 1（只有 /api/users/1 有差异）", res.DistinctCount)
+	}
+	if res.Items[0].Path != "/api/users/1" || !res.Items[0].Distinct {
+		t.Fatalf("首条应为有差异的 /api/users/1：%+v", res.Items[0])
+	}
+	if res.Items[1].Path != "/public" || res.Items[1].Distinct {
+		t.Fatalf("次条应为无差异的 /public：%+v", res.Items[1])
+	}
+	encoded, _ := json.Marshal(res)
+	if strings.Contains(string(encoded), "tenant-a-secret") || strings.Contains(string(encoded), "tenant-b-secret") {
+		t.Fatal("批量结果泄漏了凭据")
+	}
+}

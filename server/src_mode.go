@@ -73,6 +73,9 @@ func (s *Server) getTaskSrc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	snap["enabled"] = true
+	// 只做信息收集的任务没有覆盖矩阵：前端据此展示"侦察进度"而不是空格矩阵。
+	snap["recon_only"] = doc.ReconOnly
+	snap["recon_active"] = doc.ReconActive
 	if workers := s.engine.TaskWorkers(t.ID); workers > 0 {
 		states, _ := t.Store.IntentStateCounts()
 		claimable, _ := t.Store.CountClaimableIntents()

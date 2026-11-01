@@ -121,6 +121,20 @@ var CheckDefs = []CheckDef{
 		RequireEvidence: true,
 	},
 	{
+		Key: "logic_flows", Title: "业务逻辑流程",
+		Hint: "先列出该资产的业务流程（登录→下单→改单→退款、审批流、积分/优惠券/余额等），每条至少走一遍并留证据：" +
+			"请求序列、关键响应差异、状态与金额变化。没有多步流程填 na(no_state_machine)，没有业务对象填 na(no_business_object)。",
+		AssetTypes: []string{"app", "service"}, Weight: 20,
+		Metrics: []MetricDef{
+			{Key: "flows", Label: "已走通业务流程数"},
+			{Key: "evidenced", Label: "带证据的流程数"},
+		},
+		MinFull:         map[string]int{"flows": 2, "evidenced": 2},
+		MinPlatform:     map[string]int{"flows": 1, "evidenced": 1},
+		NaCodes:         []string{"no_state_machine", "no_business_object"},
+		RequireEvidence: true,
+	},
+	{
 		Key: "defense_contrast", Title: "防护对照",
 		Hint:       "声称的每一项防护都要有对照实验数据：验证码触发阈值、锁定条件、限频响应变化、白名单拒绝原文、枚举有无差异、签名空/假/乱三种输入。",
 		AssetTypes: []string{"app", "service"}, Weight: 20,

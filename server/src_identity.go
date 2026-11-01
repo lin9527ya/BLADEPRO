@@ -17,9 +17,14 @@ import (
 	"github.com/lin9527ya/bladepro/srcmode"
 )
 
-// runSrcIdentityDiff performs two read-only requests with operator-authorized
-// identities. Secrets are resolved from the deployment environment and never
-// placed in the result, evidence payload, logs or model context.
+// srcIdentityMaxPaths 是批量模式单次最多对照的路径数：每条路径 2 个请求（A/B 各一次），
+// 避免一次调用把任务配额和目标的限频打穿。
+const srcIdentityMaxPaths = 20
+
+// runSrcIdentityDiff performs read-only requests with operator-authorized identities.
+// Secrets are resolved from the deployment environment and never placed in the result,
+// evidence payload, logs or model context. Single path keeps the original shape;
+// paths[] returns one item per path plus distinct_count.
 func (s *Server) runSrcIdentityDiff(ctx context.Context, req agent.SrcIdentityRequest) (*agent.SrcIdentityResult, error) {
 	if req.TaskID <= 0 || req.AssetID <= 0 {
 		return nil, fmt.Errorf("需要 task_id 与 asset_id")
@@ -62,18 +67,100 @@ func (s *Server) runSrcIdentityDiff(ctx context.Context, req agent.SrcIdentityRe
 	if err != nil || bu.Hostname() == "" {
 		return nil, fmt.Errorf("资产不是可请求的 http(s) URL")
 	}
-	rel, err := url.Parse(strings.TrimSpace(req.Path))
+	paths := identityPaths(req)
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("path 与 paths 至少给一个")
+	}
+	if len(paths) > srcIdentityMaxPaths {
+		return nil, fmt.Errorf("一次最多对照 %d 条路径", srcIdentityMaxPaths)
+	}
+
+	client, _ := s.srcProbeClient(req.TaskID)
+	rate := doc.RateLimit
+	if rate <= 0 {
+		rate = srcProbeDefaultRate
+	}
+	pace := newIdentityPacer(ctx, rate)
+
+	results := make([]agent.SrcIdentityResult, 0, len(paths))
+	for _, p := range paths {
+		item, err := s.identityDiffOne(ctx, req.TaskID, req.AssetID, store, client, pace, idA, idB, credA, credB, bu, p)
+		if err != nil {
+			if len(paths) == 1 {
+				return nil, err
+			}
+			results = append(results, agent.SrcIdentityResult{AssetID: req.AssetID, URL: bu.String(), Path: p, Error: err.Error()})
+			continue
+		}
+		results = append(results, *item)
+	}
+	if len(paths) == 1 {
+		return &results[0], nil
+	}
+	distinct := 0
+	for _, r := range results {
+		if r.Distinct {
+			distinct++
+		}
+	}
+	return &agent.SrcIdentityResult{
+		AssetID: req.AssetID, URL: bu.String(),
+		Items: results, DistinctCount: distinct,
+		Note: fmt.Sprintf("批量只读对照：%d 条路径，其中 %d 条 A/B 存在差异；distinct 只是线索，需结合对象归属并经独立复验，不能直接判越权。", len(results), distinct),
+	}, nil
+}
+
+// identityPaths 归一化 path / paths：去空去重、保持输入顺序。
+func identityPaths(req agent.SrcIdentityRequest) []string {
+	raw := req.Paths
+	if len(raw) == 0 && strings.TrimSpace(req.Path) != "" {
+		raw = []string{req.Path}
+	}
+	out := make([]string, 0, len(raw))
+	seen := map[string]bool{}
+	for _, p := range raw {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return out
+}
+
+// newIdentityPacer 返回一个按 QPS 排队的等待函数：每次真实请求前调用。
+func newIdentityPacer(ctx context.Context, rate int) func() {
+	if rate <= 0 {
+		rate = srcProbeDefaultRate
+	}
+	interval := time.Second / time.Duration(rate)
+	next := time.Now()
+	return func() {
+		if d := time.Until(next); d > 0 {
+			select {
+			case <-ctx.Done():
+			case <-time.After(d):
+			}
+		}
+		next = time.Now().Add(interval)
+	}
+}
+
+// identityDiffOne 对一条路径做 A/B 两次只读请求并落一条事实证据。
+func (s *Server) identityDiffOne(ctx context.Context, taskID, assetID int64, store *db.SrcStore, client *http.Client,
+	pace func(), idA, idB srcmode.TestIdentity, credA, credB string, base *url.URL, path string) (*agent.SrcIdentityResult, error) {
+	rel, err := url.Parse(strings.TrimSpace(path))
 	if err != nil || rel.IsAbs() || rel.Host != "" {
 		return nil, fmt.Errorf("path 必须是同 host 的相对路径，不能是绝对 URL")
 	}
-	target := bu.ResolveReference(rel)
-	if !strings.EqualFold(target.Hostname(), bu.Hostname()) {
+	target := base.ResolveReference(rel)
+	if !strings.EqualFold(target.Hostname(), base.Hostname()) {
 		return nil, fmt.Errorf("path 不能跳转到其他 host")
 	}
-	if inScope, decidable, err := store.SrcHostInScope(ctx, req.TaskID, target.Hostname()); err != nil || (decidable && !inScope) {
+	if inScope, decidable, err := store.SrcHostInScope(ctx, taskID, target.Hostname()); err != nil || (decidable && !inScope) {
 		return nil, fmt.Errorf("目标 host 不在任务授权范围内")
 	}
-	client, _ := s.srcProbeClient(req.TaskID)
 	observe := func(id srcmode.TestIdentity, credential string) agent.SrcIdentityObservation {
 		out := agent.SrcIdentityObservation{Label: id.Label, Role: id.Role, Tenant: id.Tenant}
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
@@ -87,6 +174,7 @@ func (s *Server) runSrcIdentityDiff(ctx context.Context, req agent.SrcIdentityRe
 		}
 		httpReq.Header.Set(header, credential)
 		httpReq.Header.Set("User-Agent", "bladepro-src-identity/1")
+		pace()
 		resp, err := client.Do(httpReq)
 		if err != nil {
 			out.Error = "请求失败（未回包）"
@@ -106,9 +194,9 @@ func (s *Server) runSrcIdentityDiff(ctx context.Context, req agent.SrcIdentityRe
 	a := observe(idA, credA)
 	b := observe(idB, credB)
 	distinct := a.Status != b.Status || a.Length != b.Length || a.SHA256 != b.SHA256
-	res := &agent.SrcIdentityResult{AssetID: req.AssetID, URL: target.String(), A: a, B: b, Distinct: distinct,
+	res := &agent.SrcIdentityResult{AssetID: assetID, URL: target.String(), Path: target.Path, A: a, B: b, Distinct: distinct,
 		Note: "只读对照，仅比较状态/长度/正文摘要；distinct 只是线索，需结合对象归属并经独立复验，不能直接判越权。"}
-	task, ok := s.m.Task(fmt.Sprintf("%d", req.TaskID))
+	task, ok := s.m.Task(fmt.Sprintf("%d", taskID))
 	if ok && task.Store != nil {
 		payload := map[string]any{
 			"summary":    fmt.Sprintf("身份对照：%s（%s）vs %s（%s）%s", a.Label, a.Role, b.Label, b.Role, target.Path),
@@ -117,7 +205,7 @@ func (s *Server) runSrcIdentityDiff(ctx context.Context, req agent.SrcIdentityRe
 			"identity_b": map[string]any{"label": b.Label, "role": b.Role, "tenant": b.Tenant, "status": b.Status, "length": b.Length, "body_sha256": b.SHA256},
 			"distinct":   distinct,
 		}
-		nodeID, err := task.Store.AddNode(db.KindFact, payload, 1, "confirmed", "src_identity", []int64{req.AssetID})
+		nodeID, err := task.Store.AddNode(db.KindFact, payload, 1, "confirmed", "src_identity", []int64{assetID})
 		if err == nil {
 			res.EvidenceNodeID = nodeID
 		}

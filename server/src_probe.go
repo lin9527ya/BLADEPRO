@@ -47,6 +47,16 @@ func (s *Server) runSrcProbe(ctx context.Context, req agent.SrcProbeRequest) (*s
 	if !doc.IsSrc() {
 		return nil, fmt.Errorf("该任务不是 SRC 模式，不能使用只读探针")
 	}
+	// 只做信息收集的任务默认只被动：只有创建时勾了「允许低强度主动验证」才放行，
+	// 且只放行 alive / fingerprint 两个 kind（不带 payload、不枚举路径、不复测流量）。
+	if doc.ReconOnly {
+		if !doc.ReconActive {
+			return nil, fmt.Errorf("该任务是只做信息收集（recon_only）：未开启「允许低强度主动验证」，不能使用探针")
+		}
+		if req.Kind != srcprobe.KindAlive && req.Kind != srcprobe.KindFingerprint {
+			return nil, fmt.Errorf("只做信息收集的任务只允许 alive / fingerprint 探针")
+		}
+	}
 	if doc.NoAutomation {
 		return nil, fmt.Errorf("平台禁止自动化探针：请使用经授权的手工验证")
 	}
@@ -56,25 +66,28 @@ func (s *Server) runSrcProbe(ctx context.Context, req agent.SrcProbeRequest) (*s
 	headers := map[string]string{}
 	identityLabel := strings.TrimSpace(req.Identity)
 	if identityLabel != "" {
-		id, ok := doc.IdentityByLabel(identityLabel)
-		if !ok {
-			return nil, fmt.Errorf("身份 label 未在平台项目中配置（test_identities）")
-		}
-		if err := srcmode.ValidateTestIdentities([]srcmode.TestIdentity{id}); err != nil {
+		h, err := s.srcIdentityHeaders(doc, identityLabel)
+		if err != nil {
 			return nil, err
 		}
-		credential := strings.TrimSpace(os.Getenv(id.CredentialEnv))
-		if credential == "" {
-			return nil, fmt.Errorf("身份凭据未在部署环境提供（credential_env）")
+		headers = h
+	}
+	// id_enum 需要两个身份：A（被验证方）与 B（有权读该对象的身份）。两者都必须配置，
+	// 且不能是同一个 label——否则对照没有意义。
+	var headersA, headersB map[string]string
+	if req.Kind == srcprobe.KindIDEnum {
+		bLabel := strings.TrimSpace(req.IdentityB)
+		if identityLabel == "" || bLabel == "" {
+			return nil, fmt.Errorf("id_enum 需要 identity 与 identity_b 两个身份 label")
 		}
-		if strings.ContainsAny(credential, "\r\n") {
-			return nil, fmt.Errorf("身份凭据包含非法换行字符")
+		if strings.EqualFold(identityLabel, bLabel) {
+			return nil, fmt.Errorf("identity 与 identity_b 不能相同")
 		}
-		header := strings.TrimSpace(id.Header)
-		if header == "" {
-			header = "Cookie"
+		bHeaders, err := s.srcIdentityHeaders(doc, bLabel)
+		if err != nil {
+			return nil, err
 		}
-		headers[header] = credential
+		headersA, headersB = headers, bHeaders
 	}
 	store := s.m.PG().Src()
 	asset, err := store.SrcAssetInScope(ctx, req.TaskID, req.AssetID)
@@ -155,6 +168,8 @@ func (s *Server) runSrcProbe(ctx context.Context, req agent.SrcProbeRequest) (*s
 	res, err := srcprobe.Run(ctx, srcprobe.Options{
 		Target: target, Kind: req.Kind, Wordlist: words, MaxPaths: req.MaxPaths,
 		Rate: rate, Client: client, Endpoints: req.Endpoints, Retest: retest, Headers: headers,
+		URLs: req.URLs, MaxURLs: req.MaxURLs,
+		Template: req.Template, IDs: req.IDs, HeadersA: headersA, HeadersB: headersB,
 	})
 	if err != nil {
 		return nil, err
@@ -164,7 +179,7 @@ func (s *Server) runSrcProbe(ctx context.Context, req agent.SrcProbeRequest) (*s
 		res.Notes = append(res.Notes, "认证身份："+identityLabel+"（凭据由部署环境注入，不进入结果/日志）")
 	}
 	rows, complete := trace.snapshot()
-	params, _ := json.Marshal(map[string]any{"target": target, "kind": req.Kind, "max_paths": req.MaxPaths, "endpoints": req.Endpoints, "wordlist": words, "retest": retest, "identity": identityLabel})
+	params, _ := json.Marshal(map[string]any{"target": target, "kind": req.Kind, "max_paths": req.MaxPaths, "endpoints": req.Endpoints, "urls": req.URLs, "max_urls": req.MaxURLs, "template": req.Template, "ids": req.IDs, "wordlist": words, "retest": retest, "identity": identityLabel, "identity_b": strings.TrimSpace(req.IdentityB)})
 	result, _ := json.Marshal(map[string]any{"probe": res, "requests": rows})
 	receipt := &db.SrcProbeRun{ID: runID, TaskID: req.TaskID, AssetID: req.AssetID, Kind: req.Kind, Target: target, Params: params, Metrics: res.Metrics, Complete: complete, Truncated: res.Truncated, Result: result}
 	if err := s.m.pg.RecordSrcProbeRun(ctx, receipt); err != nil {
@@ -204,6 +219,20 @@ func srcProbeCacheKey(req agent.SrcProbeRequest, doc srcmode.ModeDoc) string {
 		return prefix + fmt.Sprintf("paths:max=%d", max)
 	case srcprobe.KindJS:
 		return prefix + "js"
+	case srcprobe.KindAlive, srcprobe.KindFingerprint:
+		urls := make([]string, 0, len(req.URLs))
+		seen := map[string]bool{}
+		for _, u := range req.URLs {
+			u = strings.TrimSpace(u)
+			if u == "" || seen[u] {
+				continue
+			}
+			seen[u] = true
+			urls = append(urls, u)
+		}
+		sort.Strings(urls)
+		sum := sha256.Sum256([]byte(strings.Join(urls, "\n")))
+		return prefix + req.Kind + ":" + hex.EncodeToString(sum[:8])
 	case srcprobe.KindMethods:
 		eps := make([]string, 0, len(req.Endpoints))
 		seen := map[string]bool{}
@@ -329,4 +358,27 @@ func (s *Server) srcProbeClient(taskID int64) (*http.Client, string) {
 			return http.ErrUseLastResponse
 		},
 	}, note
+}
+
+// srcIdentityHeaders 把一个测试身份 label 解析成请求头（凭据只来自部署环境）。
+func (s *Server) srcIdentityHeaders(doc srcmode.ModeDoc, label string) (map[string]string, error) {
+	id, ok := doc.IdentityByLabel(label)
+	if !ok {
+		return nil, fmt.Errorf("身份 label 未在平台项目中配置（test_identities）")
+	}
+	if err := srcmode.ValidateTestIdentities([]srcmode.TestIdentity{id}); err != nil {
+		return nil, err
+	}
+	credential := strings.TrimSpace(os.Getenv(id.CredentialEnv))
+	if credential == "" {
+		return nil, fmt.Errorf("身份凭据未在部署环境提供（credential_env）")
+	}
+	if strings.ContainsAny(credential, "\r\n") {
+		return nil, fmt.Errorf("身份凭据包含非法换行字符")
+	}
+	header := strings.TrimSpace(id.Header)
+	if header == "" {
+		header = "Cookie"
+	}
+	return map[string]string{header: credential}, nil
 }

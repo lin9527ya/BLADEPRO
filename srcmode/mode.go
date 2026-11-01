@@ -127,6 +127,13 @@ type ModeDoc struct {
 	// ReconGate 要求 app/service 资产先完成清点（js_enum + paths_enum）才允许
 	// 派非侦察意图。nil = 跟随全局设置；false = 本任务显式关闭。
 	ReconGate *bool `json:"recon_gate,omitempty"`
+	// ReconOnly 把任务限定为"只做信息收集"：只登记资产、产出清单，不做漏洞测试。
+	// 创建时定死；收尾门改为"任务范围内已登记资产数 > 0"，并强制关掉交付门与收尾闸。
+	ReconOnly bool `json:"recon_only,omitempty"`
+	// ReconActive 放开侦察任务的"低强度主动验证"（alive / fingerprint 探针）。
+	// 默认 false：侦察任务只做被动收集。只能与 ReconOnly 同用，且与平台
+	// no_automation 互斥——平台禁止自动化时不允许对目标发任何请求。
+	ReconActive bool `json:"recon_active,omitempty"`
 	// AreaTiers 是按风险面的模型分层（cheap/standard/strong）。空 = 用内建默认
 	// （有输出价值的面 strong，清点/枚举类 cheap）。只有在 llm_auto_tier 打开、
 	// 且任务没有显式 worker 绑定时才生效；显式配置始终优先。
@@ -170,6 +177,21 @@ func Resolve(mode string, raw json.RawMessage) (json.RawMessage, ModeDoc, error)
 	}
 	doc.Mode = ModeSrc
 	doc.DocVersion = DocVersion
+	// 只做信息收集的任务没有覆盖格/交付件，收尾门改判"已登记资产数"；这两道闸必须关掉，
+	// 否则任务永远收不了尾。创建时定死，运行中不可改。
+	if doc.ReconOnly {
+		doc.SkipReportGate = true
+		doc.SkipCheckGate = true
+		doc.CheckTier = "off"
+	}
+	if doc.ReconActive {
+		if !doc.ReconOnly {
+			return nil, ModeDoc{}, fmt.Errorf("recon_active 只能与 recon_only 一起使用")
+		}
+		if doc.NoAutomation {
+			return nil, ModeDoc{}, fmt.Errorf("平台禁止自动化（no_automation）时不能开启侦察主动验证")
+		}
+	}
 	if doc.MaxAttemptsPerCell <= 0 {
 		doc.MaxAttemptsPerCell = DefaultMaxAttemptsPerCell
 	}
@@ -298,6 +320,9 @@ func Parse(raw json.RawMessage) ModeDoc {
 
 // IsSrc reports whether this snapshot describes the SRC mode.
 func (d ModeDoc) IsSrc() bool { return d.Mode == ModeSrc }
+
+// ReconOnlyMode 报告本任务是否只做信息收集（不挖洞）。
+func (d ModeDoc) ReconOnlyMode() bool { return d.ReconOnly }
 
 // ReconGateEnabled reports whether payload intents must wait for inventory.
 func (d ModeDoc) ReconGateEnabled() bool { return d.ReconGate != nil && *d.ReconGate }

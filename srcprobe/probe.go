@@ -25,6 +25,14 @@ const (
 	KindJS      = "js"
 	KindMethods = "methods"
 	KindNon404  = "non404"
+	// KindAlive 只统计"有没有响应"：存活数、状态码分布、有标题数。
+	KindAlive = "alive"
+	// KindFingerprint 在存活统计之外收集低成本指纹：响应头特征、favicon 哈希、
+	// robots.txt / sitemap.xml 是否存在。两者都只发 GET，不做端口扫描/目录爆破。
+	KindFingerprint = "fingerprint"
+	// KindIDEnum 用 {id} 模板 + 两个身份各取一次，找"别人也能读到同一对象"的越权线索。
+	// 只发 GET；模板必须是同 host 相对路径，ID 字符集受限（防路径注入）。
+	KindIDEnum = "id_enum"
 )
 
 // Options 是一次探针的输入。Client 由宿主提供（应走录制代理并禁止跟随跳转）。
@@ -38,6 +46,15 @@ type Options struct {
 	Endpoints []string // methods
 	Retest    []string // non404：待复测的 URL（或相对路径）
 	MaxRetest int
+	// URLs / MaxURLs 供 alive、fingerprint：在资产 URL 之外再测的同 host 相对路径
+	// （最多 100 条）。首个 URL 恒为资产本身。
+	URLs    []string
+	MaxURLs int
+	// id_enum 专用：{id} 模板、ID 列表与两个身份的请求头（A=被验证方，B=有权方）。
+	Template string
+	IDs      []string
+	HeadersA map[string]string
+	HeadersB map[string]string
 	// Headers are host-resolved request headers (e.g. an authorized test-identity
 	// Cookie). They are never returned in Result or written to logs.
 	Headers map[string]string
@@ -65,8 +82,13 @@ type Result struct {
 	CountsByStatus map[string]int `json:"counts_by_status"`
 	Hits           []Hit          `json:"hits,omitempty"`
 	JSURLs         []string       `json:"js_urls,omitempty"`
-	Notes          []string       `json:"notes,omitempty"`
-	Truncated      bool           `json:"truncated,omitempty"`
+	// Tech / FaviconMMH3 只在 fingerprint 探针里填充（响应头特征与 FOFA 口径 favicon 哈希）。
+	Tech        []string `json:"tech,omitempty"`
+	FaviconMMH3 string   `json:"favicon_mmh3,omitempty"`
+	// IDCandidates 只在 id_enum 探针里填充。
+	IDCandidates []IDCandidate `json:"id_candidates,omitempty"`
+	Notes        []string      `json:"notes,omitempty"`
+	Truncated    bool          `json:"truncated,omitempty"`
 	// Cached 表示结果复用了资产级枚举缓存（见 server/src_probe.go），不是本次现跑。
 	Cached bool `json:"cached,omitempty"`
 }
@@ -122,8 +144,14 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		err = probeMethods(ctx, target, opts, r, res)
 	case KindNon404:
 		err = probeNon404(ctx, target, opts, r, res)
+	case KindAlive:
+		err = probeAlive(ctx, target, opts, r, res)
+	case KindFingerprint:
+		err = probeFingerprint(ctx, target, opts, r, res)
+	case KindIDEnum:
+		err = probeIDEnum(ctx, target, opts, r, res)
 	default:
-		err = fmt.Errorf("未知探针类型 %q（paths/js/methods/non404）", opts.Kind)
+		err = fmt.Errorf("未知探针类型 %q（paths/js/methods/non404/alive/fingerprint/id_enum）", opts.Kind)
 	}
 	res.Requests = r.requests
 	res.ElapsedMS = time.Since(start).Milliseconds()
@@ -147,6 +175,11 @@ func (r *runner) wait(ctx context.Context) error {
 }
 
 func (r *runner) do(ctx context.Context, method, rawURL string) (*http.Response, []byte, error) {
+	return r.doWith(ctx, method, rawURL, nil)
+}
+
+// doWith 在基础请求头之上叠加一次性请求头（id_enum 用来切换两个身份）。
+func (r *runner) doWith(ctx context.Context, method, rawURL string, extra map[string]string) (*http.Response, []byte, error) {
 	if err := r.wait(ctx); err != nil {
 		return nil, nil, err
 	}
@@ -156,6 +189,9 @@ func (r *runner) do(ctx context.Context, method, rawURL string) (*http.Response,
 	}
 	req.Header.Set("User-Agent", "bladepro-src-probe/1")
 	for name, value := range r.headers {
+		req.Header.Set(name, value)
+	}
+	for name, value := range extra {
 		req.Header.Set(name, value)
 	}
 	r.requests++

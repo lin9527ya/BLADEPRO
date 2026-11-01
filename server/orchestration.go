@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -549,6 +551,7 @@ func (s *Server) seedOrchestrationTools() {
 	s.seedReporterAgent()             // 预置「报告撰写」agent + 工具绑定 + finding 触发器(一次性)
 	s.reseedReporterPrompt()          // 报告模板:补详细利用过程/绝对路径/命令回显(一次性)
 	s.seedPlaybookAgent()             // 预置「打法沉淀」agent + report_foothold 触发器(一次性)
+	s.seedReconAgent()                // 预置「信息收集」agent + src-recon 技能可见性(一次性)
 	s.reseedPentestPrompt()           // pentest 提示词:加 lookup_playbooks 打法复用(一次性)
 	s.upgradeReporterTriggerMessage() // 老库补迁移:让 reporter 回传 evidence_version(一次性)
 	s.seedFindingTrafficTools()       // 增加可选证据参数及只读证据工具，保留用户配置
@@ -918,6 +921,78 @@ func (s *Server) seedPlaybookAgent() {
 		return
 	}
 	log.Printf("[playbook] 已预置「打法沉淀」agent + report_foothold 触发器")
+}
+
+// seedReconAgent 预置一个「信息收集」自定义 agent(builtin=false，可在 UI 编辑/删除)：
+// 只收不打——用 ENScan MCP 摸企业面，按 src-recon 技能收集资产并 insert_assets 落库。
+// 一次性(settings flag 守卫)：全部步骤成功后才写 flag；用户删掉 agent 后不再重建。
+// ENScan 不写 agent_visibility：SKILL.md 的 mcps: ENScan 会把它的工具 gated，调用技能才解锁。
+func (s *Server) seedReconAgent() {
+	const flag = "recon_agent_seed_v2"
+	const skillName = "src-recon"
+	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
+		return
+	}
+
+	if exist, _ := s.m.pg.GetAgentByKey("recon"); exist == nil {
+		a, err := s.m.pg.CreateAgent("recon", "信息收集",
+			"SRC 信息收集/资产测绘：只收不打。用 ENScan 摸企业面（股权/备案/小程序/公众号/App/招聘/软著），"+
+				"按 src-recon 九维度收集域名/IP/服务，登记资产库并产出资产清单，不做漏洞测试。")
+		if err != nil {
+			log.Printf("[recon] 创建 agent 失败: %v", err)
+			return
+		}
+		if err := s.m.pg.SeedPromptIfEmpty(a.ID, agent.ReconDefaultPrompt); err != nil {
+			log.Printf("[recon] seed prompt 失败: %v", err)
+			return
+		}
+		if err := s.m.pg.SetAgentRunSeconds("recon", 3600); err != nil {
+			log.Printf("[recon] 设置 run_seconds 失败: %v", err)
+		}
+		if err := s.m.pg.SetAgentWebSearch("recon", true); err != nil {
+			log.Printf("[recon] 开启 web_search 失败: %v", err)
+		}
+	}
+	// 只绑定"落库 + 查重 + 企业范围"四件套：add_task_scope 需要任务上下文且 SRC 下不允许 agent 扩范围，
+	// record_fact/coverage_matrix 依赖任务，intel_search 依赖未配置的 FOFA provider。
+	if err := s.m.pg.AddAgentToToolBinding("recon", []string{
+		"insert_assets", "list_assets", "list_companies", "add_company_scope",
+		"intel_search", // FOFA 测绘：只查不入库，命中后用 insert_assets 登记
+	}); err != nil {
+		log.Printf("[recon] 绑定工具失败: %v", err)
+		return
+	}
+	// 技能可见性：recon 用技能跑收集；planner/worker 用于 SRC 任务内的"开案先侦察"。
+	for _, key := range []string{"recon", "planner", "worker"} {
+		a, err := s.m.pg.GetAgentByKey(key)
+		if err != nil || a == nil {
+			log.Printf("[recon] 读取 agent %s 失败，跳过技能可见性: %v", key, err)
+			continue
+		}
+		if err := s.m.pg.ToggleSkillVisibility(a.ID, skillName, true); err != nil {
+			log.Printf("[recon] 技能可见性 %s 失败: %v", key, err)
+			return
+		}
+	}
+	// 浏览器手采兜底只给 recon：playwright-cli 声明 mcps: browser，技能被加载时才解锁
+	// 浏览器 MCP；planner/worker 不绑——否则每个任务每次 run 都会拉起一个 Playwright 进程。
+	if a, err := s.m.pg.GetAgentByKey("recon"); err == nil && a != nil {
+		if err := s.m.pg.ToggleSkillVisibility(a.ID, "playwright-cli", true); err != nil {
+			log.Printf("[recon] 浏览器技能可见性失败: %v", err)
+			return
+		}
+	}
+	if s.skillDir != "" {
+		skillFile := filepath.Join(s.skillDir, skillName, "SKILL.md")
+		if _, err := os.Stat(skillFile); err != nil {
+			log.Printf("[recon] 警告：%s 不存在，agent 拿不到方法论: %v", skillFile, err)
+		}
+	}
+	if err := s.m.pg.SetSetting(flag, "true"); err != nil {
+		log.Printf("[recon] 写 seed flag 失败: %v", err)
+		return
+	}
+	log.Printf("[recon] 已预置「信息收集」agent + src-recon 技能可见性")
 }
 
 // reseedPentestPrompt 把 pentest（独立渗透 agent）的提示词刷成当前代码默认——

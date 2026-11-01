@@ -176,6 +176,10 @@ export function CreateTaskSheet({
   const [srcBriefNotes, setSrcBriefNotes] = React.useState("");
   // P2 跨任务覆盖继承：把近期同项目/同企业的 tested_clear 与收尾数字带进新任务。
   const [inheritCoverage, setInheritCoverage] = React.useState(false);
+  // 侦察相关：只做信息收集（不挖洞）/ 开案先侦察；两者的授权都在创建时冻结。
+  const [reconOnly, setReconOnly] = React.useState(false);
+  const [reconGate, setReconGate] = React.useState(false);
+  const [reconActive, setReconActive] = React.useState(false);
   // P2 资产级 token 预算（0 = 跟随系统全局默认）。
   const [assetTokenBudget, setAssetTokenBudget] = React.useState("0");
   const [assetTimeBudget, setAssetTimeBudget] = React.useState("0");
@@ -333,6 +337,9 @@ export function CreateTaskSheet({
       modeDoc:
         mode === "src"
           ? {
+              recon_only: reconOnly || undefined,
+              recon_active: reconOnly && reconActive ? true : undefined,
+              recon_gate: reconOnly ? undefined : reconGate || undefined,
               asset_token_budget: Math.max(0, Number(assetTokenBudget) || 0),
               asset_time_budget_minutes: Math.max(0, Number(assetTimeBudget) || 0),
               asset_cost_budget_usd: Math.max(0, Number(assetCostBudget) || 0),
@@ -649,6 +656,48 @@ export function CreateTaskSheet({
             )}
             {mode === "src" && (
               <div className="grid gap-3 rounded-md border p-3">
+                <label htmlFor="create-recon-only" className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    id="create-recon-only"
+                    checked={reconOnly}
+                    onCheckedChange={(v) => setReconOnly(!!v)}
+                  />
+                  只做信息收集（不挖洞）
+                </label>
+                <p className="text-muted-foreground text-xs">
+                  任务只做资产测绘：用 ENScan 摸企业面，按 src-recon 收集并登记资产，产出资产清单；不做漏洞测试。
+                  收尾条件是「任务范围内已登记资产数 &gt; 0」。授权仍在创建时冻结——ENScan 新发现但不在授权内的根域只登记、
+                  不进任务范围，扩范围请另建挖洞任务。
+                </p>
+                <label htmlFor="create-recon-active" className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    id="create-recon-active"
+                    checked={reconActive}
+                    disabled={!reconOnly}
+                    onCheckedChange={(v) => setReconActive(!!v)}
+                  />
+                  允许低强度主动验证（存活 / 指纹）
+                </label>
+                <p className="text-muted-foreground text-xs">
+                  勾选后允许对授权目标发 GET：存活、状态码、标题、favicon 哈希、robots/sitemap。受任务 QPS 与时间窗约束，
+                  不枚举路径、不抽 JS、不做端口扫描；平台禁止自动化（no_automation）时不可开启。
+                </p>
+                <label htmlFor="create-recon-gate" className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    id="create-recon-gate"
+                    checked={reconGate}
+                    disabled={reconOnly}
+                    onCheckedChange={(v) => setReconGate(!!v)}
+                  />
+                  开案先侦察（先做资产测绘，再进入挖洞）
+                </label>
+                <p className="text-muted-foreground text-xs">
+                  勾选后 planner 第一轮先派一条资产测绘意图；测绘回写后才进入 JS/路径清点与 payload。默认关闭。
+                </p>
+              </div>
+            )}
+            {mode === "src" && !reconOnly && (
+              <div className="grid gap-3 rounded-md border p-3">
                 <div>
                   <p className="text-sm font-medium">探索边界（可选）</p>
                   <p className="text-muted-foreground text-xs">
@@ -744,7 +793,7 @@ export function CreateTaskSheet({
                 </FieldDescription>
               </Field>
             )}
-            {mode === "src" && (
+            {mode === "src" && !reconOnly && (
               <Field>
                 <label htmlFor="inherit-coverage" className="flex items-center gap-2 text-sm">
                   <Checkbox

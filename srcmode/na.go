@@ -31,6 +31,8 @@ var NACodes = []NACode{
 	{Code: "no_third_party", Title: "无第三方 JS/SDK 或外部回调", Areas: []string{"supply"}},
 	{Code: "no_cache", Title: "响应无共享缓存语义（无 CDN/反代缓存）", Areas: []string{"cache"}},
 	{Code: "no_reverse_proxy", Title: "无反向代理/HTTP 复用边界", Areas: []string{"desync"}},
+	{Code: "no_state_machine", Title: "无多步业务流程/状态机", Areas: []string{"logic"}},
+	{Code: "no_business_object", Title: "无业务对象（纯展示/纯转发）", Areas: []string{"logic", "authz"}},
 	// 纯静态页只对"输入/执行/对象"类面成立；paths/cred 仍可能命中（备份、JS 密钥），
 	// host/takeover 更与页面静态与否无关，所以不给这两类开口子。
 	{Code: "static_page", Title: "纯静态页面", Areas: []string{
@@ -48,6 +50,8 @@ var checkNACodes = map[string]string{
 	"reachable":             "资产可达，不需要判死",
 	"platform_not_required": "平台不要求截图",
 	"not_applicable":        "不适用（需在 reason 写清）",
+	"no_state_machine":      "没有多步业务流程/状态机",
+	"no_business_object":    "没有业务对象（纯展示/纯转发）",
 }
 
 var naCodeByCode = func() map[string]NACode {

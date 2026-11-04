@@ -20,7 +20,7 @@ func settleIntentState(err error, reason harness.TerminalReason, wrote agent.Wri
 	if state != "done" {
 		return state
 	}
-	if semanticOutcome == "negative" || semanticOutcome == "out-of-scope" {
+	if semanticOutcome == "negative" || semanticOutcome == "out-of-scope" || semanticOutcome == "blocked" {
 		return semanticOutcome
 	}
 	if wrote.Total() == 0 && !priorOutput {

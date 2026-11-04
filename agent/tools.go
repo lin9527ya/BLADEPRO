@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -96,6 +97,10 @@ type ToolSet struct {
 	// intentsRound 计本 ToolSet 生命周期内成功创建的意图数 —— planner 每轮新建一个
 	// ToolSet，所以它天然是"本轮已用额度"。
 	intentsRound int
+	// openingStrict 为真时，粗粒度（只有风险类、没有具体入口）的意图直接拒收。
+	// 只在任务开局轮由 planner 打开：那一轮还没有任何事实，重写一条具体方向是唯一
+	// 有意义的动作；任务中后段则只警告不拦（已有事实可依，拦下来只会浪费一轮）。
+	openingStrict bool
 	// workerCap 是本任务的 worker 池大小（0 = 未知/不启用）。队列背压用：可领意图
 	// 超过 2×workerCap 时拒收低优先级新意图，避免 frontier 涨得比 worker 消化快。
 	workerCap int
@@ -224,6 +229,9 @@ func NewToolSet(ts *db.ExplorationStore, worker string) *ToolSet {
 // SetTaskID sets the PG task id on this ToolSet so that report_finding can
 // dual-write to the standalone findings table (which survives task deletion).
 func (t *ToolSet) SetTaskID(id int64) { t.taskID = id }
+
+// SetOpeningStrict 打开/关闭「开局轮意图粒度硬门」（未点名具体入口的 summary 拒收）。
+func (t *ToolSet) SetOpeningStrict(v bool) { t.openingStrict = v }
 
 // SetCoverageEnabled records whether this task has the asset-coverage feature on// (default enabled). Passing false makes graphOverviewData omit the coverage block
 // and DropCoverageTools filter the two coverage-only tools out of the agent's tool
@@ -610,8 +618,8 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 			}
 			out["matching_playbooks"] = lines
 			out["matching_playbooks_note"] = "以上是历史【已打穿】目标沉淀的同类打法（全局指纹库，只读）。" +
-				"先确认目标指纹与卡片一致，再用 lookup_playbooks 取完整步骤快速验证；" +
-				"历史命中不代表目标一定有洞，仍要实际触发。用完用 record_playbook_feedback 回报 worked/failed。"
+				"先确认目标指纹与卡片一致，再用 lookup_knowledge 取完整步骤快速验证；" +
+				"历史命中不代表目标一定有洞，仍要实际触发。用完用 knowledge_feedback 回报 worked/failed。"
 		}
 	}
 	// lineage from the exploration edges: an intent's parents (what it
@@ -1523,6 +1531,9 @@ type intentItem struct {
 	DependsOn []json.RawMessage `json:"depends_on"`
 	// IdempotencyKey：同一任务重复提交同一方向时返回同一条意图。
 	IdempotencyKey string `json:"idempotency_key"`
+	// P-Q 意图质量（移植自 quiver）：预期收益与验证成本，帮助规划排序与复盘。
+	ExpectedGain string `json:"expected_gain"`
+	VerifyCost   string `json:"verify_cost"`
 }
 
 // addOneIntent 创建一条意图节点并连上游血缘，返回 id 与一条可选的目标挂载提示。
@@ -1659,6 +1670,30 @@ func (t *ToolSet) checkAssetCostBudget(ctx context.Context, anchors []int64) err
 func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, error) {
 	if strings.TrimSpace(it.Summary) == "" {
 		return 0, "", fmt.Errorf("summary 不能为空")
+	}
+	// risk_area 是覆盖矩阵的键：空值/未知词会让这条方向落进 other，报告与覆盖度
+	// 从此失真。漏填不再硬拒：按 summary 推断一个风险类并在回执里说明——整批
+	// 意图因缺一个台账键被打回的代价是白烧一次调用。显式填写仍然优先，填错
+	// （不在词表内）照旧报错，不猜。
+	rawRisk := strings.TrimSpace(it.RiskArea)
+	riskArea := rawRisk
+	riskInferred := false
+	if rawRisk == "" {
+		riskArea, riskInferred = inferRiskArea(it.Summary), true
+	} else if normalized := db.NormalizeRiskArea(rawRisk); normalized != "other" || strings.EqualFold(rawRisk, "other") {
+		riskArea = normalized
+	} else {
+		return 0, "", fmt.Errorf("risk_area=%q 不在词表内：%s", rawRisk, riskAreaEnum())
+	}
+	// 意图粒度门：任何一条意图都要点名具体入口。目录型 summary（「做认证面测试」
+	// 「测一遍注入」）在零事实时最容易写，但 worker 只能把每个路径各探一次就收工。
+	// 开局轮硬拒（此时还没有事实，重写没有代价）；中后段只警告不拦，避免白烧一轮。
+	coarseWarn := ""
+	if coarse, why := coarseIntentSummary(it.Summary, it.Recon, len(pidList(it.AssetIDs)) > 0); coarse {
+		if t.openingStrict {
+			return 0, "", fmt.Errorf("%s", why)
+		}
+		coarseWarn = "coarse_warning: " + firstLine(why, 200)
 	}
 	// ── P20 探索策略门（意图层，硬拒）──
 	// 放在所有 DB 结构校验之前：额度用尽/方向被禁时，不该再为一条注定被拒的意图
@@ -1798,7 +1833,7 @@ func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, er
 	leaseArea := ""
 	var leasedAssets []int64
 	if t.srcMode && t.srcStore != nil && t.taskID > 0 && len(anchors) > 0 && len(dependsOn) == 0 {
-		leaseArea = db.NormalizeRiskArea(it.RiskArea)
+		leaseArea = riskArea
 		_, busy, err := t.srcStore.AcquireSrcLeases(context.Background(), t.taskID, anchors, leaseArea, 0, "planner", db.SrcLeaseTTL)
 		if err != nil {
 			return 0, "", fmt.Errorf("获取单元格租约失败：%w", err)
@@ -1808,7 +1843,7 @@ func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, er
 		}
 		leasedAssets = anchors
 	}
-	payload := map[string]any{"summary": it.Summary, "risk_area": db.NormalizeRiskArea(it.RiskArea)}
+	payload := map[string]any{"summary": it.Summary, "risk_area": riskArea}
 	if idempotencyKey != "" {
 		payload["idempotency_key"] = idempotencyKey
 	}
@@ -1821,7 +1856,7 @@ func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, er
 	// 按风险面分层：意图创建时把 tier 写进 payload，worker 执行时据此选模型。
 	// 只对 SRC 模式生效；显式 worker 绑定在宿主侧优先（见 server/agentsForTask）。
 	if t.srcMode {
-		if tier := t.srcDoc.WorkerTierForRiskArea(db.NormalizeRiskArea(it.RiskArea)); tier != "" {
+		if tier := t.srcDoc.WorkerTierForRiskArea(riskArea); tier != "" {
 			payload["worker_tier"] = tier
 		}
 	}
@@ -1832,6 +1867,12 @@ func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, er
 	}
 	if len(anchors) > 0 {
 		payload["asset_ids"] = anchors
+	}
+	if strings.TrimSpace(it.ExpectedGain) != "" {
+		payload["expected_gain"] = strings.TrimSpace(it.ExpectedGain)
+	}
+	if strings.TrimSpace(it.VerifyCost) != "" {
+		payload["verify_cost"] = strings.TrimSpace(it.VerifyCost)
 	}
 	// 目标轴：没显式指名时，恰有一个 open 目标就自动挂；多个不猜（回执提示）。
 	// 必须在建节点前确定，才能把 goal --spawns--> intent 与节点原子提交。
@@ -1882,6 +1923,9 @@ func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, er
 		}
 		return 0, "", err
 	}
+	if strings.TrimSpace(it.ExpectedGain) != "" || strings.TrimSpace(it.VerifyCost) != "" {
+		_ = t.ts.SetIntentQuality(id, it.ExpectedGain, it.VerifyCost)
+	}
 	if len(leasedAssets) > 0 {
 		if err := t.srcStore.BindSrcLeaseIntent(context.Background(), t.taskID, leasedAssets, leaseArea, id); err != nil {
 			// 绑定失败不撤销意图：租约仍能挡住重复派，只是 planner 看到的归属为空。
@@ -1895,14 +1939,140 @@ func (t *ToolSet) addOneIntent(it intentItem, q *intentQuota) (int64, string, er
 		q.claimable++
 	}
 	t.intentsRound++
+	if coarseWarn != "" {
+		if note == "" {
+			note = coarseWarn
+		} else {
+			note += "\n" + coarseWarn
+		}
+	}
+	if riskInferred {
+		hint := fmt.Sprintf("risk_area 未填，已按 summary 推断为 %s（覆盖矩阵按它统计；要精确请在下次显式填写）", riskArea)
+		if note == "" {
+			note = hint
+		} else {
+			note += "\n" + hint
+		}
+	}
 	return id, note, nil
+}
+
+// riskAreaEnum 列出合法的 risk_area 词表（错误提示用）。
+func riskAreaEnum() string {
+	return strings.Join(db.RiskAreas, " | ")
+}
+
+// riskAreaKeywords 是 risk_area 缺省时的推断表，按特异性从高到低匹配（先命中先返回）。
+// 只用于漏填兜底——显式填写永远优先，填错仍然报错。
+var riskAreaKeywords = []struct {
+	area  string
+	words []string
+}{
+	{"rce", []string{"rce", "命令执行", "命令注入", "代码执行", "反弹 shell", "getshell", "xp_cmdshell", "反序列化"}},
+	{"ssti", []string{"ssti", "模板注入", "模板引擎"}},
+	{"xxe", []string{"xxe", "xml 外部实体", "外部实体"}},
+	{"ssrf", []string{"ssrf", "服务端请求伪造", "内网探测", "元数据"}},
+	{"sqli", []string{"sqli", "sql 注入", "sql注入", "注入点", "盲注", "堆叠注入", "sql"}},
+	{"xss", []string{"xss", "跨站", "存储型", "反射型"}},
+	{"upload", []string{"上传", "upload", "任意文件写", "文件写入"}},
+	{"traversal", []string{"路径穿越", "目录穿越", "traversal", "../"}},
+	{"idor", []string{"idor", "对象级越权", "未授权访问", "越权读"}},
+	{"authz", []string{"越权", "authz", "角色提权", "权限提升"}},
+	{"logic", []string{"业务逻辑", "竞态", "并发", "金额", "优惠券", "支付", "订单"}},
+	{"auth", []string{"登录", "认证", "口令", "密码", "账号", "会话", "session", "cookie", "注册", "找回"}},
+	{"disclosure", []string{"泄露", "robots", "备份", "配置文件", "目录列举", "敏感文件", "信息暴露", "disclosure"}},
+}
+
+// inferRiskArea 从 summary 里推断一个风险类（缺省兜底，不追求完备）。
+func inferRiskArea(summary string) string {
+	low := strings.ToLower(summary)
+	for _, entry := range riskAreaKeywords {
+		for _, w := range entry.words {
+			if strings.Contains(low, w) {
+				return entry.area
+			}
+		}
+	}
+	return "other"
+}
+
+// intentAnchor* 是「这条意图点名了具体入口」的判据。刻意用宽口径：只要出现路径、
+// URL/主机、查询参数、版本号或显式节点 id 之一就放行——目的是挡住"做认证面测试"
+// 这类纯风险类目录，而不是要求每条意图都写成完整计划。
+var (
+	intentPathAnchor    = regexp.MustCompile(`(^|[\s（(：:,，;；、"“”‘’])/[A-Za-z0-9_.-][A-Za-z0-9_./{}$-]*`)
+	intentHostAnchor    = regexp.MustCompile(`(?i)(https?://|[a-z0-9][a-z0-9-]*(\.[a-z0-9-]+)+)`)
+	intentParamAnchor   = regexp.MustCompile(`([?&][A-Za-z_][A-Za-z0-9_]*=|[A-Za-z_][A-Za-z0-9_]*=(值|参数)|参数[「"“']?[A-Za-z_])`)
+	intentVersionAnchor = regexp.MustCompile(`[0-9]+(\.[0-9xX]+)+`)
+	intentNodeAnchor    = regexp.MustCompile(`(#|id=|intent-|fact-|finding-)[0-9]{1,9}`)
+)
+
+// coarseIntentSummary 判断一条意图 summary 是否"只有风险类、没有具体入口"。
+// recon 意图允许只写发现目标（域名/主机/网段）或带 asset_ids——资产发现本身没有
+// 路径可写；其余意图必须命中至少一个锚点。
+func coarseIntentSummary(summary string, recon, hasAssets bool) (bool, string) {
+	if recon {
+		if hasAssets || intentHostAnchor.MatchString(summary) || intentPathAnchor.MatchString(summary) {
+			return false, ""
+		}
+		return true, fmt.Sprintf("清点意图也要能落地：summary 里要写明要发现什么（域名/主机/网段/证书/服务），或至少带 asset_ids；%q 没有任何可执行目标。", firstLine(summary, 80))
+	}
+	for _, re := range []*regexp.Regexp{intentPathAnchor, intentHostAnchor, intentParamAnchor, intentVersionAnchor, intentNodeAnchor} {
+		if re.MatchString(summary) {
+			return false, ""
+		}
+	}
+	return true, fmt.Sprintf("summary 没有点名任何具体入口（路径 / URL 或主机 / 查询参数 / 组件版本 / 节点 id）：%q。\n"+
+		"意图是「在哪个入口上验证什么」，不是「把哪一类风险测一遍」——目录型意图会让 worker 每个路径各探一次就收工，深度全丢在最浅处。\n"+
+		"改写示例：\n"+
+		"  粗：对目标做认证面测试\n"+
+		"  细：对 <host>/admin/login（302→/login?ReturnUrl=/admin）测账号枚举与低速口令喷洒，先确认错误回显差异，命中即停\n"+
+		"  粗：测试注入\n"+
+		"  细：对 <host>/search?q= 做报错/布尔/时间三通道最小验证，只取 version() 作证；被 WAF 拦时记录 challenge 类型后停", firstLine(summary, 80))
+}
+
+// openProofGaps 列出仍停在 open_proof_gap、且没被 reason 点名的候选。
+// 返回的每一行带 id 与摘要，直接拼进拒绝回执让 planner 逐条处理。
+func (t *ToolSet) openProofGaps(reason string) []string {
+	if t.ts == nil {
+		return nil
+	}
+	nodes, err := t.ts.ListByKind(db.KindFinding, 500)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, n := range nodes {
+		if n.State != db.FindingOpenProofGap {
+			continue
+		}
+		if mentionsNodeID(reason, n.ID) {
+			continue
+		}
+		var p struct {
+			Summary string `json:"summary"`
+		}
+		_ = json.Unmarshal(n.Payload, &p)
+		out = append(out, fmt.Sprintf("#%d %s", n.ID, firstLine(p.Summary, 90)))
+	}
+	return out
+}
+
+// mentionsNodeID 判断 reason 里是否点到了某个节点 id。按"数字边界"匹配，
+// 避免 id=4 被 "4 条" 之类的文字误命中。
+func mentionsNodeID(text string, id int64) bool {
+	if id <= 0 {
+		return false
+	}
+	pat := regexp.MustCompile(`(^|[^0-9])` + strconv.FormatInt(id, 10) + `([^0-9]|$)`)
+	return pat.MatchString(text)
 }
 
 func (t *ToolSet) addIntent() actool.CoreTool {
 	return t.writeExpTool("add_intent", "生成【探索方向】写入 frontier，并连入探索链路。意图是开放的探索方向，不是固定类型——用 summary 一句话自由描述要探索/验证/利用什么。\n"+
 		"★优先批量：一轮筛出的多个新方向放进 intents 数组一次提交（比逐条调用省往返）。返回 ids 数组，与 intents 等长同序（失败项 id=0，详情见 errors）。单条则省略 intents 直接给顶层 summary。",
 		obj(map[string]any{
-			"intents":         map[string]any{"type": "array", "description": "【优先用这个】要新增的探索方向数组，按顺序处理。每个元素字段同下方顶层字段（summary/asset_ids/parent_ids/priority/risk_area）。返回 ids 与本数组等长、同序。", "items": map[string]any{"type": "object"}},
+			"intents":         map[string]any{"type": "array", "description": "【优先用这个】要新增的探索方向数组，按顺序处理。每个元素字段同下方顶层字段（summary/asset_ids/parent_ids/priority/risk_area）。risk_area 可省略（会按 summary 推断）。返回 ids 与本数组等长、同序。", "items": map[string]any{"type": "object"}},
 			"summary":         str("[单条] 一句话描述这个探索方向：做什么+为什么。已写清方向即可，不依赖资产 id。"),
 			"asset_ids":       map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "本方向要测试/攻击的【目标资产 id】（**尽量传**，0/1/多个；是 list_assets 返回的资产 id，不是探索节点 id）：这条探索方向针对哪些资产（站点/接口/参数/主机等）。只要方向围绕某些具体资产就务必传上——它是「这条探索打哪些目标」的结构化标记，用于覆盖去重、把意图连入资产链路。仅当纯全局侦察、确实没有具体目标资产时才留空。"},
 			"parent_ids":      map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "上游锚点 id（可选，0/1/多个）：本方向由哪些【已确认的事实(fact)/发现(finding)】综合得出。**只能填已存在的 fact/finding 节点 id,不能填意图/目标/提示**——意图必须锚在已确认知识上,发现驱动而非凭空规划。多个事实共同产生一个新意图就传多个;顶层全新侦察方向请留空（会自动挂到任务起点 origin fact）。"},
@@ -1912,7 +2082,9 @@ func (t *ToolSet) addIntent() actool.CoreTool {
 			"recon":           map[string]any{"type": "boolean", "description": "是否是清点意图（抽 JS / 枚举路径）。recon_gate 开启时，未清点资产只接受 recon=true 的意图"},
 			"depends_on":      map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "前置意图 id（可选）：全部了结前本条不会被领取；前置失败时用 unblock_intent 拆链"},
 			"idempotency_key": str("幂等键（可选）：同一任务重复提交同一方向时复用已有意图"),
-			"risk_area":       str("【覆盖矩阵键】本方向要打的风险类：sqli(注入) | xss | rce(命令执行/反序列化) | ssrf | ssti | xxe | idor(对象级越权) | authz(功能级越权) | auth(认证/会话) | logic(业务逻辑/竞态) | upload | traversal | disclosure | cache(缓存投毒/欺骗) | smuggling/desync(请求走私) | oauth(OAuth/OIDC) | graphql(GraphQL) | websocket(实时通道) | supply(第三方/供应链) | other。**尽量填写**——报告与覆盖度按「范围内资产 × 风险类」统计已测/未测成/未触及。"),
+			"expected_gain":   str("预期收益（可选）：这条方向打成了能拿到什么（如「证明越权可读他人数据」）。用于规划排序与任务复盘。"),
+			"verify_cost":     str("验证成本（可选）：low/medium/high 或一句话（需要几个请求/账号/时间）。"),
+			"risk_area":       str("【覆盖矩阵键】本方向要打的风险类：sqli(注入) | xss | rce(命令执行/反序列化) | ssrf | ssti | xxe | idor(对象级越权) | authz(功能级越权) | auth(认证/会话) | logic(业务逻辑/竞态) | upload | traversal | disclosure | cache(缓存投毒/欺骗) | smuggling/desync(请求走私) | oauth(OAuth/OIDC) | graphql(GraphQL) | websocket(实时通道) | supply(第三方/供应链) | other。可省略（会按 summary 推断）；显式填写时务必是词表内值——报告与覆盖度按「范围内资产 × 风险类」统计已测/未测成/未触及。"),
 			"techniques":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "【ATT&CK 技术 ID】本方向用到的技术，如 T1190(利用公开漏洞) / T1078(有效账户) / T1552.001(凭据文件) / T1021(远程服务)。可选但**尽量填**——红队交付物按 ATT&CK 组织，报告会据此汇总「本次作业覆盖了哪些技术」；不标就只剩一堆没有共同语言的方向描述。只写 ID（T#### 或 T####.###），不要写技术名。"},
 		}),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
@@ -2074,7 +2246,8 @@ func (t *ToolSet) abandonGoal() actool.CoreTool {
 
 func (t *ToolSet) markStrategyExhausted() actool.CoreTool {
 	return t.writeExpTool("mark_strategy_exhausted",
-		"【合法收口】确认在授权范围/操作策略内确实已无可行方向时调用，而不是用边缘意图凑数。reason 必须说清穷尽了什么、被什么挡住；evidence_ids 至少 1 个本任务事实/漏洞/意图节点。系统会落一条事实并进入 policy_blocked 收尾，改策略或加目标后可复活。",
+		"【合法收口】确认在授权范围/操作策略内确实已无可行方向时调用，而不是用边缘意图凑数。reason 必须说清穷尽了什么、被什么挡住；evidence_ids 至少 1 个本任务事实/漏洞/意图节点。系统会落一条事实并进入 policy_blocked 收尾，改策略或加目标后可复活。\n"+
+			"调用前会检查：①还有 open_proof_gap 候选没在 reason 里点名；②范围内还有资产一条意图都没派过；③还有资产只终结了 1~2 类风险。被拒时会点名具体资产/候选——按它去派意图，不要改写措辞重试。",
 		obj(map[string]any{
 			"reason":       str("穷尽原因与各方向的阻塞依据（必填）"),
 			"evidence_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "至少 1 个本任务事实/漏洞/意图节点 id"},
@@ -2086,8 +2259,58 @@ func (t *ToolSet) markStrategyExhausted() actool.CoreTool {
 			}
 			_ = json.Unmarshal(in, &a)
 			reason := strings.TrimSpace(a.Reason)
+			if reason == "" {
+				return actool.Errorf("reason 必填：写清已穷尽哪些方向、各自被什么挡住"), nil
+			}
+			// 未闭合候选门：open_proof_gap 的字面意思就是「还缺证据才能下结论」。带着它们
+			// 宣告穷尽，等于把「没测完」说成「没得测」。要求 reason 逐条点名（#id）：
+			// 点名说明真的看过它，而不是漏在折叠区里。
+			if open := t.openProofGaps(reason); len(open) > 0 {
+				return actool.Errorf(fmt.Sprintf(
+					"还有 %d 条候选停在 open_proof_gap（缺证据才能下结论）：\n%s\n"+
+						"带着未闭合的候选宣告穷尽，等于把「没测完」说成「没得测」。先派意图补它们（或让 worker 用 close_candidate 以真实反证收场）；"+
+						"确实无法闭合的（需要管理员会话/外部条件），在 reason 里逐条点名该 id 并写明阻断原因。",
+					len(open), strings.Join(open, "\n"))), nil
+			}
+			if t.as != nil && t.taskID > 0 && !t.coverageDisabled {
+				// 未触达门：范围内还有资产一条意图都没派过时不许宣告穷尽——那是
+				// 「正面受阻」，不是「无路可走」。这一条把「换资产横向推进」从建议
+				// 变成硬约束。
+				if pending, total, err := t.as.UntouchedScopeAssets(t.taskID, 8); err == nil && total > 0 {
+					samples := make([]string, 0, len(pending))
+					for _, p := range pending {
+						samples = append(samples, fmt.Sprintf("%s(id=%d)", p.Label, p.ID))
+					}
+					return actool.Errorf(fmt.Sprintf(
+						"范围内还有 %d 个资产一条意图都没派过（样本：%s）：这不是「无路可走」，是正面受阻。\n"+
+							"先派意图去试它们（横向：换子域/换入口/用已有凭据或据点向内推），再谈穷尽。\n"+
+							"确属不可达/超出授权，请逐个写清原因（可在意图里标 out-of-scope 收场）。",
+						total, strings.Join(samples, "、"))), nil
+				}
+				// 深度门：广度达标（每个资产都碰过）不等于测透。还有资产只终结了
+				// 1~2 类风险时，先补这些面，再谈穷尽。
+				if t.ts != nil {
+					if gaps, total, err := t.ts.DepthGaps(t.taskID, db.DefaultDepthAreas, 8); err == nil && total > 0 {
+						lines := make([]string, 0, len(gaps))
+						for _, g := range gaps {
+							missing := g.Missing
+							if len(missing) > 6 {
+								missing = missing[:6]
+							}
+							lines = append(lines, fmt.Sprintf("%s(id=%d，已终结 %s；未碰 %s)",
+								g.Label, g.AssetID, strings.Join(g.DoneAreas, "/"), strings.Join(missing, "/")))
+						}
+						return actool.Errorf(fmt.Sprintf(
+							"范围内还有 %d 个资产只测了很少几类风险（阈值：每个资产至少终结 %d 类）：\n%s\n"+
+								"「广度」只说明每个资产都被碰过，不说明测透了。先补这些资产的其余风险类"+
+								"（按面挑最贴合的一类，带 asset_ids 派意图），再谈穷尽。\n"+
+								"确属该资产上不适用（无该类型入口），请在意图里以 out-of-scope 收场并写明原因。",
+							total, db.DefaultDepthAreas, strings.Join(lines, "\n"))), nil
+					}
+				}
+			}
 			ids := pidList(a.EvidenceIDs)
-			if reason == "" || len(ids) == 0 {
+			if len(ids) == 0 {
 				return actool.Errorf("reason 和至少 1 个 evidence_ids 必填"), nil
 			}
 			for _, id := range ids {
@@ -2401,17 +2624,19 @@ func (t *ToolSet) recordOneFact(it factItem, defaultIntent int64) (int64, error)
 }
 
 // concludeIntent 让 worker 对领到的意图声明【语义终态】：negative（探针确实发出且有回包，
-// 回包明确否定该假设）/ out-of-scope（该方向超出任务授权范围）。引擎在正常完成时以语义为准；
-// 失败/超时仍记 blocked/exhausted——没测成不是结论。
+// 回包明确否定该假设）/ out-of-scope（该方向超出任务授权范围）/ blocked（平台或外部
+// 因素导致本意图无法执行）。引擎在正常完成时以语义为准；失败/超时仍记 blocked/exhausted
+// ——没测成不是结论。
 func (t *ToolSet) concludeIntent() actool.CoreTool {
 	return t.writeExpTool("conclude_intent",
 		"声明你领到的意图的【语义终态】——只在该方向真正得出结论时调用一次：\n"+
 			"  · negative：探针确实发出且有回包，回包【明确否定】了该假设（note 写清是什么证据否定）。\n"+
 			"  · out-of-scope：该方向超出了任务授权范围（note 写清越界点）。\n"+
+			"  · blocked：平台或外部因素导致本意图**无法执行**——出口代理不可用、平台故障、目标整站不可达等（note 写清是哪一种、证据是什么）。这是「外部阻断」，不是方向结论，也不是「没打进去」的委婉说法。\n"+
 			"正常完成时意图将以你声明的语义收尾；若因失败/超时收尾仍是 blocked/exhausted——没测成不得用本工具包装成结论。",
 		obj(map[string]any{
-			"outcome": str("negative（探针实证否定）| out-of-scope（超出授权范围）"),
-			"note":    str("一句话原因：negative 写清是什么证据否定；out-of-scope 写清越界点"),
+			"outcome": str("negative（探针实证否定）| out-of-scope（超出授权范围）| blocked（平台/外部阻断，无法执行）"),
+			"note":    str("一句话原因：negative 写清是什么证据否定；out-of-scope 写清越界点；blocked 写清外部阻断的类型与证据"),
 		}),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct {
@@ -2420,8 +2645,14 @@ func (t *ToolSet) concludeIntent() actool.CoreTool {
 			}
 			_ = json.Unmarshal(in, &a)
 			outcome := strings.TrimSpace(a.Outcome)
-			if outcome != "negative" && outcome != "out-of-scope" {
-				return actool.Errorf("conclude_intent: outcome 必须是 negative 或 out-of-scope"), nil
+			if outcome != "negative" && outcome != "out-of-scope" && outcome != "blocked" {
+				return actool.Errorf("conclude_intent: outcome 必须是 negative / out-of-scope / blocked"), nil
+			}
+			note := strings.TrimSpace(a.Note)
+			if outcome == "blocked" && note == "" {
+				// blocked 会让覆盖矩阵把它记成「未测成」（不是已测），必须留下
+				// 外部阻断的具体原因，否则就是拿它给"没干活"开脱。
+				return actool.Errorf("conclude_intent: outcome=blocked 必须在 note 里写清外部阻断的类型与证据（如「平台出口代理不可用，curl 全部 exit 7」）"), nil
 			}
 			if t.ownerNode <= 0 {
 				return actool.Errorf("conclude_intent: 当前没有运行中的意图（ownerNode 未设置）"), nil
@@ -2441,8 +2672,12 @@ func (t *ToolSet) concludeIntent() actool.CoreTool {
 						"确实探过就先给出探针证据（真实工具调用，或长任务用 run_execution 起、wait_execution 收），再声明 negative。", t.ownerNode)), nil
 				}
 			}
-			if err := t.ts.SetIntentSemanticOutcome(t.ownerNode, outcome, strings.TrimSpace(a.Note)); err != nil {
+			if err := t.ts.SetIntentSemanticOutcome(t.ownerNode, outcome, note); err != nil {
 				return actool.Errorf("conclude_intent: " + err.Error()), nil
+			}
+			// P-Q：negative = 假设被实证否定，标记 falsified 供复盘统计（不改终态语义）。
+			if outcome == "negative" {
+				_ = t.ts.MarkIntentFalsified(t.ownerNode)
 			}
 			return actool.Text(fmt.Sprintf("已记录意图 #%d 的语义终态 %s：正常完成时以 %s 收尾；若因失败/超时收尾仍记 blocked/exhausted。", t.ownerNode, outcome, outcome)), nil
 		},
@@ -3728,6 +3963,7 @@ func (t *ToolSet) PlannerTools() []actool.CoreTool {
 		t.opsecNotes(),
 		// 指纹打法库：规划时按资产/指纹查"同类目标以前怎么打穿的"，并把规划层确认的打法
 		// 手动沉淀/回填反馈（自动沉淀由 playbook agent 在 report_foothold 时完成）。
-		t.lookupPlaybooks(), t.recordPlaybook(), t.recordPlaybookFeedback(),
+		t.lookupKnowledge(), t.recordKnowledge(), t.proposeKnowledge(), t.knowledgeFeedback(),
+		t.listRatingRulesTool(), t.getAccountCredentialTool(),
 	}, "planner")
 }

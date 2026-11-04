@@ -78,3 +78,38 @@ func TestSrcReconSkillPack(t *testing.T) {
 		t.Fatalf("tools 应为 9 个脚本，实际 %d", scripts)
 	}
 }
+
+// TestAllShippedSkillsLoad 校验 skills/ 下每个技能都能被加载：
+// frontmatter 合法、registry 里能找到（name 与目录名一致或至少可解析）。
+func TestAllShippedSkillsLoad(t *testing.T) {
+	root := filepath.Join("..", "skills")
+	reg, err := skill.LoadDir(root)
+	if err != nil {
+		t.Fatalf("LoadDir: %v", err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded := map[string]bool{}
+	for _, s := range reg.List() {
+		if s.Dir != "" {
+			loaded[filepath.Base(s.Dir)] = true
+		}
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		md, err := os.ReadFile(filepath.Join(root, e.Name(), "SKILL.md"))
+		if err != nil {
+			t.Fatalf("%s/SKILL.md 不可读: %v", e.Name(), err)
+		}
+		if err := validateSkillFrontmatter(md); err != nil {
+			t.Fatalf("%s frontmatter 不合法: %v", e.Name(), err)
+		}
+		if !loaded[e.Name()] {
+			t.Fatalf("技能 %s 未被 LoadDir 加载（frontmatter name 需与目录名一致）", e.Name())
+		}
+	}
+}

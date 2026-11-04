@@ -2113,6 +2113,24 @@ export interface Settings {
   src_require_isolation?: boolean;
   /** 侦察先行闸：app/service 未清点时只接受 recon 意图。 */
   src_recon_gate?: boolean;
+  knowledge_inject_enabled?: boolean;
+  knowledge_block_budget?: number;
+  depth_enabled?: boolean;
+  vendor_block_enabled?: boolean;
+  jadx_bin?: string;
+  jadx_out_dir?: string;
+  ghidra_home?: string;
+  dnslog_api?: string;
+  vision_base_url?: string;
+  vision_model?: string;
+  vision_api_key_set?: boolean;
+  vision_api_key?: string;
+  feishu_app_id?: string;
+  feishu_chat_id?: string;
+  feishu_app_secret_set?: boolean;
+  feishu_app_secret?: string;
+  retro_auto_enabled?: boolean;
+  worker_proc_mem_limit_mb?: number;
   // 任务并发上限:同时「运行中」的任务数上限。关闭=不限;开启后新建任务超限则排队,有空位自动启动。
   task_concurrency_enabled?: boolean; // 默认 false
   task_concurrency_limit?: number; // 开启后默认 5
@@ -3151,4 +3169,157 @@ export interface SrcSubmissionEvent {
   note?: string;
   actor?: string;
   created_at: string;
+}
+
+/** P-Q 统一知识条目（memory/ammo/knowledge/playbook 合并到一张表）。 */
+export interface KnowledgeEntry {
+  id: number;
+  scope: "company" | "global" | "task";
+  company_id?: number;
+  task_id?: number;
+  entry_type:
+    | "fact"
+    | "conclusion"
+    | "asset_hint"
+    | "playbook_hint"
+    | "technique"
+    | "vendor_rule"
+    | "methodology"
+    | "memory"
+    | "ammo"
+    | "playbook";
+  key?: string;
+  title?: string;
+  summary: string;
+  body_md?: string;
+  memory_kind?: string;
+  ammo_kind?: string;
+  fingerprint?: Record<string, unknown>;
+  fingerprint_key?: string;
+  technique_key?: string;
+  confidence?: string;
+  source_type?: string;
+  source_ref?: string;
+  source_task_id?: string;
+  evidence_ref?: string;
+  hits: number;
+  uses: number;
+  successes: number;
+  failures: number;
+  last_outcome?: string;
+  last_note?: string;
+  last_used_at?: string;
+  last_verified_at?: string;
+  status: "active" | "stale" | "retired" | "deprecated";
+  created_at: string;
+  updated_at: string;
+}
+
+/** 知识喂入结果：文档/URL/文本 → 蒸馏 → 待审批提案。 */
+export interface KnowledgeIngestResult {
+  approval_id: number;
+  status: string;
+  chars: number;
+  distilled: boolean;
+  distill_error?: string;
+  note: string;
+}
+
+/** 统一审批提案（知识/全局弹药/厂商档案/定级规则）。 */
+export interface Approval {
+  id: number;
+  kind: "knowledge" | "ammo_global" | "vendor_profile" | "rating_rule";
+  payload: Record<string, unknown>;
+  reason?: string;
+  status: "pending" | "approved" | "rejected";
+  entry_id?: number;
+  decided_by?: string;
+  decided_at?: string;
+  created_at: string;
+}
+
+/** P-Q 厂商档案（companies.profile_*）。 */
+export interface CompanyProfile {
+  company_id: number;
+  company_name: string;
+  max_depth: number;
+  banned_vuln_classes: string[];
+  report_format_md?: string;
+  test_window?: string;
+  rate_limit_note?: string;
+  check_url?: string;
+  domains?: string[];
+}
+
+/** P-Q 测试账号池。 */
+export interface TestAccount {
+  id: number;
+  company_id: number;
+  label: string;
+  role_tier: "admin" | "normal" | "readonly" | "vip";
+  cred_type: "cookie" | "token" | "password";
+  cred_masked?: string;
+  owner_phone?: string;
+  expires_at?: string;
+  status: "active" | "expired" | "banned";
+  last_checked_at?: string;
+  check_note?: string;
+  check_fail_streak: number;
+  created_at: string;
+}
+
+/** P-Q 定级规则（company_id 空 = 通用）。 */
+export interface RatingRule {
+  id: number;
+  company_id?: number;
+  vulnclass: string;
+  severity: "critical" | "high" | "medium" | "low" | "info";
+  title?: string;
+  note?: string;
+  enabled: boolean;
+  created_at: string;
+}
+
+/** P-Q 设备（adb/ssh/local）。 */
+export interface Device {
+  id: number;
+  name: string;
+  kind: "adb" | "ssh" | "local";
+  conn?: string;
+  ssh_host?: string;
+  ssh_port?: number;
+  ssh_user?: string;
+  ssh_key?: string;
+  /** 只写不读：保存时提交，列表/详情的响应不会回显。 */
+  ssh_pass?: string;
+  tools_md?: string;
+  skill_name?: string;
+  status: "online" | "offline" | "unknown";
+  last_seen_at?: string;
+  probe_note?: string;
+}
+
+/** P-Q 外部工具配置（逆向/看图/飞书）。密钥只写不读，页面只显示是否已配置。 */
+export interface IntegrationSettings {
+  jadx_bin?: string;
+  jadx_out_dir?: string;
+  ghidra_home?: string;
+  dnslog_api?: string;
+  vision_base_url?: string;
+  vision_model?: string;
+  vision_api_key_set?: boolean;
+  feishu_app_id?: string;
+  feishu_chat_id?: string;
+  feishu_app_secret_set?: boolean;
+}
+
+/** `adb devices -l` 扫描到的一台设备。 */
+export interface ADBDevice {
+  serial: string;
+  state: string;
+  model?: string;
+  product?: string;
+  device?: string;
+  transport_id?: string;
+  registered: boolean;
 }

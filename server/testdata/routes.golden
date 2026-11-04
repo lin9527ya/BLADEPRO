@@ -1,3 +1,4 @@
+DELETE /api/accounts/{id}	server.(*Server).deleteAccount-fm
 DELETE /api/agents/{key}	server.(*Server).pgDeleteAgent-fm
 DELETE /api/asset-intercept/rules/{id}	server.(*Server).assetInterceptDeleteRule-fm
 DELETE /api/assets	server.(*Server).deleteAssets-fm
@@ -5,6 +6,7 @@ DELETE /api/campaigns/{id}	server.(*Server).deleteCampaign-fm
 DELETE /api/companies/{id}	server.(*Server).deleteCompany-fm
 DELETE /api/conversations/{id}	server.(*Server).pgDeleteConversation-fm
 DELETE /api/conversations/{id}/side-questions	server.(*Server).registerSideRoutes.func1
+DELETE /api/devices/{id}	server.(*Server).deleteDevice-fm
 DELETE /api/exploration/findings/{id}	server.(*Server).deleteFinding-fm
 DELETE /api/exploration/findings/{id}/traffic/{binding_id}	server.(*Server).editFindingTraffic-fm
 DELETE /api/intercept/rules/{id}	server.(*Server).interceptDeleteRule-fm
@@ -12,6 +14,7 @@ DELETE /api/llm/profiles/{id}	server.(*Server).pgDeleteProfile-fm
 DELETE /api/llm/records	server.(*Server).pgDeleteLLMRecords-fm
 DELETE /api/mcp/{id}	server.(*Server).pgDeleteMCP-fm
 DELETE /api/notify/channels/{id}	server.(*Server).notifyDeleteChannel-fm
+DELETE /api/rating-rules/{id}	server.(*Server).deleteRatingRule-fm
 DELETE /api/skills/{name}	server.(*Server).fsDeleteSkill-fm
 DELETE /api/skills/{name}/files/{file...}	server.(*Server).fsDeletePath-fm
 DELETE /api/src/platform-templates/{key}	server.(*Server).deleteSrcSubmitTemplate-fm
@@ -35,12 +38,14 @@ DELETE /api/traffic/all	server.(*Server).deleteAllTraffic-fm
 DELETE /api/traffic/hosts	server.(*Server).deleteTrafficHosts-fm
 DELETE /api/triggers/{id}	server.(*Server).pgDeleteTrigger-fm
 DELETE /api/workspace/delete	server.(*Server).wsDelete-fm
+GET /api/accounts	server.(*Server).listAccounts-fm
 GET /api/agents	server.(*Server).pgListAgents-fm
 GET /api/agents/{key}	server.(*Server).pgGetAgent-fm
 GET /api/agents/{key}/prompts	server.(*Server).pgListPromptVersions-fm
 GET /api/agents/{key}/triggers	server.(*Server).pgListTriggers-fm
 GET /api/agents/{key}/variables	server.(*Server).pgPromptVars-fm
 GET /api/agents/{key}/visibility	server.(*Server).pgGetAgentVisibility-fm
+GET /api/approvals	server.(*Server).listApprovals-fm
 GET /api/asset-intercept/rules	server.(*Server).assetInterceptListRules-fm
 GET /api/assets	server.(*Server).listAssets-fm
 GET /api/assets/counts	server.(*Server).assetCounts-fm
@@ -54,10 +59,14 @@ GET /api/commands/stats	server.(*Server).pgToolStats-fm
 GET /api/companies	server.(*Server).listCompanies-fm
 GET /api/companies/{id}	server.(*Server).getCompany-fm
 GET /api/companies/{id}/knowledge	server.(*Server).listCompanyKnowledge-fm
+GET /api/company-profiles	server.(*Server).listCompanyProfiles-fm
+GET /api/company-profiles/{id}	server.(*Server).getCompanyProfile-fm
 GET /api/conversations	server.(*Server).pgListConversations-fm
 GET /api/conversations/{id}/messages	server.(*Server).pgConversationMessages-fm
 GET /api/conversations/{id}/messages/{seq}	server.(*Server).pgConversationMsgDetail-fm
 GET /api/conversations/{id}/side-questions	server.(*Server).registerSideRoutes.func1
+GET /api/devices	server.(*Server).listDevices-fm
+GET /api/devices/scan/adb	server.(*Server).scanADBDevices-fm
 GET /api/evidence/artifacts/{id}	server.(*Server).getEvidenceArtifact-fm
 GET /api/exploration/activity	server.(*Server).activity-fm
 GET /api/exploration/activity/history	server.(*Server).activityHistory-fm
@@ -97,6 +106,8 @@ GET /api/intercept/pending/{id}	server.(*Server).interceptGetOne-fm
 GET /api/intercept/rules	server.(*Server).interceptListRules-fm
 GET /api/intercept/task/{taskID}	server.(*Server).interceptListTaskItems-fm
 GET /api/intercept/tool-config	server.(*Server).interceptGetToolConfig-fm
+GET /api/knowledge	server.(*Server).listKnowledge-fm
+GET /api/knowledge/{id}	server.(*Server).getKnowledge-fm
 GET /api/llm	server.(*Server).getLLM-fm
 GET /api/llm/pool	server.(*Server).pgLLMPoolStatus-fm
 GET /api/llm/profiles	server.(*Server).pgListProfiles-fm
@@ -116,6 +127,7 @@ GET /api/notify/meta	server.(*Server).notifyMeta-fm
 GET /api/opsec/knowledge	server.(*Server).opsecKnowledge-fm
 GET /api/playbooks	server.(*Server).listPlaybooks-fm
 GET /api/playbooks/{id}	server.(*Server).getPlaybook-fm
+GET /api/rating-rules	server.(*Server).listRatingRules-fm
 GET /api/report	server.(*Server).getReport-fm
 GET /api/review/queue	server.(*Server).listReviewQueue-fm
 GET /api/scope/enforcement	server.(*Server).scopeEnforcementStatus-fm
@@ -188,6 +200,7 @@ GET /api/visibility/{kind}/{id}	server.(*Server).pgResourceVisibility-fm
 GET /api/workspace/download	server.(*Server).wsDownload-fm
 GET /api/workspace/list	server.(*Server).wsList-fm
 GET /api/workspace/read	server.(*Server).wsRead-fm
+PATCH /api/accounts/{id}	server.(*Server).updateAccount-fm
 PATCH /api/agents/{key}	server.(*Server).pgUpdateAgent-fm
 PATCH /api/assets/{id}/tier	server.(*Server).setAssetTier-fm
 PATCH /api/campaigns/{id}	server.(*Server).patchCampaign-fm
@@ -197,6 +210,7 @@ PATCH /api/conversations/{id}/profile	server.(*Server).pgUpdateConversation-fm
 PATCH /api/exploration/findings/{id}	server.(*Server).patchFinding-fm
 PATCH /api/exploration/findings/{id}/traffic/{binding_id}	server.(*Server).editFindingTraffic-fm
 PATCH /api/findings/{id}/src-dedupe	server.(*Server).patchFindingSrcDedupe-fm
+PATCH /api/knowledge/{id}	server.(*Server).patchKnowledgeStatus-fm
 PATCH /api/notify/channels/{id}	server.(*Server).notifyUpdateChannel-fm
 PATCH /api/playbooks/{id}	server.(*Server).patchPlaybook-fm
 PATCH /api/src/programs/{id}	server.(*Server).updateSrcProgram-fm
@@ -211,6 +225,9 @@ PATCH /api/tasks/{id}/goals/{gid}	server.(*Server).editGoal-fm
 PATCH /api/tasks/{id}/policy	server.(*Server).patchTaskPolicy-fm
 PATCH /api/tasks/{id}/src/brief	server.(*Server).patchTaskSrcBrief-fm
 PATCH /api/triggers/{id}	server.(*Server).pgUpdateTrigger-fm
+POST /api/accounts	server.(*Server).createAccount-fm
+POST /api/accounts/{id}/check	server.(*Server).checkAccount-fm
+POST /api/accounts/{id}/credential	server.(*Server).rotateAccountCredential-fm
 POST /api/active	server.(*Server).setActive-fm
 POST /api/ad/import	server.(*Server).adImportApply-fm
 POST /api/ad/import/preview	server.(*Server).adImportPreview-fm
@@ -220,6 +237,8 @@ POST /api/agents/{key}/prompt/reset	server.(*Server).pgResetPrompt-fm
 POST /api/agents/{key}/triggers	server.(*Server).pgCreateTrigger-fm
 POST /api/agents/{key}/wrapup/reset	server.(*Server).pgResetWrapup-fm
 POST /api/agents/{key}/wrapup/task-timeout/reset	server.(*Server).pgResetTaskTimeoutWrapup-fm
+POST /api/approvals	server.(*Server).createApproval-fm
+POST /api/approvals/{id}/decide	server.(*Server).decideApproval-fm
 POST /api/asset-intercept/rules	server.(*Server).assetInterceptCreateRule-fm
 POST /api/asset-intercept/rules/{id}/toggle	server.(*Server).assetInterceptToggleRule-fm
 POST /api/assets	server.(*Server).insertAssets-fm
@@ -242,6 +261,10 @@ POST /api/conversations/{id}/messages	server.(*Server).pgSendConversationMessage
 POST /api/conversations/{id}/side-questions	server.(*Server).registerSideRoutes.func1
 POST /api/conversations/{id}/stop	server.(*Server).pgStopConversation-fm
 POST /api/credentials/{id}/reveal	server.(*Server).revealCredential-fm
+POST /api/devices	server.(*Server).upsertDevice-fm
+POST /api/devices/scan/adb/import	server.(*Server).importADBDevices-fm
+POST /api/devices/ssh-test	server.(*Server).testSSHDevice-fm
+POST /api/devices/{id}/probe	server.(*Server).probeDevice-fm
 POST /api/exploration/findings/{id}/deepen	server.(*Server).deepenFinding-fm
 POST /api/exploration/findings/{id}/retests	server.(*Server).startFindingRetest-fm
 POST /api/exploration/findings/{id}/traffic	server.(*Server).bindFindingTraffic-fm
@@ -254,6 +277,8 @@ POST /api/intercept/pending/{id}/decide	server.(*Server).interceptDecide-fm
 POST /api/intercept/rules	server.(*Server).interceptCreateRule-fm
 POST /api/intercept/rules/test	server.(*Server).interceptTestRule-fm
 POST /api/intercept/rules/{id}/toggle	server.(*Server).interceptToggleRule-fm
+POST /api/knowledge/ingest	server.(*Server).handleKnowledgeIngest-fm
+POST /api/knowledge/{id}/feedback	server.(*Server).postKnowledgeFeedback-fm
 POST /api/llm	server.(*Server).setLLM-fm
 POST /api/llm/models	server.(*Server).pgListModels-fm
 POST /api/llm/pool/reset	server.(*Server).pgLLMPoolReset-fm
@@ -268,6 +293,7 @@ POST /api/mcp/{id}/tools/toggle	server.(*Server).pgToggleMCPTool-fm
 POST /api/notify/channels	server.(*Server).notifyCreateChannel-fm
 POST /api/notify/channels/{id}/test	server.(*Server).notifyTestChannel-fm
 POST /api/notify/deliveries/{id}/retry	server.(*Server).notifyRetryDelivery-fm
+POST /api/rating-rules	server.(*Server).upsertRatingRule-fm
 POST /api/review/actions	server.(*Server).postReviewActions-fm
 POST /api/scope/kill-switch	server.(*Server).setKillSwitch-fm
 POST /api/scope/resume-all	server.(*Server).resumeAllTasks-fm
@@ -313,6 +339,7 @@ POST /api/tasks/{id}/intercept-rules	server.(*Server).taskInterceptCreateRule-fm
 POST /api/tasks/{id}/intercept-rules/{rid}/toggle	server.(*Server).taskInterceptToggleRule-fm
 POST /api/tasks/{id}/policy/preview	server.(*Server).previewTaskPolicy-fm
 POST /api/tasks/{id}/policy/prune	server.(*Server).pruneTaskPolicy-fm
+POST /api/tasks/{id}/retrospect	server.(*Server).handleTaskRetrospect-fm
 POST /api/tasks/{id}/scope	server.(*Server).taskScopeAdd-fm
 POST /api/tasks/{id}/src/cells	server.(*Server).postTaskSrcCell-fm
 POST /api/tasks/{id}/src/checks	server.(*Server).postTaskSrcCheck-fm
@@ -334,6 +361,7 @@ PUT /api/agents/{key}/wrapup	server.(*Server).pgSaveWrapup-fm
 PUT /api/agents/{key}/wrapup/task-timeout	server.(*Server).pgSaveTaskTimeoutWrapup-fm
 PUT /api/asset-intercept/rules/{id}	server.(*Server).assetInterceptUpdateRule-fm
 PUT /api/campaigns/{id}/tasks	server.(*Server).putCampaignTasks-fm
+PUT /api/company-profiles/{id}	server.(*Server).putCompanyProfile-fm
 PUT /api/exploration/findings/{id}/traffic/order	server.(*Server).editFindingTraffic-fm
 PUT /api/intercept/judge	server.(*Server).interceptSetJudgeConfig-fm
 PUT /api/intercept/rules/{id}	server.(*Server).interceptUpdateRule-fm

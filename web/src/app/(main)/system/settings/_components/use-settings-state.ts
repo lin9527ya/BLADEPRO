@@ -87,6 +87,14 @@ export function useSettingsState() {
   const [requireIsolation, setRequireIsolation] = React.useState(false);
   const [reconGate, setReconGate] = React.useState(false);
   const [savingReconGate, setSavingReconGate] = React.useState(false);
+  // P-Q 统一知识库注入（默认关，灰度）：打开后 planner/worker 注入跨任务知识块。
+  const [knowledgeInject, setKnowledgeInject] = React.useState(false);
+  const [knowledgeBudget, setKnowledgeBudget] = React.useState("3000");
+  const [savingKnowledge, setSavingKnowledge] = React.useState(false);
+  const [depthEnabled, setDepthEnabled] = React.useState(false);
+  const [vendorBlockEnabled, setVendorBlockEnabled] = React.useState(false);
+  const [retroAuto, setRetroAuto] = React.useState(false);
+  const [memLimit, setMemLimit] = React.useState("8192");
   const [savingIsolation, setSavingIsolation] = React.useState(false);
   // 出站速率治理（录制代理层）：0 = 关闭。
   const [egressGlobalQPS, setEgressGlobalQPS] = React.useState("0");
@@ -168,6 +176,12 @@ export function useSettingsState() {
     setAreaTiers(JSON.stringify(s.src_area_tiers ?? {}));
     setRequireIsolation(!!s.src_require_isolation);
     setReconGate(!!s.src_recon_gate);
+    setKnowledgeInject(!!s.knowledge_inject_enabled);
+    setKnowledgeBudget(String(s.knowledge_block_budget ?? 3000));
+    setDepthEnabled(!!s.depth_enabled);
+    setVendorBlockEnabled(!!s.vendor_block_enabled);
+    setRetroAuto(!!s.retro_auto_enabled);
+    setMemLimit(String(s.worker_proc_mem_limit_mb ?? 8192));
     setEgressGlobalQPS(String(s.egress_global_qps ?? 0));
     setEgressHostQPS(String(s.egress_host_qps ?? 0));
     setEgressWaitMS(String(s.egress_max_wait_ms ?? 0));
@@ -455,6 +469,25 @@ export function useSettingsState() {
       })
       .catch((e) => toast.error("保存失败：" + (e as Error).message))
       .finally(() => setSavingReconGate(false));
+  };
+
+  const saveKnowledgeSettings = () => {
+    setSavingKnowledge(true);
+    api
+      .setSettings({
+        knowledge_inject_enabled: knowledgeInject,
+        knowledge_block_budget: Math.max(500, Math.min(12000, Number(knowledgeBudget) || 3000)),
+        depth_enabled: depthEnabled,
+        vendor_block_enabled: vendorBlockEnabled,
+        retro_auto_enabled: retroAuto,
+        worker_proc_mem_limit_mb: Math.max(0, Number(memLimit) || 0),
+      })
+      .then((s) => {
+        apply(s);
+        toast.success(knowledgeInject ? "已开启知识库注入" : "已关闭知识库注入");
+      })
+      .catch((e) => toast.error("保存失败：" + (e as Error).message))
+      .finally(() => setSavingKnowledge(false));
   };
 
   const saveRequireIsolation = () => {
@@ -868,6 +901,20 @@ export function useSettingsState() {
     reconGate,
     setReconGate,
     savingReconGate,
+    knowledgeInject,
+    setKnowledgeInject,
+    knowledgeBudget,
+    setKnowledgeBudget,
+    savingKnowledge,
+    saveKnowledgeSettings,
+    depthEnabled,
+    setDepthEnabled,
+    vendorBlockEnabled,
+    setVendorBlockEnabled,
+    retroAuto,
+    setRetroAuto,
+    memLimit,
+    setMemLimit,
     saveReconGate,
     egressGlobalQPS,
     setEgressGlobalQPS,

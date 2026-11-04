@@ -421,7 +421,7 @@ const workerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
   · **清掉之后用 mark_artifact_cleared 销账**（传 artifact_id + 清理时的那行输出）——没有那行输出，「清掉了」只是个说法，而它决定的是客户系统上还有没有后门。**只在真的清掉时用**：没清就说没清，不要销账。
   · 只是顺手记一笔，不是流程要求：没往目标上落东西就不用记。
 - **检测验证 → report_detection_check（探索图，传 intent_id）**：做了某个动作、**且你能查到防御侧的日志/告警时**，记下这一手有没有被检出。三态必须分清：**triggered**=确实响了（有日志为证）、**not_triggered**=确实没响（你查过、该时段确实没有记录）、**unknown**=你没法判定（没有日志源、没权限、时段对不上）。**「unknown」不是「没响」**——把「我没看到」写成「它没拦住」，给出的结论比不给更危险。查不出所以然就老实记 unknown；**环境里根本没有日志可查时，不要为了凑数去记**。
-- **遇到可识别的技术栈/CMS/中间件/登录口 → 先 lookup_playbooks（按 asset_id 或 technologies/favicon）**：打法库里可能有同类指纹目标"打穿过"的完整步骤（识别线索→验证→利用→坑）。命中后按它的验证路径快速试，**仍以实际回显为准**；用完后用 record_playbook_feedback 回报 worked/failed/inconclusive（卡片靠成功率排序，越用越准）。
+- **遇到可识别的技术栈/CMS/中间件/登录口 → 先 lookup_knowledge（按 asset_id 或 technologies/favicon）**：打法库里可能有同类指纹目标"打穿过"的完整步骤（识别线索→验证→利用→坑）。命中后按它的验证路径快速试，**仍以实际回显为准**；用完后用 knowledge_feedback 回报 worked/failed/inconclusive（卡片靠成功率排序，越用越准）。
 - **确认漏洞 → report_finding（探索图，含 PoC，传 intent_id，confidence 必填）**：**只有你本次真实触发过、拿到可复现证据（请求/响应或命令输出）才用**。严禁把"版本/指纹匹配到 CVE""参数看起来可注入""外部漏洞库/更新日志/代码 diff 推断"当已确认，也不要用查 CVE 库或对比补丁版本替代实际触发。confidence 诚实标定：high=可复现触发链 / medium=直接观察到强异常未构造完整对照 / low=据指纹版本推断。**evidence 要能独立支撑报告**：写清目标（host:port/URL）、入口与参数、**落地文件的绝对路径与访问方式**、真实执行过的每条命令/请求及关键回显；多步利用按步骤写。只有结论没有路径/命令/回显，报告就写不出来；落地了文件同时用 report_artifact 记一条。
 - **拿到域内/云上枚举结果 → ingest_ad_data / ingest_cloud_data（落进图，别只当文本）**：在域内机器上跑出 SharpHound 采集结果、或拿到云凭据后跑 aws iam get-account-authorization-details / kubectl get ... -o json，就把结果（文件路径或内联 JSON）**摄入本任务的图**——规划层据此才看得到「从这点能走到哪」（用 ad_paths 读）。**不记等于没拿到**：图是空的，下一轮就会从外面重新打一遍。摄入读的是已经到手的数据、不产生对目标的动作，因此不过 RoE/命令门。
 - **动手前想知道"这一手会留下什么" → opsec_notes（传 command）**：返回**预计**的留痕位置（目标系统日志 / EDR / 网络侧 / 应用日志 / 本机痕迹）、具体信号（Windows 事件 ID、sysmon、auditd…）与预计可见度。用在挑手法、判断要不要先和蓝队/客户打招呼时。**它是预期不是实测**——实测结论仍用 report_detection_check 记；知识库没收录时会明说"没收录"，那**不代表没有日志**。
@@ -490,6 +490,18 @@ func cmdOutDir(dir string) string { return filepath.Join(dir, "cmd-output") }
 // 宿主生命周期、也可能挂在 tmpfs 上（重启即失）。
 func taskOutDir(dir string) string { return filepath.Join(dir, "task-output") }
 
+// depthDisciplineBlock 是**代码持有**的否定结论门槛。
+//
+// 为什么归代码：worker 正文存在 agent_prompts 里，已经装好的实例不会因为源码改了
+// 正文就更新（seed 只在空表时写）。而"每个入口只试一次就记无洞"是实测里最贵的浅测：
+// 复核员拿到的 fact 只有一句"未发现"，既无法判断试过什么，也无法据此否定一类问题。
+const depthDisciplineBlock = `
+
+【否定结论的门槛（代码持有）】
+- 写「这条路不通 / 无洞 / 不可注入」之前，先把本入口的合理变体走完：编码（单/双/Unicode/大小写）、参数位置与请求方法（query / body / header / cookie，GET↔POST）、路径变体（前缀、后缀、分号、大小写、编码）、以及认证前提（未登录时先确认是不是只是被重定向）。
+- 否定 fact 的 detail 里写清：试过的变体族数、每族的代表 payload、目标的具体反应（状态码 / 报错 / 跳转 / 长度差异）。只写「未发现 / 无洞」不算结论——下一轮 planner 与穷尽复核员都读不出你试了什么，只能再来一遍。
+- 被 WAF / 登录墙 / 限速挡住 ≠ 已排除：那是外部阻断，按 blocked 或 open_proof_gap 记，不要记成 negative。`
+
 func workerSystem(proxyAddr, caCert, dataDir, runDir, workerName string) string {
 	return workerStaticSystem(proxyAddr, caCert, dataDir, workerName) + workerArtifactSpec(runDir)
 }
@@ -505,7 +517,7 @@ func workerStaticSystem(proxyAddr, caCert, dataDir, workerName string) string {
 	// caCert is present only when the recording MITM is on, which is exactly when
 	// the traffic_* tools are registered — so it gates the traffic-tool note.
 	// Optional finding guidance is added for every role after tool resolution.
-	return body + workerTrafficBlock(caCert != "") + workerExecSpec()
+	return body + workerTrafficBlock(caCert != "") + workerExecSpec() + depthDisciplineBlock
 }
 
 // workerExecSpec is 段 [D]: the code-owned long-task contract (P13). Appended the
@@ -660,6 +672,10 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// P20：探索策略段（不受开关控制）——worker 是"探测"的执行者，禁用手段与只读声明
 	// 在这里必须与 planner 看到的一致，否则它会照着被禁的方向硬干、直到命令层拦下。
 	sysBody += policyBlock(pol)
+	// P-Q：深度分级 → 厂商档案 → 跨任务知识先验（与本意图相关）。
+	sysBody += depthBlock(taskID)
+	sysBody += vendorBlock(taskID)
+	sysBody += knowledgeBlock(taskID, false)
 	// SRC 模式：worker 是点格的人，纪律段必须与 planner 的"补格"目标一致。
 	if tsx.SrcMode() {
 		sysBody = srcmode.SrcPrecedenceNote() + srcmode.StripPentestOnly(sysBody)

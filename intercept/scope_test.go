@@ -394,3 +394,25 @@ func TestScopeGateFailsLoudOnBadWindow(t *testing.T) {
 		}
 	}
 }
+
+// shell 变量不能把主机名污染成越界目标：`games-island.eu$p`、`https://$h/`、
+// `https://${h}/x` 不能抽出 `games-island.eu$p` / `$h` 这种假 host。
+func TestExtractTargetsKeepsShellVarsOutOfHost(t *testing.T) {
+	cases := []struct {
+		name string
+		cmd  string
+		want []string
+	}{
+		{"trailing path var", `curl https://games-island.eu$p`, []string{"games-island.eu"}},
+		{"host var without assignment", `curl https://$h/`, nil},
+		{"braced host var without assignment", `curl "https://${h}/x"`, nil},
+		{"simple assignment expands", `h=x.example.com; curl https://$h/`, []string{"x.example.com"}},
+		{"braced assignment expands", `h=x.example.com; curl "https://${h}/x"`, []string{"x.example.com"}},
+	}
+	for _, tc := range cases {
+		got := ExtractTargets(tc.cmd)
+		if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+			t.Errorf("%s: got %v want %v", tc.name, got, tc.want)
+		}
+	}
+}

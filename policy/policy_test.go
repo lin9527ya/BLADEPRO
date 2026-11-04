@@ -392,3 +392,36 @@ func TestCustomRulesDocRoundTrip(t *testing.T) {
 		t.Fatal("有自定义条目时 override 不该算'空'（否则 UI 会显示成继承）")
 	}
 }
+
+// 单字否定紧贴命中词（"不脱库"）不是要发起该手段：一条写明
+// "确认后只取 version() 等最小证据，不脱库"的合规意图不应被硬拒。
+func TestCheckIntentSingleCharNegation(t *testing.T) {
+	eff := Effective{ForbiddenWrites: []string{"db_dump"}}
+	v := eff.CheckIntent(IntentInput{Summary: "对 /search?q= 做注入验证，确认后只取 version() 等最小证据，不脱库"})
+	if !v.Allow || !v.Benign {
+		t.Fatalf("「不脱库」应放行并标 Benign: %+v", v)
+	}
+	v = eff.CheckIntent(IntentInput{Summary: "对 /search?q= 注入后脱库，导出整库"})
+	if v.Allow || v.ItemID != "db_dump" {
+		t.Fatalf("正向提及应硬拒: %+v", v)
+	}
+}
+
+// 节奏类拒绝（pace:*）必须明说"这是配额，不是方向被禁"：否则模型会把一次配额拒绝
+// 读成策略穷尽，继而调用 mark_strategy_exhausted 把任务停掉。
+func TestRejectTextPaceIsNotExhaustion(t *testing.T) {
+	eff := Effective{MaxIntentsPerRound: 4}
+	v := eff.CheckIntent(IntentInput{Summary: "补测 /admin 的越权面", RoundUsed: 4})
+	if v.Allow || v.ItemID != "pace:round" {
+		t.Fatalf("基线不成立：%+v", v)
+	}
+	text := RejectText(v, "补测 /admin 的越权面")
+	for _, want := range []string{"节奏", "不是方向被禁", "留到下一轮"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("pace 拒绝应说明是节奏限制，缺少 %q：\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "策略内确无可行方向") {
+		t.Fatalf("pace 拒绝不应引导模型宣告策略穷尽：\n%s", text)
+	}
+}

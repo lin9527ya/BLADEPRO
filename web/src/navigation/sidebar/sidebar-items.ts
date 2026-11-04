@@ -1,5 +1,7 @@
 import {
   Activity,
+  Cpu,
+  Building2,
   BellRing,
   Blocks,
   BookOpen,
@@ -10,12 +12,14 @@ import {
   FolderOpen,
   FolderSync,
   HardDrive,
+  KeyRound,
   LayoutDashboard,
   type LucideIcon,
   MessageSquare,
   Network,
   Plug,
   Radio,
+  Scale,
   ScrollText,
   Settings2,
   ShieldAlert,
@@ -78,7 +82,12 @@ export const sidebarItems: NavGroup[] = [
       { id: "src", title: "SRC 工作台", url: "/function/src", icon: Bug },
       { id: "campaigns", title: "战役", url: "/function/campaigns", icon: FolderKanban },
       { id: "findings", title: "发现", url: "/function/findings", icon: Bug },
-      { id: "playbooks", title: "打法库", url: "/function/playbooks", icon: BookOpen },
+      // P-Q 统一知识库（记忆/弹药/知识/打法合并）；旧 /function/playbooks 仍可直接访问。
+      { id: "knowledge", title: "知识库", url: "/function/knowledge", icon: BookOpen },
+      { id: "approvals", title: "审批", url: "/function/approvals", icon: BellRing },
+      { id: "vendors", title: "厂商档案", url: "/function/vendors", icon: Building2 },
+      { id: "accounts", title: "测试账号", url: "/function/accounts", icon: KeyRound },
+      { id: "rules", title: "规则与定级", url: "/function/rules", icon: Scale },
       { id: "traffic", title: "流量", url: "/function/traffic", icon: Activity },
       { id: "commands", title: "工具执行", url: "/function/commands", icon: Terminal },
       { id: "llm-records", title: "LLM 录制", url: "/function/llm-records", icon: Radio },
@@ -93,6 +102,8 @@ export const sidebarItems: NavGroup[] = [
     items: [
       // 能力面：给 Agent 什么工具/技能/外部服务。三者互相引用（技能可点名 MCP），
       // 但各是一套存储与工作台——合并成一个可折叠父项，而不是塞进同一页。
+      { id: "devices", title: "设备", url: "/system/devices", icon: Cpu },
+      { id: "integrations", title: "外部工具", url: "/system/integrations", icon: Wrench },
       {
         id: "capabilities",
         title: "能力与扩展",

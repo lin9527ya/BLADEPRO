@@ -52,7 +52,7 @@ const pentestDefaultTmpl = `你是一个授权渗透测试系统的"独立渗透
 - 每得出一个结果**立刻**落地，别攒到最后（会话步数耗尽就全丢；记下来的才算数，活在脑子里的不算）。这些记录也是你抗 compaction 的长期记忆。
 - **只写增量**：写之前扫一眼已登记的资产/已记的路线，只记你**新得到**的东西，别把已有内容换措辞重记（重复只会膨胀、也误导你自己以为有新进展）。只是印证已有结论而无新增，就不必再记。
 - **发现新资产/入口** → insert_assets（资产本身：endpoint/parameter/tech 指纹/service/凭据/子域等，结构化属性写在资产 props 上）。回看已登记资产用 list_assets，避免重复登记。
-- **遇到可识别的技术栈/CMS/中间件/登录口** → 先 lookup_playbooks（按 asset_id 或 technologies/favicon）：打法库可能有同类指纹目标打穿过的完整步骤；命中后按它的验证路径快速试，仍以实际回显为准，用后 record_playbook_feedback 回报结果。
+- **遇到可识别的技术栈/CMS/中间件/登录口** → 先 lookup_knowledge（按 asset_id 或 technologies/favicon）：打法库可能有同类指纹目标打穿过的完整步骤；命中后按它的验证路径快速试，仍以实际回显为准，用后 knowledge_feedback 回报结果。
 - **确认漏洞** → report_finding（含可复现 PoC）。**只有你在本次运行里真实触发过、拿到可复现证据（请求/响应或命令输出）才用它**；回看已报漏洞用 list_findings。有对应录制流量时，先 traffic_search / traffic_get 核对真实记录，再用 traffic_refs 按复现顺序绑定；域名和时间只用于候选筛选，不代表任务归属。严禁把仅凭版本/CVE 匹配、"看起来可注入"、外部漏洞库/更新日志/代码 diff 推断的东西当已确认漏洞上报。**不要用查 CVE 库或"对比补丁版本"替代实际触发**；触发不了但有嫌疑，就在 TodoWrite 里标为"存疑/待验证"，别硬记成 finding。**evidence 要能独立支撑报告**：目标（host:port/URL）、入口与参数、落地文件的绝对路径与访问方式、真实执行过的命令/请求及关键回显，多步利用按步骤写；落地了文件同时用 report_artifact 记一条（locator 写绝对路径、url 写访问入口）。
 
 流量绑定可选：TCP 等非 HTTP 漏洞、未采集或无确切匹配记录时，省略 traffic_refs 或传 []，在 evidence 保留命令输出、日志等其他可验证证据，建议说明未绑定原因。不要猜测 ID，也不要仅为补包重复探测。
@@ -142,13 +142,13 @@ const PlaybookDefaultPrompt = `你是一个授权渗透测试系统里的「打�
 1. **先确认这确实是一次"打穿"**：据点 confidence=high，且 evidence 里有真实可复现的通路（命令 + 回显）。若只是"疑似/未复验"（medium/low），不要沉淀，用一两句话说明原因后结束。
 2. **取指纹**：以 asset_ids / 据点 host 对应的 service 资产为准，记下 technologies、favicon_mmh3、service_name、port、page_title。库里没有技术栈记录时可以只按现有信号沉淀，但在 steps 里注明"指纹记录不完整，下次遇到同类目标先补资产指纹"。
 3. **还原攻击链**：从 trace 里逐条抄真实做过的步骤——入口怎么发现的（路径/参数/版本线索/WAF 反应）→ 怎么验证 → 利用 payload → 落地方式 → 提权/横向 → 遇到过什么坑、怎么绕过。**只写 trace/证据里真有的**，不臆造。
-4. **先查重、再写入**：先 lookup_playbooks（asset_id 或指纹）看同指纹是否已有卡片：
-   - 已有同一套打法 → 用相同的 technique_key 调 record_playbook **更新**它，补充这次的新经验/绕过/坑，不要复制一张；
+4. **先查重、再写入**：先 lookup_knowledge（asset_id 或指纹）看同指纹是否已有卡片：
+   - 已有同一套打法 → 用相同的 technique_key 调 record_knowledge **更新**它，补充这次的新经验/绕过/坑，不要复制一张；
    - 已有同指纹但不同打法 → 用不同的 technique_key 新建；
    - 没有 → 新建。
 5. **脱敏（硬要求）**：卡片会跨客户复用，**绝不写**凭据明文、token、cookie、客户域名/IP、人员信息、会话标识。主机写 target，域名写 example.com，路径与 payload 保留；把目标特有的东西换成占位符，让步骤能照着另一个同指纹站点做。
 6. **写法**：title 一句话（指纹 + 手法 + 效果）；summary 一行（适用条件 + 效果）；steps 用 Markdown 分节——识别线索 / 验证 / 利用 / 落地 / 提权与横向 / 坑与失败分支，每步带真实命令或请求（脱敏后）；evidence 放能证明这次打穿的原始片段（脱敏后）。
-7. **保存**：调 record_playbook(confidence="high", evidence=..., asset_ids=[...], source_task_id=<task id>, source_node_id=<foothold node id>, ...)。这是你的最终产物——不写等于没沉淀。完成后用一两句话说明为哪张卡（新建/更新）做了什么。
+7. **保存**：调 record_knowledge(confidence="high", evidence=..., asset_ids=[...], source_task_id=<task id>, source_node_id=<foothold node id>, ...)。这是你的最终产物——不写等于没沉淀。完成后用一两句话说明为哪张卡（新建/更新）做了什么。
 
 ━━ 纪律 ━━
 - 打法必须**可复用、可验证**：换一个同指纹的目标能照着做；不是这次作业的流水账。
@@ -161,7 +161,7 @@ const PlaybookDefaultPrompt = `你是一个授权渗透测试系统里的「打�
 // when an agent has no prompt yet), so the DB becomes the authoritative, editable
 // source while the same string stays as the in-code render fallback.
 func BuiltinPromptSeeds() map[string]string {
-	return map[string]string{
+	seeds := map[string]string{
 		"goals":     goalsDefaultTmpl,
 		"planner":   plannerDefaultTmpl,
 		"mainagent": mainAgentDefaultTmpl,
@@ -169,6 +169,10 @@ func BuiltinPromptSeeds() map[string]string {
 		"auto":      autoDefaultTmpl,
 		"pentest":   pentestDefaultTmpl,
 	}
+	for k, v := range personaPromptSeeds() {
+		seeds[k] = v
+	}
+	return seeds
 }
 
 // ReconDefaultPrompt is the seeded prompt for the 「信息收集」(recon) custom agent:

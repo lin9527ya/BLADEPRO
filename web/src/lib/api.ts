@@ -8,6 +8,7 @@ import { MOCK } from "@/lib/mock/enabled";
 import type {
   ActiveFindingRetest,
   Activity,
+  ADBDevice,
   ADImportFile,
   ADImportPreview,
   ADImportResult,
@@ -15,6 +16,7 @@ import type {
   Agent,
   AgentDetail,
   AgentTrigger,
+  Approval,
   ArchiveBatchItem,
   Asset,
   AssetImportPreview,
@@ -31,6 +33,7 @@ import type {
   CommandRecord,
   Company,
   CompanyKnowledge,
+  CompanyProfile,
   CompanyScopeMutation,
   CompanyScopeRule,
   ConstraintCompilePreview,
@@ -43,6 +46,7 @@ import type {
   DailyTokenBucket,
   DeleteTaskOptions,
   DeleteTaskResult,
+  Device,
   Edge,
   EvidenceBodyPreview,
   ExplorationNodePage,
@@ -74,6 +78,8 @@ import type {
   JudgeConfig,
   JudgeUsage,
   KillSwitchReceipt,
+  KnowledgeEntry,
+  KnowledgeIngestResult,
   LLMPoolStatus,
   LLMProfile,
   LLMRecordDetail,
@@ -97,6 +103,7 @@ import type {
   ProgramScopeRow,
   PromptVar,
   PromptVersion,
+  RatingRule,
   ReviewActionResults,
   ReviewQueue,
   ReviewQueueItem,
@@ -143,6 +150,7 @@ import type {
   TaskScopeRow,
   TaskSrcBatchPlan,
   TaskTemplate,
+  TestAccount,
   TimelineResponse,
   TokenTotal,
   TokenUsage,
@@ -1908,4 +1916,146 @@ export const api = {
   // 202 即返回，实际下载在后台跑，进度走 /api/update/stream。
   applyUpdate: () => post<{ ok: boolean; target: string }>(`/update/apply`),
   rollbackUpdate: () => post<{ ok: boolean }>(`/update/rollback`),
+
+  // ---- P-Q 统一知识体系（memory/ammo/knowledge/playbook 合并）----
+  knowledge: (params?: {
+    q?: string;
+    scope?: string;
+    types?: string;
+    status?: string;
+    company_id?: number;
+    task_id?: number;
+    limit?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.q) qs.set("q", params.q);
+    if (params?.scope) qs.set("scope", params.scope);
+    if (params?.types) qs.set("types", params.types);
+    if (params?.status) qs.set("status", params.status);
+    if (params?.company_id) qs.set("company_id", String(params.company_id));
+    if (params?.task_id) qs.set("task_id", String(params.task_id));
+    if (params?.limit) qs.set("limit", String(params.limit));
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return get<{ entries: KnowledgeEntry[] | null; count: number }>(`/knowledge${suffix}`).then((r) => ({
+      entries: arr(r.entries),
+      count: r.count ?? 0,
+    }));
+  },
+  knowledgeEntry: (id: number) => get<KnowledgeEntry>(`/knowledge/${id}`),
+  knowledgeFeedback: (id: number, outcome: string, note = "") =>
+    post<{ ok: boolean }>(`/knowledge/${id}/feedback`, { outcome, note }),
+  setKnowledgeStatus: (id: number, status: string, reason = "") =>
+    patch<{ ok: boolean }>(`/knowledge/${id}`, { status, reason }),
+  ingestKnowledgeText: (body: {
+    title?: string;
+    text?: string;
+    url?: string;
+    company_id?: number;
+    source_ref?: string;
+  }) => post<KnowledgeIngestResult>("/knowledge/ingest", body),
+  ingestKnowledgeFile: async (file: File, meta: { title?: string; company_id?: number } = {}) => {
+    if (MOCK) {
+      return {
+        approval_id: 0,
+        status: "pending",
+        chars: 0,
+        distilled: false,
+        distill_error: "",
+        note: "演示模式：未真正喂入",
+      } as KnowledgeIngestResult;
+    }
+    const fd = new FormData();
+    fd.append("file", file);
+    if (meta.title) fd.append("title", meta.title);
+    if (meta.company_id) fd.append("company_id", String(meta.company_id));
+    const token = getToken();
+    const r = await fetch("/api/knowledge/ingest", {
+      method: "POST",
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: fd,
+    });
+    if (!r.ok) {
+      let msg = `喂入失败（HTTP ${r.status}）`;
+      try {
+        const j = (await r.json()) as { error?: string };
+        if (j.error) msg = j.error;
+      } catch {
+        // 保留状态码提示
+      }
+      throw new Error(msg);
+    }
+    return (await r.json()) as KnowledgeIngestResult;
+  },
+  approvals: (params?: { status?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set("status", params.status);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return get<{ approvals: Approval[] | null; count: number }>(`/approvals${suffix}`).then((r) => ({
+      approvals: arr(r.approvals),
+      count: r.count ?? 0,
+    }));
+  },
+  decideApproval: (id: number, approve: boolean, reason = "") =>
+    post<{ approval: Approval; entry_id: number }>(`/approvals/${id}/decide`, { approve, reason }),
+
+  // ---- P-Q 厂商档案 / 测试账号 / 定级规则 ----
+  companyProfiles: () =>
+    get<{ profiles: CompanyProfile[] | null; count: number }>("/company-profiles").then((r) => ({
+      profiles: arr(r.profiles),
+      count: r.count ?? 0,
+    })),
+  companyProfile: (id: number) => get<CompanyProfile>(`/company-profiles/${id}`),
+  saveCompanyProfile: (id: number, body: Partial<CompanyProfile>) =>
+    put<CompanyProfile>(`/company-profiles/${id}`, body),
+  accounts: (companyId?: number) =>
+    get<{ accounts: TestAccount[] | null; count: number }>(
+      `/accounts${companyId ? `?company_id=${companyId}` : ""}`,
+    ).then((r) => ({ accounts: arr(r.accounts), count: r.count ?? 0 })),
+  createAccount: (body: {
+    company_id: number;
+    label: string;
+    role_tier: string;
+    cred_type: string;
+    credential: string;
+    owner_phone?: string;
+    expires_at?: string;
+  }) => post<TestAccount>("/accounts", body),
+  updateAccount: (id: number, body: Partial<TestAccount>) => patch<TestAccount>(`/accounts/${id}`, body),
+  deleteAccount: (id: number) => del<{ ok: boolean }>(`/accounts/${id}`),
+  rotateAccountCredential: (id: number, credential: string) =>
+    post<{ ok: boolean }>(`/accounts/${id}/credential`, { credential }),
+  checkAccount: (id: number) => post<{ ok: boolean; note?: string; status?: number }>(`/accounts/${id}/check`, {}),
+  ratingRules: (companyId?: number) =>
+    get<{ rules: RatingRule[] | null; count: number }>(
+      `/rating-rules${companyId ? `?company_id=${companyId}` : ""}`,
+    ).then((r) => ({ rules: arr(r.rules), count: r.count ?? 0 })),
+  saveRatingRule: (body: { company_id?: number; vulnclass: string; severity: string; title?: string; note?: string }) =>
+    post<RatingRule>("/rating-rules", body),
+  deleteRatingRule: (id: number) => del<{ ok: boolean }>(`/rating-rules/${id}`),
+
+  // ---- P-Q 设备 ----
+  devices: () =>
+    get<{ devices: Device[] | null; count: number }>("/devices").then((r) => ({
+      devices: arr(r.devices),
+      count: r.count ?? 0,
+    })),
+  saveDevice: (body: Partial<Device>) => post<Device>("/devices", body),
+  deleteDevice: (id: number) => del<{ ok: boolean }>(`/devices/${id}`),
+  probeDevice: (id: number) => post<{ ok: boolean; note?: string }>(`/devices/${id}/probe`, {}),
+  testSSHDevice: (body: { host: string; port?: number; user: string; pass?: string; key_path?: string }) =>
+    post<{ online: boolean; note?: string }>("/devices/ssh-test", body).then((r) => ({
+      online: !!r.online,
+      note: r.note ?? "",
+    })),
+  scanADBDevices: () =>
+    get<{ devices: ADBDevice[] | null; count: number; raw?: string }>("/devices/scan/adb").then((r) => ({
+      devices: arr(r.devices),
+      count: r.count ?? 0,
+      raw: r.raw ?? "",
+    })),
+  importADBDevices: (serials: string[]) =>
+    post<{ created: string[] | null; skipped: string[] | null; errors: string[] | null }>("/devices/scan/adb/import", {
+      serials,
+    }).then((r) => ({ created: arr(r.created), skipped: arr(r.skipped), errors: arr(r.errors) })),
 };

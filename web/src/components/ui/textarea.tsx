@@ -2,9 +2,11 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
-function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
+// 同 Input：默认关闭浏览器自动填充（避免把保存的账号/地址写进自由文本区）。
+function Textarea({ className, autoComplete = "off", ...props }: React.ComponentProps<"textarea">) {
   return (
     <textarea
+      autoComplete={autoComplete}
       data-slot="textarea"
       className={cn(
         // field-sizing-content auto-grows the textarea to its content; cap the

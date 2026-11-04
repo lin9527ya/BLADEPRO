@@ -2151,3 +2151,176 @@ ALTER TABLE src_checks ADD COLUMN IF NOT EXISTS observed_at TIMESTAMPTZ;
 ALTER TABLE src_negative_knowledge ADD COLUMN IF NOT EXISTS observed_at TIMESTAMPTZ;
 
 ALTER TABLE src_cells ADD COLUMN IF NOT EXISTS revision_count INTEGER NOT NULL DEFAULT 0;
+
+-- =====================================================================
+-- Q. 统一知识体系与厂商档案（移植自 quiver，AGPL-3.0；见 docs/third-party/QUIVER.md）
+--    原则：只加不删。旧的 company_knowledge / attack_playbooks 保留数据但冻结，
+--    运行时只读写 knowledge_entries（回滚靠迁移前备份）。
+-- =====================================================================
+
+-- Q1. 厂商档案：复用 companies，不新增 vendors 表。
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS profile_max_depth INT NOT NULL DEFAULT 2;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS profile_banned_vuln_classes TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS profile_report_format_md TEXT NOT NULL DEFAULT '';
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS profile_test_window TEXT NOT NULL DEFAULT '';
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS profile_rate_limit_note TEXT NOT NULL DEFAULT '';
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS profile_check_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS profile_domains TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS profile_receipt_prefs JSONB NOT NULL DEFAULT '{}';
+
+-- Q2. 任务级：深度覆盖与测试账号绑定。
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS depth_override INT;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS account_ids BIGINT[] NOT NULL DEFAULT '{}';
+
+-- Q3. 意图质量字段（quiver 的 expected_gain / verify_cost / falsified）。
+ALTER TABLE exploration_nodes ADD COLUMN IF NOT EXISTS expected_gain TEXT NOT NULL DEFAULT '';
+ALTER TABLE exploration_nodes ADD COLUMN IF NOT EXISTS verify_cost TEXT NOT NULL DEFAULT '';
+ALTER TABLE exploration_nodes ADD COLUMN IF NOT EXISTS falsified BOOLEAN NOT NULL DEFAULT false;
+
+-- Q4. 统一知识条目：memory / ammo / knowledge / playbook / 公司知识 全部落这一张表。
+CREATE TABLE IF NOT EXISTS knowledge_entries (
+    id BIGSERIAL PRIMARY KEY,
+    scope TEXT NOT NULL CHECK (scope IN ('company','global','task')),
+    company_id BIGINT REFERENCES companies(id) ON DELETE CASCADE,
+    task_id BIGINT REFERENCES tasks(id) ON DELETE CASCADE,
+    entry_type TEXT NOT NULL CHECK (entry_type IN (
+        'fact','conclusion','asset_hint','playbook_hint',
+        'technique','vendor_rule','methodology','memory','ammo','playbook')),
+    key TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL,
+    body_md TEXT NOT NULL DEFAULT '',
+    memory_kind TEXT NOT NULL DEFAULT '',
+    ammo_kind TEXT NOT NULL DEFAULT '',
+    fingerprint JSONB,
+    fingerprint_key TEXT NOT NULL DEFAULT '',
+    technique_key TEXT NOT NULL DEFAULT '',
+    confidence TEXT NOT NULL DEFAULT '',
+    source_type TEXT NOT NULL DEFAULT '',
+    source_ref TEXT NOT NULL DEFAULT '',
+    source_task_id TEXT NOT NULL DEFAULT '',
+    source_node_id BIGINT NOT NULL DEFAULT 0,
+    evidence_ref TEXT NOT NULL DEFAULT '',
+    hits INT NOT NULL DEFAULT 0,
+    uses INT NOT NULL DEFAULT 0,
+    successes INT NOT NULL DEFAULT 0,
+    failures INT NOT NULL DEFAULT 0,
+    last_outcome TEXT NOT NULL DEFAULT '',
+    last_note TEXT NOT NULL DEFAULT '',
+    last_used_at TIMESTAMPTZ,
+    last_verified_at TIMESTAMPTZ,
+    ttl_days INT NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','stale','retired','deprecated')),
+    legacy_table TEXT NOT NULL DEFAULT '',
+    legacy_id BIGINT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_ke_scope_owner CHECK (
+        (scope='company' AND company_id IS NOT NULL AND task_id IS NULL) OR
+        (scope='global'  AND company_id IS NULL AND task_id IS NULL) OR
+        (scope='task'    AND task_id IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ke_legacy
+    ON knowledge_entries(legacy_table, legacy_id) WHERE legacy_table <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ke_playbook
+    ON knowledge_entries(fingerprint_key, technique_key)
+    WHERE entry_type='playbook' AND status IN ('active','stale');
+CREATE INDEX IF NOT EXISTS idx_ke_company
+    ON knowledge_entries(company_id, entry_type, status);
+CREATE INDEX IF NOT EXISTS idx_ke_task
+    ON knowledge_entries(task_id, entry_type) WHERE scope='task';
+CREATE INDEX IF NOT EXISTS idx_ke_type
+    ON knowledge_entries(entry_type, status, hits DESC);
+CREATE INDEX IF NOT EXISTS idx_ke_search
+    ON knowledge_entries USING GIN(to_tsvector('simple',
+        coalesce(key,'')||' '||coalesce(title,'')||' '||coalesce(summary,'')||' '||coalesce(body_md,'')));
+DROP TRIGGER IF EXISTS trg_ke_upd ON knowledge_entries;
+CREATE TRIGGER trg_ke_upd BEFORE UPDATE ON knowledge_entries
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Q5. 统一审批闸：知识/全局弹药/厂商档案/定级规则 四类提案。
+CREATE TABLE IF NOT EXISTS approvals (
+    id BIGSERIAL PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('knowledge','ammo_global','vendor_profile','rating_rule')),
+    payload JSONB NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')),
+    entry_id BIGINT NOT NULL DEFAULT 0,
+    decided_by TEXT,
+    decided_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- 兼容曾导入过 quiver schema 的库（只加不删）：quiver 的 approvals 没有 entry_id。
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS entry_id BIGINT NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_approvals_pending
+    ON approvals(status, id DESC) WHERE status='pending';
+
+-- Q6. 测试账号池（company 维度；凭据由宿主使用，列表默认掩码）。
+CREATE TABLE IF NOT EXISTS test_accounts (
+    id BIGSERIAL PRIMARY KEY,
+    company_id BIGINT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,
+    role_tier TEXT NOT NULL DEFAULT 'normal' CHECK (role_tier IN ('admin','normal','readonly','vip')),
+    cred_type TEXT NOT NULL CHECK (cred_type IN ('cookie','token','password')),
+    cred_blob TEXT NOT NULL,
+    owner_phone TEXT NOT NULL DEFAULT '',
+    expires_at TIMESTAMPTZ,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','expired','banned')),
+    last_checked_at TIMESTAMPTZ,
+    check_note TEXT NOT NULL DEFAULT '',
+    check_fail_streak INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- 兼容 quiver 历史表：它用 vendor_id（NOT NULL）指向 companies，没有 company_id。
+ALTER TABLE test_accounts ADD COLUMN IF NOT EXISTS company_id BIGINT REFERENCES companies(id) ON DELETE CASCADE;
+-- 兼容 quiver 历史表：旧表没有探活连续失败计数（CREATE TABLE IF NOT EXISTS 不会补列）。
+ALTER TABLE test_accounts ADD COLUMN IF NOT EXISTS check_fail_streak INT NOT NULL DEFAULT 0;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+             WHERE table_schema='public' AND table_name='test_accounts' AND column_name='vendor_id') THEN
+    EXECUTE 'ALTER TABLE test_accounts ALTER COLUMN vendor_id DROP NOT NULL';
+    EXECUTE 'UPDATE test_accounts SET company_id = vendor_id WHERE company_id IS NULL AND vendor_id IS NOT NULL';
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_accounts_company ON test_accounts(company_id, status);
+
+-- Q7. 定级规则库（company_id 为空 = 通用规则）。
+CREATE TABLE IF NOT EXISTS rating_rules (
+    id BIGSERIAL PRIMARY KEY,
+    company_id BIGINT REFERENCES companies(id) ON DELETE CASCADE,
+    vulnclass TEXT NOT NULL,
+    severity TEXT NOT NULL CHECK (severity IN ('critical','high','medium','low','info')),
+    title TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- 兼容 quiver 历史表：它用 vendor_id 指向 companies（同一实体），没有 company_id。
+ALTER TABLE rating_rules ADD COLUMN IF NOT EXISTS company_id BIGINT REFERENCES companies(id) ON DELETE CASCADE;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+             WHERE table_schema='public' AND table_name='rating_rules' AND column_name='vendor_id') THEN
+    EXECUTE 'UPDATE rating_rules SET company_id = vendor_id WHERE company_id IS NULL AND vendor_id IS NOT NULL';
+  END IF;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_rating_rules_company_vulnclass
+    ON rating_rules(COALESCE(company_id,0), vulnclass);
+
+-- Q8. 设备注册表（adb / ssh / local），供逆向与移动端 persona 使用。
+CREATE TABLE IF NOT EXISTS devices (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('adb','ssh','local')),
+    conn TEXT NOT NULL DEFAULT '',
+    ssh_host TEXT NOT NULL DEFAULT '',
+    ssh_port INT NOT NULL DEFAULT 22,
+    ssh_user TEXT NOT NULL DEFAULT '',
+    ssh_pass TEXT NOT NULL DEFAULT '',
+    ssh_key TEXT NOT NULL DEFAULT '',
+    tools_md TEXT NOT NULL DEFAULT '',
+    skill_name TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'unknown' CHECK (status IN ('online','offline','unknown')),
+    last_seen_at TIMESTAMPTZ,
+    probe_note TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

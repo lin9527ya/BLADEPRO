@@ -81,7 +81,7 @@ func renderPlaybookLine(m db.PlaybookMatch) string {
 
 // lookupPlaybooks 按资产 id 或指纹检索匹配的历史打法。
 func (t *ToolSet) lookupPlaybooks() actool.CoreTool {
-	return readTool("lookup_playbooks",
+	return readTool("lookup_playbooks_deprecated",
 		"查【指纹打法库】：遇到可识别的技术栈/CMS/中间件/登录口时，先看历史上有没有在同类指纹上打穿过的打法，再决定怎么验证。\n"+
 			"优先传 asset_id（平台从资产库取真实指纹）；没有资产时可直接传 technologies/favicon_mmh3/service_name/port。\n"+
 			"返回按匹配度排序的卡片（含完整步骤与来源）。**先确认指纹仍然匹配**，再按步骤验证；用完用 record_playbook_feedback 回报结果。\n"+
@@ -165,7 +165,7 @@ func (t *ToolSet) lookupPlaybooks() actool.CoreTool {
 
 // recordPlaybook 沉淀一张打法卡片。
 func (t *ToolSet) recordPlaybook() actool.CoreTool {
-	return writeTool("record_playbook",
+	return writeTool("record_playbook_deprecated",
 		"把一次**真实打穿**沉淀成可复用的打法卡片：目标指纹 + 攻击手法 + 完整步骤 + 证据。\n"+
 			"只有 confidence=high（拿到 shell/会话、当场可复现）才收；未确认的不写。\n"+
 			"指纹优先由 asset_ids 从资产库取（不要凭空写技术栈）。同 (指纹, 手法) 会更新已有卡片而不是重复创建。\n"+
@@ -268,7 +268,7 @@ func (t *ToolSet) recordPlaybook() actool.CoreTool {
 
 // recordPlaybookFeedback 记录一次实战反馈。
 func (t *ToolSet) recordPlaybookFeedback() actool.CoreTool {
-	return writeTool("record_playbook_feedback",
+	return writeTool("record_playbook_feedback_deprecated",
 		"回报一条打法在本次目标上的实战结果：worked（按它打通/验证成功）、failed（不适用或被拦）、inconclusive（没试成/无法判断）。\n"+
 			"成功会刷新卡片的「最近验证」并抬升排序；失败会降低成功率——打法库靠它越用越准。note 写清目标差异或失败原因。",
 		obj(map[string]any{

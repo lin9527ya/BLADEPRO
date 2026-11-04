@@ -320,6 +320,7 @@ export function UpdateCard() {
           <div className="flex flex-wrap items-center gap-2">
             <Input
               type="password"
+              autoComplete="new-password"
               className="h-8 max-w-72 font-mono text-xs"
               placeholder={tokenSet ? "已配置（留空即不改）" : "ghp_… / github_pat_…"}
               value={token}

@@ -110,6 +110,9 @@ type ModeDoc struct {
 	TestIdentities []TestIdentity `json:"test_identities,omitempty"`
 	// MaxRecordsRead 是越权读取上限（合规提示用；0 = 用内建默认 5）。
 	MaxRecordsRead int `json:"max_records_read,omitempty"`
+	// MaxDepth 是任务测试深度上限（1-3，0 = 跟随公司档案/默认 2）。P-Q 深度分级：
+	// 只影响提示词与判定语义，不替代拦截层。
+	MaxDepth int `json:"max_depth,omitempty"`
 	// TimeWindow 是平台项目的作业时间窗快照（"HH:MM-HH:MM"，逗号分段，允许跨夜）。
 	// 空 = 不限；guard 会在窗口外直接拦下动作（不只是提示词约束）。
 	TimeWindow string `json:"time_window,omitempty"`
@@ -206,6 +209,9 @@ func Resolve(mode string, raw json.RawMessage) (json.RawMessage, ModeDoc, error)
 	}
 	if doc.MaxIntentsPerAsset > maxIntentsPerAssetLimit {
 		return nil, ModeDoc{}, fmt.Errorf("max_intents_per_asset 不能超过 %d", maxIntentsPerAssetLimit)
+	}
+	if doc.MaxDepth < 0 || doc.MaxDepth > 3 {
+		return nil, ModeDoc{}, fmt.Errorf("max_depth 需在 0–3")
 	}
 	if doc.AssetTokenBudget < 0 {
 		return nil, ModeDoc{}, fmt.Errorf("asset_token_budget 不能为负数（0 = 不限）")

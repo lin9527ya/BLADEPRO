@@ -552,7 +552,9 @@ func (s *Server) seedOrchestrationTools() {
 	s.reseedReporterPrompt()          // 报告模板:补详细利用过程/绝对路径/命令回显(一次性)
 	s.seedPlaybookAgent()             // 预置「打法沉淀」agent + report_foothold 触发器(一次性)
 	s.seedReconAgent()                // 预置「信息收集」agent + src-recon 技能可见性(一次性)
-	s.reseedPentestPrompt()           // pentest 提示词:加 lookup_playbooks 打法复用(一次性)
+	s.reseedPentestPrompt()           // pentest 提示词:加 lookup_knowledge 打法复用(一次性)
+	s.reseedKnowledgePrompts()        // 统一知识工具：内置/打法 agent 提示词重刷(一次性)
+	s.seedPersonaBindings()           // P-Q persona：技能可见性/联网/工具绑定(一次性)
 	s.upgradeReporterTriggerMessage() // 老库补迁移:让 reporter 回传 evidence_version(一次性)
 	s.seedFindingTrafficTools()       // 增加可选证据参数及只读证据工具，保留用户配置
 	s.seedFindingWorkflowTools()
@@ -742,7 +744,7 @@ func (s *Server) reseedWorkerPrompt() {
 		log.Printf("[prompts] worker 提示词重刷为新默认失败: %v", err)
 		return
 	}
-	log.Printf("[prompts] worker 提示词已追加新默认版本(加入 lookup_playbooks 打法复用,一次性)")
+	log.Printf("[prompts] worker 提示词已追加新默认版本(加入 lookup_knowledge 打法复用,一次性)")
 }
 
 // reporterToolCallMessage 必须无条件要求先读一次 get_finding_traffic 再写报告。
@@ -874,7 +876,7 @@ func (s *Server) seedReporterAgent() {
 const playbookToolCallMessage = "上面刚有一个据点在 report_foothold 里登记（= 打穿信号）。请沉淀打法：" +
 	"先用 get_task_node_detail 读据点节点、用 get_task_worker_trace 读该意图的完整执行过程，" +
 	"确认 confidence=high 且证据里确有可复现通路；从 list_assets 取目标真实指纹；" +
-	"先 lookup_playbooks 查同指纹是否已有卡片；最后用 record_playbook 写入或更新一张可跨目标复用的打法卡。" +
+	"先 lookup_knowledge 查同指纹是否已有卡片；最后用 record_knowledge 写入或更新一张可跨目标复用的打法卡。" +
 	"未确认（medium/low）不要沉淀，说明原因即可；卡片必须脱敏（不写凭据/客户域名/IP）。"
 
 // seedPlaybookAgent 预置一个「打法沉淀」自定义 agent（builtin=false，可在 UI 编辑/删除）：
@@ -904,7 +906,7 @@ func (s *Server) seedPlaybookAgent() {
 		log.Printf("[playbook] 设置触发运行策略失败: %v", err)
 	}
 	if err := s.m.pg.AddAgentToToolBinding("playbook", []string{
-		"record_playbook", "lookup_playbooks", "get_task_node_detail",
+		"record_knowledge", "lookup_knowledge", "get_task_node_detail",
 		"get_task_worker_trace", "list_task_worker_traces", "search_task_worker_traces",
 		"list_assets", "list_task_findings", "get_task_graph",
 	}); err != nil {
@@ -995,8 +997,102 @@ func (s *Server) seedReconAgent() {
 	log.Printf("[recon] 已预置「信息收集」agent + src-recon 技能可见性")
 }
 
+// seedPersonaBindings 给 P-Q 的五个 persona 配默认技能可见性与运行参数（一次性）。
+// 工具可见性走角色装配（assistant 走 MainAgentTools 并集），这里只补技能与开关；
+// 技能名必须与 skills/ 目录一致。
+func (s *Server) seedPersonaBindings() {
+	const flag = "persona_bindings_v1"
+	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
+		return
+	}
+	type bind struct {
+		key     string
+		skills  []string
+		web     bool
+		runSecs int // 0 = 不限
+	}
+	binds := []bind{
+		{"socint", []string{"osint", "supply-chain-osint", "src-recon"}, true, 1200},
+		{"reverse", []string{"reverse", "android-dex-dump", "android-stealth-hook", "api-recon"}, false, 0},
+		{"codeaudit", []string{"audit"}, false, 1200},
+		{"reviewer", nil, false, 1200},
+		{"ops", nil, false, 1200},
+	}
+	ok := true
+	for _, b := range binds {
+		a, err := s.m.pg.GetAgentByKey(b.key)
+		if err != nil || a == nil {
+			log.Printf("[persona] agent %s 不存在，跳过绑定", b.key)
+			continue
+		}
+		if err := s.m.pg.SetAgentWebSearch(b.key, b.web); err != nil {
+			log.Printf("[persona] %s web_search: %v", b.key, err)
+		}
+		if err := s.m.pg.SetAgentRunSeconds(b.key, b.runSecs); err != nil {
+			log.Printf("[persona] %s run_seconds: %v", b.key, err)
+		}
+		for _, sk := range b.skills {
+			if err := s.m.pg.ToggleSkillVisibility(a.ID, sk, true); err != nil {
+				log.Printf("[persona] %s 技能 %s: %v", b.key, sk, err)
+				ok = false
+			}
+		}
+	}
+	if !ok {
+		return // 失败不写 flag，下次启动重试
+	}
+	if err := s.m.pg.SetSetting(flag, "true"); err != nil {
+		log.Printf("[persona] 写 flag 失败: %v", err)
+		return
+	}
+	log.Printf("[persona] 五个 persona 已配置技能可见性与运行参数")
+}
+
+// reseedKnowledgePrompts 把内置 agent 的默认提示词重刷为统一知识工具版本（一次性）。
+// 只动正文由代码拥有的角色；playbook agent 用 PlaybookDefaultPrompt。旧版本仍在
+// agent_prompts 历史里，可人工回滚。
+func (s *Server) reseedKnowledgePrompts() {
+	const flag = "knowledge_tools_prompt_v1"
+	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
+		return
+	}
+	defer func() { _ = s.m.pg.SetSetting(flag, "true") }()
+	seeds := agent.BuiltinPromptSeeds()
+	refreshed := 0
+	for _, key := range []string{"planner", "worker", "mainagent", "pentest"} {
+		a, err := s.m.pg.GetAgentByKey(key)
+		if err != nil || a == nil {
+			continue
+		}
+		tmpl := seeds[key]
+		if tmpl == "" {
+			continue
+		}
+		if cur, err := s.m.pg.CurrentPrompt(a.ID); err == nil && cur == tmpl {
+			continue
+		}
+		if _, err := s.m.pg.ResetPromptToDefault(a.ID, tmpl); err != nil {
+			log.Printf("[knowledge] %s 提示词重刷失败: %v", key, err)
+			continue
+		}
+		refreshed++
+	}
+	if a, err := s.m.pg.GetAgentByKey("playbook"); err == nil && a != nil {
+		if cur, _ := s.m.pg.CurrentPrompt(a.ID); cur != agent.PlaybookDefaultPrompt {
+			if _, err := s.m.pg.ResetPromptToDefault(a.ID, agent.PlaybookDefaultPrompt); err != nil {
+				log.Printf("[knowledge] playbook 提示词重刷失败: %v", err)
+			} else {
+				refreshed++
+			}
+		}
+	}
+	if refreshed > 0 {
+		log.Printf("[knowledge] %d 个内置 agent 提示词已刷新为统一知识工具版本", refreshed)
+	}
+}
+
 // reseedPentestPrompt 把 pentest（独立渗透 agent）的提示词刷成当前代码默认——
-// 默认正文新增了 lookup_playbooks 打法复用引导，SeedPromptIfEmpty 首插入 only，
+// 默认正文新增了 lookup_knowledge 打法复用引导，SeedPromptIfEmpty 首插入 only，
 // 旧库已有版本收不到。与 reseedWorkerPrompt 同构。
 func (s *Server) reseedPentestPrompt() {
 	const flag = "pentest_prompt_playbooks_v1"
@@ -1019,7 +1115,7 @@ func (s *Server) reseedPentestPrompt() {
 		log.Printf("[prompts] pentest 提示词重刷为新默认失败: %v", err)
 		return
 	}
-	log.Printf("[prompts] pentest 提示词已追加新默认版本(加入 lookup_playbooks 打法复用,一次性)")
+	log.Printf("[prompts] pentest 提示词已追加新默认版本(加入 lookup_knowledge 打法复用,一次性)")
 }
 
 // seedAutoReportFindingBinding adds "auto" to report_finding's binding ONCE so

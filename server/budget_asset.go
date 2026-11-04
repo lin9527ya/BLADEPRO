@@ -26,12 +26,27 @@ import (
 )
 
 const (
-	settingAssetTokenBudget = "src_asset_token_budget"
-	settingAssetTimeBudget  = "src_asset_time_budget_minutes"
-	settingSrcAreaTiers     = "src_area_tiers"
-	settingSrcRequireIso    = "src_require_isolation"
-	settingAssetCostBudget  = "src_asset_cost_budget_usd"
-	settingSrcReconGate     = "src_recon_gate"
+	settingAssetTokenBudget     = "src_asset_token_budget"
+	settingAssetTimeBudget      = "src_asset_time_budget_minutes"
+	settingSrcAreaTiers         = "src_area_tiers"
+	settingSrcRequireIso        = "src_require_isolation"
+	settingAssetCostBudget      = "src_asset_cost_budget_usd"
+	settingSrcReconGate         = "src_recon_gate"
+	settingKnowledgeInject      = "knowledge_inject_enabled"
+	settingKnowledgeBudget      = "knowledge_block_budget"
+	settingDepthEnabled         = "depth_enabled"
+	settingVendorBlockEnabled   = "vendor_block_enabled"
+	settingJadxBin              = "jadx_bin"
+	settingJadxOutDir           = "jadx_out_dir"
+	settingGhidraHome           = "ghidra_home"
+	settingDnslogAPI            = "dnslog_api"
+	settingVisionBaseURL        = "vision_base_url"
+	settingVisionAPIKey         = "vision_api_key"
+	settingVisionModel          = "vision_model"
+	settingFeishuAppID          = "feishu_app_id"
+	settingFeishuAppSecret      = "feishu_app_secret"
+	settingFeishuChatID         = "feishu_chat_id"
+	settingWorkerProcMemLimitMB = "worker_proc_mem_limit_mb"
 	// 资产预算扫描节流：llm_usage 是热表，每 15s 一次足够及时且不增加明显负担。
 	assetBudgetSweepInterval = 15 * time.Second
 	maxAssetTokenBudgetValue = int64(1_000_000_000_000)
@@ -335,4 +350,30 @@ func (e *Engine) checkAssetCostBudgets(ctx context.Context, t *Task) {
 // tasks. A per-task mode_doc.recon_gate overrides it.
 func (s *Server) srcReconGate() bool {
 	return s != nil && s.m != nil && s.m.pg != nil && s.m.pg.GetBool(settingSrcReconGate, false)
+}
+
+// knowledgeBlockBudget 读取注入块字符预算（默认 3000，范围 500–12000）。
+func (s *Server) knowledgeBlockBudget() int {
+	if s == nil || s.m == nil || s.m.pg == nil {
+		return 3000
+	}
+	v, _, _ := s.m.pg.GetSetting(settingKnowledgeBudget)
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n < 500 || n > 12000 {
+		return 3000
+	}
+	return n
+}
+
+// workerProcMemLimitMB 读取进程树内存上限（默认 8192 MB，0=关）。
+func (s *Server) workerProcMemLimitMB() int {
+	if s == nil || s.m == nil || s.m.pg == nil {
+		return 8192
+	}
+	v, _, _ := s.m.pg.GetSetting(settingWorkerProcMemLimitMB)
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n < 0 {
+		return 8192
+	}
+	return n
 }

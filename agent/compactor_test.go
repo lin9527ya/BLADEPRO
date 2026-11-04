@@ -23,7 +23,7 @@ import (
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
 
 // dumpPathRe finds the absolute dump path inside the summary-request prompt.
-var dumpPathRe = regexp.MustCompile(`/[^\s。，、）()]+?\.txt`)
+var dumpPathRe = regexp.MustCompile(`(?:[A-Za-z]:[\\/]|/)[^\s。，、）()]+?\.txt`)
 
 // recordingProvider captures the summarizer's request and replays canned text.
 type recordingProvider struct {

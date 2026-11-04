@@ -1,6 +1,6 @@
 "use client";
 
-import { CpuIcon, GaugeIcon } from "lucide-react";
+import { BookOpenIcon, CpuIcon, GaugeIcon } from "lucide-react";
 
 import { Field, Section, SubBlock } from "@/components/page-sections";
 import { Button } from "@/components/ui/button";
@@ -63,6 +63,20 @@ export function RuntimeSection({ s }: { s: ReturnType<typeof useSettingsState> }
     setReconGate,
     savingReconGate,
     saveReconGate,
+    knowledgeInject,
+    setKnowledgeInject,
+    knowledgeBudget,
+    setKnowledgeBudget,
+    savingKnowledge,
+    saveKnowledgeSettings,
+    depthEnabled,
+    setDepthEnabled,
+    vendorBlockEnabled,
+    setVendorBlockEnabled,
+    retroAuto,
+    setRetroAuto,
+    memLimit,
+    setMemLimit,
     egressGlobalQPS,
     setEgressGlobalQPS,
     egressHostQPS,
@@ -249,6 +263,105 @@ export function RuntimeSection({ s }: { s: ReturnType<typeof useSettingsState> }
                 aria-label="开启侦察先行闸"
               />
               <Button type="button" onClick={saveReconGate} disabled={!loaded || savingReconGate}>
+                保存
+              </Button>
+            </div>
+          </Field>
+        </SubBlock>
+
+        <SubBlock title="知识库注入（跨任务先验）" icon={<BookOpenIcon className="text-muted-foreground size-4" />}>
+          <Field
+            label="把跨任务记忆/弹药/打法注入 planner 与 worker"
+            hint={
+              <>
+                开启后，任务里会注入本公司与该任务范围的记忆、弹药与指纹打法（按热度与复核时间排序，长期未复核标 ⚠，
+                预算默认 3000 字）。注入不计数；只有 agent 显式 <code>lookup_knowledge</code> 才累计命中。
+                知识写入统一走审批（<code>/function/approvals</code>），批准后才生效。
+              </>
+            }
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <Switch
+                checked={knowledgeInject}
+                onCheckedChange={setKnowledgeInject}
+                disabled={!loaded || savingKnowledge}
+                aria-label="开启知识库注入"
+              />
+              <Input
+                className="w-28"
+                inputMode="numeric"
+                value={knowledgeBudget}
+                onChange={(e) => setKnowledgeBudget(e.target.value)}
+                disabled={!loaded || savingKnowledge}
+                aria-label="注入预算（字符）"
+              />
+              <span className="text-muted-foreground text-xs">字（500–12000）</span>
+              <Button type="button" onClick={saveKnowledgeSettings} disabled={!loaded || savingKnowledge}>
+                保存
+              </Button>
+            </div>
+          </Field>
+          <Field
+            label="任务复盘与进程内存看门狗"
+            hint={
+              <>
+                复盘：终态任务自动生成「任务复盘」知识提案（进审批，默认关）。
+                看门狗：每 20 秒扫描本进程后代进程树，工作集超过上限就整支终止（0 = 关闭；Windows 生效）。
+              </>
+            }
+          >
+            <div className="flex flex-wrap items-center gap-4">
+              <label className="flex items-center gap-2 text-sm">
+                <Switch
+                  checked={retroAuto}
+                  onCheckedChange={setRetroAuto}
+                  disabled={!loaded || savingKnowledge}
+                  aria-label="开启自动复盘"
+                />
+                自动复盘
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <Input
+                  className="w-24"
+                  inputMode="numeric"
+                  value={memLimit}
+                  onChange={(e) => setMemLimit(e.target.value)}
+                  disabled={!loaded || savingKnowledge}
+                  aria-label="进程树内存上限 MB"
+                />
+                MB
+              </label>
+            </div>
+          </Field>
+          <Field
+            label="注入测试深度分级与厂商档案"
+            hint={
+              <>
+                深度分级定义 L1 存在证明 / L2 危害范围 / L3 控制力与禁止区（只影响提示词，不替代拦截）；
+                厂商档案注入归属域名、测试窗口、不收洞型与定级口径。深度解析优先级：任务覆盖 &gt; program &gt; 公司档案 &gt; 2。
+              </>
+            }
+          >
+            <div className="flex flex-wrap items-center gap-4">
+              <label className="flex items-center gap-2 text-sm">
+                <Switch
+                  checked={depthEnabled}
+                  onCheckedChange={setDepthEnabled}
+                  disabled={!loaded || savingKnowledge}
+                  aria-label="开启深度分级注入"
+                />
+                深度分级
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <Switch
+                  checked={vendorBlockEnabled}
+                  onCheckedChange={setVendorBlockEnabled}
+                  disabled={!loaded || savingKnowledge}
+                  aria-label="开启厂商档案注入"
+                />
+                厂商档案
+              </label>
+              <Button type="button" onClick={saveKnowledgeSettings} disabled={!loaded || savingKnowledge}>
                 保存
               </Button>
             </div>

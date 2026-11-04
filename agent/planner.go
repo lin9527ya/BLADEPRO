@@ -40,10 +40,13 @@ type Planner struct {
 	srcIdentityDiffer SrcIdentityDiffer
 	prov              llm.Provider
 	model             string
-	tx                *transcript.Store                      // raw LLM conversation persistence (nil = off)
-	window            int                                    // context window in tokens (for compaction)
-	windowFn          func() int                             // optional dynamic task-chain minimum
-	maxTurns          int                                    // max agent turns per run (0 = unlimited)
+	tx                *transcript.Store // raw LLM conversation persistence (nil = off)
+	window            int               // context window in tokens (for compaction)
+	windowFn          func() int        // optional dynamic task-chain minimum
+	maxTurns          int               // max agent turns per run (0 = unlimited)
+	// openingRounds 是本任务已经走过的「开局摸底」轮数（最多 2 轮）。零事实时先摸清
+	// 入口再派单，但不能拿它当长期空转的借口：第三轮起仍按硬底线派单。
+	openingRounds     int
 	killWork          func(intentID int64) error             // engine callback to terminate a running work (nil = off)
 	steerWork         func(intentID int64, msg string) error // engine callback to steer a running work mid-run (nil = off)
 	proxyAddr         string                                 // recording proxy for WebFetch (empty = direct)
@@ -478,7 +481,7 @@ const plannerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
    - **目标归属**：派意图时用 add_intent 的 goal_id 指名它服务的目标（链路图「目标→意图」的父边；只有一个未达成目标时可省略，自动挂；多个目标必须指名）。
    - **否定/存疑观察**（recent_facts 里"端口关闭/不可注入"等）是 worker 的观察、不是定论：采信前先 node_detail(id) 看 evidence——evidence 扎实、confidence=observed 且手段已穷尽的才视为该方向暂时封住；evidence 缺失、只是"看起来像/只探一次"、或 confidence=inferred 的，按【尚未探明】处理，若在范围内且无其它意图覆盖，默认派一条复核意图去证实或推翻（**同一否定方向至多复核一次**；复核后仍为否定、且证据合理，就尊重该结论、不再派）。
    - **要更深细节才按需调**：list_facts（分页，最新在前，默认 20，可 q 过滤、before 翻页，带 total/has_more）、list_findings（全部漏洞）、node_detail(id)（完整证据/详情；列表/recent_facts/战果窗口只给摘要——**凭据原文只在 node_detail 里**，概览不带）、list_assets（pull：q 搜索、type/company_id/task_id 过滤、分页，或 id/ids 直取）、asset_neighbors。资产全局共享，别默认拉全量。
-   - **历史打法（matching_playbooks）**：态势里出现这个字段时，是全局指纹库按本任务范围内出现的技术栈/favicon 命中的「同类目标以前怎么打穿的」卡片（先验，不是结论）。对高价值资产/新入口，若命中，优先把「按这张打法验证」排成意图，让 worker 用 lookup_playbooks 取完整步骤；**历史成功不等于这个目标有洞**，仍要实际触发，不要拿它代替验证。
+   - **历史打法（matching_playbooks）**：态势里出现这个字段时，是全局指纹库按本任务范围内出现的技术栈/favicon 命中的「同类目标以前怎么打穿的」卡片（先验，不是结论）。对高价值资产/新入口，若命中，优先把「按这张打法验证」排成意图，让 worker 用 lookup_knowledge 取完整步骤；**历史成功不等于这个目标有洞**，仍要实际触发，不要拿它代替验证。
 
 2. **判目标（核心职责）**：goals 字段已含目标与状态；对已被某发现/事实证明的未达成目标，调 prove_goal(goal_id, evidence_id, reason) 标 met。**当你标记的恰是最后一个未完成目标时，系统自动判定整个任务完成**——收官只由逐个 prove_goal 驱动，没有别的"一键完成"手段。
    - ⚠️ **量化验收核对（严禁提前盖章）**：目标含可量化条件（覆盖度达 X%、拿 N 个 flag、获得某权限、拿下 N 台主机）时，prove_goal 前【必须】核对上方 graph_overview 的实测值（coverage.pct、findings_total、footholds_total、credentials_total 等计数）：未达标就【禁止】prove_goal，改派意图补差；不得以"大体达成/核心已拿下"为由提前标 met。例：要求覆盖度 100% 而实测 coverage.pct=40% → 未达成，继续派补测意图；要求"拿到主机权限"而 footholds_total=0 → 未达成。
@@ -510,6 +513,24 @@ const plannerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
    - **parent_ids**：本方向由哪些上游节点综合得出（可选，0/1/多个）——多个事实结合产生一个意图就都传，派生自某上游意图/发现也传其 id，顶层全新方向留空。
 
 不重复、不硬凑；但目标未达成、又有未覆盖且更深的打法时，该派就派。简洁、聚焦、高效。`
+
+// openingProbeBlock 是**代码持有**的开局摸底协议。
+//
+// 为什么归代码：有效正文可能来自任务快照 / agent_prompts 覆盖 / 模板库，任何一级都
+// 收不到新纪律。而「零事实直接派单」的代价是首轮只能写出风险类目录型意图——worker
+// 把每个路径各探一次就收工，深度全丢在最浅处，最后走到「策略内已无可行方向」。
+// 本段只在「图上还没有任何意图」的前两轮注入，不改变任务中后段的派单规则。
+const openingProbeBlock = `
+
+【开局摸底（代码持有；仅当图上还没有任何意图时执行本段）】
+- **这一轮先看，再派**。图上只有任务起点那一条事实时，你对目标一无所知；此时直接派「认证面测试 / 注入测试 / 上传测试」这类风险类目录，worker 只能把每个路径各探一次，整条链在最浅处停住。
+- 动作顺序：
+  1. 用 Bash（curl）或 WebFetch 做 **1–3 次只读请求**，只为把入口说具体：首页响应头与跳转链（curl -sSI）、robots.txt / sitemap.xml、首页 HTML 里的 script src 与 API 前缀、首页链接可见的登录口/后台入口（/admin、/login、/manage 等）的跳转目标。看的是**状态码、Location、Server/X-Powered-By、框架痕迹、实际路径**。
+  2. 把观察直接写进意图 summary：每条意图引用你刚看到的具体入口（路径、跳转、版本、参数名），并写清验证什么假设、什么算测到。
+  3. 再用【一次】add_intent 提交 1–4 条。第一条优先给「最接近目标的那条入口」做深，而不是把风险类铺满。
+- **禁止**把 worker 的活抢过来：本轮不做目录枚举/字典、不做注入或爆破试探、不做子域测绘。单次请求只为读懂入口，看到 4xx/5xx 记下即可，不追。
+- **本轮允许产出 0 条意图**（只摸底）：摸底成功就必须派 ≥1 条引用观察的意图；只有目标完全不可达（连接失败/被拦）时才允许 0 条，并在回复里说明。
+- **本段压过其它段落**：开局轮不适用"必须填满空闲槽位"与"本轮至少 1 条广度意图"；首轮把一条入口写具体，比把 4 个槽位用风险类填满更值。`
 
 func plannerSystem(goal, dataDir, workDir, assetSummary string) string {
 	return plannerStaticSystem(goal, dataDir, assetSummary) + artifactSpec(workDir)
@@ -544,6 +565,14 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	// runs in a detached goroutine so it never adds latency to this round.
 	p.compactor.OnPlannerRound(ctx, ts)
 	tsx := NewToolSet(ts, "planner")
+	// 开局轮：图上还没有任何意图。首轮的目标不是"把槽位填满"，而是先做 1–3 次只读
+	// 摸底、把首条意图写到具体入口上（见 openingProbeBlock）。只给前两轮：摸底是手段
+	// 不是常态，第三轮起仍按硬底线派单，避免拿"还在摸底"空转。
+	opening := latestIntentID(ts) == 0 && p.openingRounds < 2
+	if opening {
+		p.openingRounds++
+	}
+	tsx.SetOpeningStrict(opening)
 	tsx.SetExecService(p.execService)
 	pol := p.policy()
 	tsx.SetPolicy(pol)            // 意图层硬门（add_intent）
@@ -597,6 +626,10 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	}
 	// P20：探索策略段不受 wantConstraints 开关控制——它是操作者声明的硬边界。
 	sysBody += policyBlock(pol)
+	// P-Q：深度分级 → 厂商档案 → 跨任务知识先验（顺序固定：等级在最前，知识在最后）。
+	sysBody += depthBlock(taskID)
+	sysBody += vendorBlock(taskID)
+	sysBody += knowledgeBlock(taskID, true)
 	// 队列背压与 worker 数是本任务固定的容量信息；放在静态 system 里，跨轮/跨任务
 	// 前缀缓存不受影响，也避免模型每轮把"有 1 个 worker 在跑"误当成并行度已满。
 	sysBody += intentQueueBlock(p.workers())
@@ -604,6 +637,9 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	if tsx.SrcMode() {
 		sysBody = srcmode.SrcPrecedenceNote() + srcmode.StripPentestOnly(sysBody)
 		sysBody += srcmode.PlannerOverlay(tsx.SrcDoc())
+	}
+	if opening {
+		sysBody += openingProbeBlock
 	}
 	system, boundary := deferredSystem(sysBody, def)
 	staticCount := len(system)
@@ -692,6 +728,9 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 			}
 		}
 	}
+	if opening {
+		lead = "本轮是**任务开局**：图上除任务起点外没有任何 worker 产出，也还没有任何意图。先按【开局摸底】做 1–3 次只读请求（首页响应头/跳转、robots.txt、首页 script 与后台入口），再把看到的具体入口写进首轮意图："
+	}
 	// P20：被拒摘要进下一轮输入（硬拒但不闭环 = 模型会无限重试同一方向）。
 	if pol != nil && !pol.IsZero() {
 		situational += stallNoticeFromStore(ts, *pol)
@@ -702,8 +741,14 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	if strings.TrimSpace(goal) != "" {
 		goalLine = "任务目标：\n" + goal + "\n\n"
 	}
+	hardFloor := policy.HardFloorText(derefPolicy(pol))
+	if opening {
+		// 开局轮的唯一合法产物可能是"一句更具体的方向"：摸底之后即使 0 条意图也不算
+		// 停摆。摸底轮数上限保证这条例外不会变成长期空转的借口。
+		hardFloor = "**【开局例外（仅本轮）】本轮是任务开局：按【开局摸底】做完 1–3 次只读请求后，即使本轮只产出 0 条意图也不算停摆；摸底成功则至少派 1 条引用观察的意图。**"
+	}
 	input := goalLine + lead + situational + "\n\n据上面的态势，判定目标。目标已【真正达成】（已拿到目标成果/已确认目标漏洞）时用 prove_goal 逐个标记。" +
-		policy.HardFloorText(derefPolicy(pol)) +
+		hardFloor +
 		renderPlannerTodos(opts.Todos.List())
 	// 默认每轮新会话：只把上一轮的结论摘要带进来，不 resume 全量 transcript。
 	// 全量历史会重复旧态势、越滚越大；结论摘要足够承接"想清楚了什么、派了哪些活"。

@@ -85,7 +85,7 @@ export function ChangePasswordDialog({
               <Input
                 id="cp-old"
                 type="password"
-                autoComplete="current-password"
+                autoComplete="new-password"
                 value={oldPassword}
                 disabled={saving}
                 onChange={(e) => setOldPassword(e.target.value)}

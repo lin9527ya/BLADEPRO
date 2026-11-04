@@ -58,3 +58,25 @@ func constraintBlock(ts *db.ExplorationStore) string {
 	b.WriteString("\n（发现约束之外的新目标/新端口/新主机，不等于获得授权：除非它落在上述允许范围内，否则记为 out-of-scope 事实并跳过，不得为其派生意图或执行动作。）")
 	return b.String()
 }
+
+// KnowledgeProvider, if set, renders the cross-task knowledge block injected into
+// planner/worker system prompts. The server wires it to the unified knowledge
+// store (knowledge_entries) and gates it behind settings.knowledge_inject_enabled.
+var KnowledgeProvider func(taskID int64, planner bool) string
+
+// knowledgeBlock renders the cross-task prior-knowledge block (empty when unset).
+// 注入块本身不计数（保护 system 前缀缓存）；只有显式 lookup_knowledge 才 Touch。
+func knowledgeBlock(taskID int64, planner bool) string {
+	if KnowledgeProvider == nil || taskID <= 0 {
+		return ""
+	}
+	return KnowledgeProvider(taskID, planner)
+}
+
+// DepthProvider, if set, resolves a task's effective test-depth tier (1-3).
+// server/depth.go wires it in P3; nil falls back to no depth block.
+var DepthProvider func(taskID int64) int
+
+// VendorProvider, if set, returns the vendor/company context block for a task.
+// server vendors wiring lands in P3; nil renders nothing.
+var VendorProvider func(taskID int64) string

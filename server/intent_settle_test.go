@@ -26,6 +26,11 @@ func TestSettleIntentState(t *testing.T) {
 		{"prior output makes continuation done", nil, "", agent.WriteCounts{}, "", true, "done"},
 		{"semantic negative wins", nil, "", agent.WriteCounts{}, "negative", false, "negative"},
 		{"out of scope wins", nil, "", agent.WriteCounts{}, "out-of-scope", false, "out-of-scope"},
+		// blocked 是「平台/外部阻断，没测成」的如实结论：不能落 done 让覆盖矩阵
+		// 把它算成已测，也不能落 no_output 被当成"跑完没产出"。
+		{"semantic blocked wins over empty run", nil, "", agent.WriteCounts{}, "blocked", false, "blocked"},
+		{"semantic blocked wins even with output", nil, "", agent.WriteCounts{Facts: 1}, "blocked", false, "blocked"},
+		{"timeout beats semantic blocked", nil, harness.ReasonTimeout, agent.WriteCounts{}, "blocked", false, "exhausted"},
 		{"error is blocked", errors.New("boom"), "", agent.WriteCounts{Facts: 1}, "", false, "blocked"},
 		{"max turns is exhausted", nil, harness.ReasonMaxTurns, agent.WriteCounts{Facts: 1}, "negative", false, "exhausted"},
 		{"timeout is exhausted", nil, harness.ReasonTimeout, agent.WriteCounts{}, "", false, "exhausted"},

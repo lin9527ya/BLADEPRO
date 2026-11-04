@@ -701,8 +701,9 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 		t.insertAssets(), t.listAssets(),
 		// 指纹打法库：动手前先查同类指纹的历史打法（lookup 会累加使用次数），
 		// 用后回报 worked/failed，卡片靠它越用越准。沉淀本身归 playbook agent。
-		t.lookupPlaybooks(), t.recordPlaybookFeedback(),
-		// conclude_intent：worker 对领到的意图声明语义终态（negative / out-of-scope）。
+		t.lookupKnowledge(), t.recordKnowledge(), t.proposeKnowledge(), t.knowledgeFeedback(),
+		t.listRatingRulesTool(), t.getAccountCredentialTool(),
+		// conclude_intent：worker 对领到的意图声明语义终态（negative / out-of-scope / blocked）。
 		// 没测成（blocked/exhausted）由引擎判定，不归本工具。
 		t.concludeIntent(),
 		// 跨 work 回看：worker 也可复用其他 work 的观察，避免重复劳动。
@@ -726,7 +727,7 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 
 // MainAgentTools returns the human-interface tool set.
 func (t *ToolSet) MainAgentTools() []actool.CoreTool {
-	return t.AppendSrcTools([]actool.CoreTool{
+	tools := []actool.CoreTool{
 		t.graphOverview(), t.listFindings(), t.listFacts(), t.nodeDetail(),
 		t.expandDigest(), // cold-digest §6.1
 		t.getWorkerOutput(), t.getWorkerTrace(), t.searchAllWorkerTraces(), t.addHint(), t.addIntent(),
@@ -748,8 +749,10 @@ func (t *ToolSet) MainAgentTools() []actool.CoreTool {
 		t.verifyCredential(),
 		// promote_knowledge（P23）：人机对话里也可把结论沉淀给公司（只读背景，供别的任务用）。
 		t.promoteKnowledge(),
-		// lookup_playbooks：人机对话里按资产/指纹查历史打法（只读）。
-		t.lookupPlaybooks(),
+		// lookup_knowledge：人机对话里按资产/指纹或文本查跨任务知识（只读）。
+		t.lookupKnowledge(), t.proposeKnowledge(),
+		// 定级口径与测试账号（P-Q）：运营/人工在对话里维护与取用。
+		t.listRatingRulesTool(), t.saveRatingRuleTool(), t.getAccountCredentialTool(),
 		t.addTaskScope(),
 		// list_untested_assets：按需查本任务范围内未测资产(类型+分页)，自行决定补测。
 		t.listUntestedAssets(),
@@ -760,7 +763,14 @@ func (t *ToolSet) MainAgentTools() []actool.CoreTool {
 		t.adPaths(),
 		// opsec_notes（P38）：人机对话里问"这一手会留下什么"是常见需求（事前；实测走 report_detection_check）。
 		t.opsecNotes(),
-	}, "main")
+	}
+	// 逆向 / 带外 / 看图 / 飞书 / 多模型发散（P-Q，Ported from quiver）。
+	tools = append(tools, t.reverseTools()...)
+	tools = append(tools, t.visionTools()...)
+	tools = append(tools, t.feishuTools()...)
+	tools = append(tools, t.divergeTool())
+	tools = append(tools, t.deviceTools()...)
+	return t.AppendSrcTools(tools, "main")
 }
 
 // AllDomainTools returns the union of all domain tools across all agent types,

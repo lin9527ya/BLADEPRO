@@ -252,6 +252,11 @@ func Open(dsn string) (*DB, error) {
 		if err := d.seedBuiltins(); err != nil {
 			return fmt.Errorf("seed builtins: %w", err)
 		}
+		// 统一知识体系：把冻结的旧表（company_knowledge / attack_playbooks）幂等
+		// 回填进 knowledge_entries。失败只记日志，下次启动会重试。
+		if _, _, berr := d.BackfillKnowledgeFromLegacy(); berr != nil {
+			log.Printf("[knowledge] 旧表回填失败（下次启动重试）: %v", berr)
+		}
 		// 记指纹（在同一把迁移锁内，且用同一个 checked-out 连接），让「这个库是哪一版结构」
 		// 事后可查。见 recordSchemaFingerprint 的说明。
 		recordSchemaFingerprint(conn)
@@ -302,6 +307,12 @@ var builtinAgents = []builtinAgent{
 	{"auto", "Auto", "assistant", "平台操作助手：用工具管理任务(建/看/暂停/给提示)与资产，并可创建/修改 skill、自定义工具、MCP。", nil, false, nil},
 	// 渗透测试:内置「独立渗透」agent。经对话页驱动,一人从侦察到收尾走完整条渗透链,自己规划自己执行自己验证。默认开启交互式 shell。
 	{"pentest", "渗透测试", "assistant", "独立渗透 agent：一人从侦察→找攻击面→深入利用→验证→收尾走完整条链，自己规划、自己执行、自己对抗式验证。", nil, true, intp(0)},
+	// P-Q 五个 persona（移植自 quiver；只做单个活，不参与任务编排循环）。
+	{"socint", "情报搜索", "assistant", "公开情报检索：GitHub/搜索引擎/npm、同作者项目、框架魔改来源、泄露文档、人员标识；产出沉淀进知识库（走审批）。", nil, false, nil},
+	{"reverse", "逆向", "assistant", "App/小程序/客户端逆向：脱壳、反编译、协议与加密还原、隐藏接口；配合设备执行与 jadx/dnslog 工具。", nil, true, intp(0)},
+	{"codeaudit", "代码审计", "assistant", "源码/泄露代码/魔改开源审计：从入口追到 sink，给出可验证的触发条件；产出沉淀进知识库。", nil, true, nil},
+	{"reviewer", "审核", "assistant", "漏洞证据/重复/红线/定级审核：只审证据不重测，按公司定级口径给建议等级。", nil, false, nil},
+	{"ops", "运营", "assistant", "对话式录入厂商档案/定级规则/测试账号/红线建议；写入走审批。", nil, false, nil},
 }
 
 // seedBuiltins inserts the fixed built-in agents and their variable catalog (idempotent).
@@ -414,6 +425,18 @@ ON CONFLICT DO NOTHING`, r.kind, r.pattern, r.note); err != nil {
 // that MCP is enabled/configured.
 var builtinSkillVisibility = map[string][]string{
 	"api-recon": {"auto", "pentest", "worker"},
+	// P-Q 移植自 quiver 的 9 个技能（AGPL-3.0）。persona 专属技能（osint/
+	// supply-chain-osint/reverse/android-*）在对应的 socint/reverse 建好后由
+	// seedPersonaBindings 追加；这里先给现有角色默认可见。
+	"src-authz":            {"planner", "worker", "pentest"},
+	"src-bypass":           {"planner", "worker", "pentest"},
+	"ossfuzz":              {"planner", "worker", "pentest"},
+	"audit":                {"worker", "pentest"},
+	"osint":                {"pentest"},
+	"supply-chain-osint":   {"pentest"},
+	"reverse":              {"pentest"},
+	"android-dex-dump":     {"pentest"},
+	"android-stealth-hook": {"pentest"},
 }
 
 // seedBuiltinSkillVisibility binds the shipped built-in skills to their default

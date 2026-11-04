@@ -7,8 +7,12 @@ import (
 
 var builtinActionTools = map[string]bool{
 	"Bash": true, "shell_open": true, "shell_send": true, "run_execution": true,
-	"WebFetch": true, "web_search": true, "Write": true, "Edit": true, "MultiEdit": true,
-	"src_probe": true, "src_screenshot": true, "create_mcp": true, "update_mcp": true,
+	"jadx_decompile": true, "ghidra_analyze": true, "dnslog_session": true, "dnslog_records": true,
+	"view_image": true, "feishu_send_text": true, "feishu_send_card": true, "feishu_send_vuln": true,
+	"feishu_send_image": true, "feishu_send_file": true, "divergence_brainstorm": true,
+	"device_exec": true,
+	"WebFetch":    true, "web_search": true, "Write": true, "Edit": true, "MultiEdit": true,
+	"src_probe": true, "src_screenshot": true, "create_mcp": true, "update_mcp": true, "get_account_credential": true,
 	"create_custom_tool": true, "update_custom_tool": true,
 }
 var builtinReadTools = map[string]bool{
@@ -16,6 +20,7 @@ var builtinReadTools = map[string]bool{
 	"list_facts": true, "list_assets": true, "src_state": true, "get_worker_output": true,
 	"record_fact": true, "report_finding": true, "src_mark_cell": true, "src_mark_check": true,
 	"src_prepare_submission": true, "conclude_intent": true, "wait_execution": true,
+	"jadx_status": true, "jadx_search": true, "jadx_read": true, "device_list": true,
 	"get_finding_retest_context": true, "record_finding_retest_result": true,
 }
 

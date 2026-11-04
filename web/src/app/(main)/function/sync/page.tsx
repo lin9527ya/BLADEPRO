@@ -169,12 +169,18 @@ function DataSourceCard({
             <div className="grid gap-3 md:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>MCP 地址</Label>
-                <Input placeholder="http://<主机>:8082/mcp" value={url} onChange={(e) => setUrl(e.target.value)} />
+                <Input
+                  placeholder="http://<主机>:8082/mcp"
+                  autoComplete="off"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>API Key（X-API-Key，留空保留原值）</Label>
                 <Input
                   type="password"
+                  autoComplete="new-password"
                   placeholder="ssk_..."
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}

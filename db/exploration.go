@@ -2736,3 +2736,22 @@ ORDER BY id DESC LIMIT $2`, s.expID, limit)
 	defer rows.Close()
 	return scanNodes(rows)
 }
+
+// SetIntentQuality 写入意图的预期收益/验证成本（P-Q，移植自 quiver 的意图质量字段）。
+func (s *ExplorationStore) SetIntentQuality(id int64, expectedGain, verifyCost string) error {
+	if s == nil || s.db == nil || id <= 0 {
+		return nil
+	}
+	_, err := s.db.Exec(`UPDATE exploration_nodes SET expected_gain=$2, verify_cost=$3 WHERE id=$1`,
+		id, strings.TrimSpace(expectedGain), strings.TrimSpace(verifyCost))
+	return err
+}
+
+// MarkIntentFalsified 标记一条意图的假设已被实证否定（conclude_intent negative）。
+func (s *ExplorationStore) MarkIntentFalsified(id int64) error {
+	if s == nil || s.db == nil || id <= 0 {
+		return nil
+	}
+	_, err := s.db.Exec(`UPDATE exploration_nodes SET falsified=true WHERE id=$1`, id)
+	return err
+}

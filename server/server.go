@@ -268,6 +268,9 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 			},
 		})
 		wireAgentAugment(m.pg, s.skillDir, s.hostTools) // 可见 skills/MCP + 流量/编排 host 工具装配进 agent 工具集
+		s.wireKnowledgeProvider()                       // P-Q：统一知识库注入 planner/worker（受 settings 开关）
+		s.wireDepthProviders()                          // P-Q：深度分级与厂商档案注入（受 settings 开关）
+		s.applyReverseConfig()                          // P-Q：逆向/看图/飞书工具配置
 		domainReg := buildDomainReg(m.Assets())
 		wireTools(m.pg, domainReg) // 内置工具表：按 agent 过滤 + 覆盖描述/schema + 注入默认值
 		seedPrompts(m.pg)          // 内置 agent 默认提示词正文播种进 agent_prompts(仅空时)
@@ -289,6 +292,8 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		s.sched = newScheduler(s)
 		if !testing.Testing() {
 			s.loops.start(func() { s.sched.Run(ctx) })
+			// P-Q 进程树内存看门狗（Windows；其它平台空实现）。每轮现读设置，0=关。
+			s.loops.start(func() { startProcMemWatchdog(ctx, s) })
 		} // P3 触发器调度(定时/finding/目标事件),仅自定义 agent
 		// 漏洞 IM 推送投递引擎。与 Scheduler 并列但独立：推送的实时性要求(3s)
 		// 与触发器的业务节奏不同，且两者失败互不牵连——推送卡住不该影响 agent 触发。
@@ -448,6 +453,11 @@ func (s *Server) registerRoutes(mux routeRegistrar) {
 	s.registerChatRoutes(mux)
 	s.registerAgentRoutes(mux)
 	s.registerPlaybookRoutes(mux)
+	s.registerKnowledgeRoutes(mux)
+	s.registerAccountRoutes(mux)
+	s.registerRatingRuleRoutes(mux)
+	s.registerCompanyProfileRoutes(mux)
+	s.registerDeviceRoutes(mux)
 	// SRC 交付面（P2）：提交台账 + 交付准备 + 重复定案。
 	s.registerSrcDelivery(mux)
 	// SRC 平台面（P3）：平台项目 CRUD + 看板统计。

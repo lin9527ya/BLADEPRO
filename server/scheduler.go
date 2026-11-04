@@ -71,7 +71,8 @@ func (sc *Scheduler) tickOnce(ctx context.Context) {
 	}
 	sc.s.reconcileConcurrency() // 并发上限:有空位就把排队任务补位启动
 	sc.step()
-	sc.runDueSchedules(ctx) // P22 计划任务:到点按规格建任务(CAS 抢跑,不重复)
+	sc.runDueSchedules(ctx)     // P22 计划任务:到点按规格建任务(CAS 抢跑,不重复)
+	sc.s.runDueRetrospects(ctx) // P-Q 终态任务自动复盘（默认关）
 }
 
 // init seeds the watermarks on first run so pre-existing findings/goals don't all

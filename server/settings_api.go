@@ -93,14 +93,33 @@ func (s *Server) settingsPayload() map[string]any {
 		// SRC 任务要求 agent 降权运行（BLADEPRO_AGENT_USER 实际生效）。
 		"src_require_isolation": s.srcRequireIsolation(),
 		// SRC 侦察先行闸：未清点的 app/service 资产只接受 recon 意图。
-		"src_recon_gate":     s.srcReconGate(),
-		"llm_record":         s.m.LLMRecordEnabled(),
-		"web_search_enabled": on,
-		"web_search_backend": backend,
-		"brave_key_set":      strings.TrimSpace(braveKey) != "",
-		"tavily_key_set":     strings.TrimSpace(tavilyKey) != "",
-		"web_search_proxy":   proxy,             // 独立出口代理(http/https/socks5)，空=直连
-		"global_proxy":       s.m.GlobalProxy(), // 全局出口代理(http/https/socks5)，所有目标流量走它，空=直连
+		"src_recon_gate": s.srcReconGate(),
+		// P-Q 统一知识库注入（默认关，灰度）：打开后 planner/worker 注入跨任务知识块。
+		"knowledge_inject_enabled": s.m.pg.GetBool(settingKnowledgeInject, false),
+		"knowledge_block_budget":   s.knowledgeBlockBudget(),
+		"depth_enabled":            s.m.pg.GetBool(settingDepthEnabled, false),
+		"vendor_block_enabled":     s.m.pg.GetBool(settingVendorBlockEnabled, false),
+		// P-Q 逆向/看图/飞书配置（密钥只写不读：只回 *_set）。
+		"jadx_bin":              s.settingStr(settingJadxBin),
+		"jadx_out_dir":          s.settingStr(settingJadxOutDir),
+		"ghidra_home":           s.settingStr(settingGhidraHome),
+		"dnslog_api":            s.settingStr(settingDnslogAPI),
+		"vision_base_url":       s.settingStr(settingVisionBaseURL),
+		"vision_model":          s.settingStr(settingVisionModel),
+		"vision_api_key_set":    s.settingStr(settingVisionAPIKey) != "",
+		"feishu_app_id":         s.settingStr(settingFeishuAppID),
+		"feishu_chat_id":        s.settingStr(settingFeishuChatID),
+		"feishu_app_secret_set": s.settingStr(settingFeishuAppSecret) != "",
+		// P-Q 复盘与进程内存看门狗。
+		"retro_auto_enabled":       s.m.pg.GetBool(settingRetroAuto, false),
+		"worker_proc_mem_limit_mb": s.workerProcMemLimitMB(),
+		"llm_record":               s.m.LLMRecordEnabled(),
+		"web_search_enabled":       on,
+		"web_search_backend":       backend,
+		"brave_key_set":            strings.TrimSpace(braveKey) != "",
+		"tavily_key_set":           strings.TrimSpace(tavilyKey) != "",
+		"web_search_proxy":         proxy,             // 独立出口代理(http/https/socks5)，空=直连
+		"global_proxy":             s.m.GlobalProxy(), // 全局出口代理(http/https/socks5)，所有目标流量走它，空=直连
 		// 出站速率治理（录制代理层）：0 = 关闭。host 桶与全局桶同时生效。
 		"egress_global_qps":        egressGlobal,
 		"egress_host_qps":          egressHost,
@@ -222,6 +241,22 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		SrcAreaTiers        *map[string]string `json:"src_area_tiers"`
 		SrcRequireIsolation *bool              `json:"src_require_isolation"`
 		SrcReconGate        *bool              `json:"src_recon_gate"`
+		KnowledgeInject     *bool              `json:"knowledge_inject_enabled"`
+		KnowledgeBudget     *int               `json:"knowledge_block_budget"`
+		DepthEnabled        *bool              `json:"depth_enabled"`
+		VendorBlockEnabled  *bool              `json:"vendor_block_enabled"`
+		JadxBin             *string            `json:"jadx_bin"`
+		JadxOutDir          *string            `json:"jadx_out_dir"`
+		GhidraHome          *string            `json:"ghidra_home"`
+		DnslogAPI           *string            `json:"dnslog_api"`
+		VisionBaseURL       *string            `json:"vision_base_url"`
+		VisionModel         *string            `json:"vision_model"`
+		VisionAPIKey        *string            `json:"vision_api_key"`
+		FeishuAppID         *string            `json:"feishu_app_id"`
+		FeishuChatID        *string            `json:"feishu_chat_id"`
+		FeishuAppSecret     *string            `json:"feishu_app_secret"`
+		RetroAuto           *bool              `json:"retro_auto_enabled"`
+		WorkerMemLimit      *int               `json:"worker_proc_mem_limit_mb"`
 		LLMRecord           *bool              `json:"llm_record"` // LLM 录制开关（默认关）；即时生效，无需重建 agent
 		// Web search. WebSearchEnabled/Backend toggle the tool + backend; BraveKey/TavilyKey
 		// are optional — omit (null) to leave a stored key untouched, send "" to clear.
@@ -608,6 +643,74 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.KnowledgeInject != nil {
+		if err := s.m.pg.SetBool(settingKnowledgeInject, *req.KnowledgeInject); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.DepthEnabled != nil {
+		if err := s.m.pg.SetBool(settingDepthEnabled, *req.DepthEnabled); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.VendorBlockEnabled != nil {
+		if err := s.m.pg.SetBool(settingVendorBlockEnabled, *req.VendorBlockEnabled); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	// P-Q 逆向/看图/飞书：字符串键（空串=清空）；密钥 null=不改。
+	strKeys := []struct {
+		ptr *string
+		key string
+	}{
+		{req.JadxBin, settingJadxBin}, {req.JadxOutDir, settingJadxOutDir},
+		{req.GhidraHome, settingGhidraHome}, {req.DnslogAPI, settingDnslogAPI},
+		{req.VisionBaseURL, settingVisionBaseURL}, {req.VisionModel, settingVisionModel},
+		{req.VisionAPIKey, settingVisionAPIKey}, {req.FeishuAppID, settingFeishuAppID},
+		{req.FeishuChatID, settingFeishuChatID}, {req.FeishuAppSecret, settingFeishuAppSecret},
+	}
+	for _, kv := range strKeys {
+		if kv.ptr == nil {
+			continue
+		}
+		if err := s.m.pg.SetSetting(kv.key, strings.TrimSpace(*kv.ptr)); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.RetroAuto != nil {
+		if err := s.m.pg.SetBool(settingRetroAuto, *req.RetroAuto); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.WorkerMemLimit != nil {
+		n := *req.WorkerMemLimit
+		if n < 0 {
+			n = 0
+		}
+		if err := s.m.pg.SetSetting(settingWorkerProcMemLimitMB, strconv.Itoa(n)); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	s.applyReverseConfig()
+	if req.KnowledgeBudget != nil {
+		budget := *req.KnowledgeBudget
+		if budget < 500 {
+			budget = 500
+		}
+		if budget > 12000 {
+			budget = 12000
+		}
+		if err := s.m.pg.SetSetting(settingKnowledgeBudget, strconv.Itoa(budget)); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
 	if req.SrcRequireIsolation != nil {
 		if err := s.m.pg.SetBool(settingSrcRequireIso, *req.SrcRequireIsolation); err != nil {
 			writeErr(w, 500, err.Error())
@@ -809,4 +912,10 @@ func (s *Server) testWebSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true, "count": len(results), "backend": backend})
+}
+
+// settingStr 读取字符串设置（现读，供 payload 使用）。
+func (s *Server) settingStr(key string) string {
+	v, _, _ := s.m.pg.GetSetting(key)
+	return strings.TrimSpace(v)
 }

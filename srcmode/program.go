@@ -68,6 +68,9 @@ type ProgramRules struct {
 	Redlines []string `json:"redlines,omitempty"`
 	// MaxRecordsRead 是越权读取上限（合规层提示用，不硬拦）。
 	MaxRecordsRead int `json:"max_records_read,omitempty"`
+	// MaxDepth 是该平台的测试深度上限（1=L1 存在证明 / 2=L2 危害范围 / 3=L3 控制力）。
+	// 0 = 跟随公司档案；program 只能比公司更严。P-Q 深度分级。
+	MaxDepth int `json:"max_depth,omitempty"`
 	// AllowReasonOnlyClear 允许 tested_clear 不挂证据节点（默认 false）。
 	AllowReasonOnlyClear *bool `json:"allow_reason_only_clear,omitempty"`
 	// RequireRetest 要求 medium+ 提交前有独立复验（默认 true；显式 false 才关闭）。
@@ -185,6 +188,9 @@ func (p *Program) Validate() error {
 		if !IsArea(strings.TrimSpace(area)) {
 			return fmt.Errorf("exempt_areas 含未知风险面：%q", area)
 		}
+	}
+	if p.Rules.MaxDepth < 0 || p.Rules.MaxDepth > 3 {
+		return fmt.Errorf("rules.max_depth 需在 0–3（0=跟随公司档案）")
 	}
 	if p.Rules.MaxRecordsRead < 0 {
 		return fmt.Errorf("max_records_read 不能为负")
@@ -320,6 +326,9 @@ func (p *Program) ApplyToModeDoc(doc ModeDoc) ModeDoc {
 	}
 	if p.Rules.MaxRecordsRead > 0 {
 		out.MaxRecordsRead = p.Rules.MaxRecordsRead
+	}
+	if p.Rules.MaxDepth > 0 {
+		out.MaxDepth = p.Rules.MaxDepth
 	}
 	if p.Rules.AllowReasonOnlyClear != nil {
 		out.AllowReasonOnlyClear = *p.Rules.AllowReasonOnlyClear

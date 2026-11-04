@@ -1,0 +1,11 @@
+BLADEPRO
+Copyright (C) lin9527ya and contributors
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, version 3 of the License.
+
+This distribution contains code and documentation ported from QUIVER
+(https://github.com/lin9527ya/BLADEPRO lineage, based on ARTEX v0.3.15),
+which is licensed under the GNU Affero General Public License v3.0.
+See docs/third-party/QUIVER.md for the source manifest and modification notes.

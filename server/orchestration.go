@@ -539,6 +539,7 @@ func (s *Server) seedOrchestrationTools() {
 	s.seedPlannerDefaultBindings()
 	s.seedPlannerListAssetsBinding()
 	s.seedGraphToolBindings()
+	s.seedAppDeviceToolBindings() // 真机/逆向工具补绑 planner/worker（一次性）
 	s.seedCompanyScopeRebind()
 	s.seedWorkerReadToolsUnbind() // list_facts/list_companies/list_worker_traces 从 worker 默认解绑(一次性)
 	s.seedWorkerReadbackRebind()  // 修复旧迁移误删：把 search_all_worker_traces/get_worker_trace/node_detail 补绑回 worker(一次性)
@@ -1193,6 +1194,32 @@ func (s *Server) seedGraphToolBindings() {
 	}
 	_ = s.m.pg.SetSetting(flag, "true")
 	log.Printf("[tools] 图相关工具（摄入/路径/可检出性）已补绑 auto/pentest（一次性）")
+}
+
+// seedAppDeviceToolBindings 把真机 / 逆向工具补绑到 planner/worker（一次性、只加不减）。
+//
+// 为什么：这些工具最初只进 mainagent 的工具面，任务里的规划者/worker 看不到——
+// APP 任务即使插着 root 真机，也调不到 device_list / device_exec / jadx，只能对着
+// 「没有站点资产」空转到策略穷尽。APP 测试必须在真机上拉包、反编译、抓日志，这些
+// 能力属于任务执行面，不只是聊天面。用户自己解绑过的不动。
+func (s *Server) seedAppDeviceToolBindings() {
+	const flag = "app_device_tools_v1"
+	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
+		return
+	}
+	keys := []string{
+		"device_list", "device_exec",
+		"jadx_decompile", "jadx_status", "jadx_search", "jadx_read",
+		"ghidra_analyze", "dnslog_session", "dnslog_records",
+	}
+	for _, agentKey := range []string{"planner", "worker"} {
+		if err := s.m.pg.AddAgentToToolBinding(agentKey, keys); err != nil {
+			log.Printf("[tools] 真机/逆向工具绑定到 %s 失败: %v", agentKey, err)
+			return
+		}
+	}
+	_ = s.m.pg.SetSetting(flag, "true")
+	log.Printf("[tools] 真机/逆向工具（device/jadx/ghidra/dnslog）已补绑 planner/worker（一次性）")
 }
 
 func (s *Server) seedCompanyScopeRebind() {

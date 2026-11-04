@@ -109,14 +109,15 @@ func (s *AssetStore) AddAutoScope(taskID int64, assetType, domain, rawURL, ip st
 	if taskID <= 0 {
 		return nil
 	}
+	var ts TaskScope
 	switch assetType {
 	case "root_domain":
 		if d := DomainKey(domain); d != "" {
-			return s.upsertTaskScope(TaskScope{TaskID: taskID, Kind: "root_domain", Domain: d})
+			ts = TaskScope{Kind: "root_domain", Domain: d}
 		}
 	case "subdomain":
 		if d := DomainKey(domain); d != "" {
-			return s.upsertTaskScope(TaskScope{TaskID: taskID, Kind: "subdomain", Domain: d})
+			ts = TaskScope{Kind: "subdomain", Domain: d}
 		}
 	case "service", "endpoint":
 		host := domain
@@ -125,15 +126,31 @@ func (s *AssetStore) AddAutoScope(taskID int64, assetType, domain, rawURL, ip st
 		}
 		host = DomainKey(host)
 		if host != "" && net.ParseIP(host) == nil {
-			return s.upsertTaskScope(TaskScope{TaskID: taskID, Kind: "subdomain", Domain: host})
-		}
-		// IP-literal host or no host → fall back to ip scope if we have one.
-		if c := ipToHostCIDR(ip); c != "" {
-			return s.upsertTaskScope(TaskScope{TaskID: taskID, Kind: "ip", Net: c})
+			ts = TaskScope{Kind: "subdomain", Domain: host}
+		} else if c := ipToHostCIDR(ip); c != "" {
+			// IP-literal host or no host → fall back to ip scope if we have one.
+			ts = TaskScope{Kind: "ip", Net: c}
 		}
 	case "ip":
 		if c := ipToHostCIDR(ip); c != "" {
-			return s.upsertTaskScope(TaskScope{TaskID: taskID, Kind: "ip", Net: c})
+			ts = TaskScope{Kind: "ip", Net: c}
+		}
+	}
+	if ts.Kind == "" {
+		return nil
+	}
+	ts.TaskID = taskID
+	ts.Source = "auto"
+	ts.Reason = "agent 自动纳入（任务内发现的资产）"
+	inserted, err := s.upsertTaskScopeResult(ts)
+	if err != nil {
+		return err
+	}
+	if inserted {
+		// 新增范围（可能是证据扩权）要重新冻结授权快照，否则下一次 SrcHostInScope
+		// 仍拿旧快照把 host 判成越界，范围加了等于没加。
+		if _, err := s.db.Exec(`UPDATE tasks SET src_authorization=NULL WHERE id=$1 AND mode='src'`, taskID); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -214,11 +231,59 @@ func (s *AssetStore) AddAgentScope(taskID int64, kind, value, reason, source str
 	default:
 		return ts, fmt.Errorf("不支持的 kind: %s（company/root_domain/subdomain/ip/cidr/icp/keyword）", kind)
 	}
-	if err := s.checkAgentSrcScope(ts); err != nil {
-		return ts, err
+	// 人工操作（任务详情里的范围面板、约束应用）可以重新授权；agent 的自动增补
+	// 默认必须落在已冻结的授权快照内。但 APP/开放式任务没有 program 边界时，agent
+	// 可以对「任务内已有证据/企业归属」的资产做受限扩权，否则 APP 调用的所属资产
+	// 永远测不了。program 任务仍严格按冻结的 in/out 边界执行。
+	expanded := false
+	if source != "manual" {
+		if err := s.checkAgentSrcScope(ts); err != nil {
+			ok, aerr := s.AgentScopeAttributionAllowed(ts)
+			if aerr != nil {
+				return ts, aerr
+			}
+			if !ok {
+				return ts, err
+			}
+			expanded = true
+			if strings.TrimSpace(ts.Reason) == "" {
+				ts.Reason = "agent 依据任务内归属证据自动扩展"
+			}
+		}
 	}
 	if err := s.upsertTaskScope(ts); err != nil {
 		return ts, err
+	}
+	// SRC 的收尾门按「范围内资产」算分母：只写 task_scope 不落资产，任务会一直
+	// 停在 scope/no_assets（APP 任务尤其明显——补了根域却没有可测资产）。人工/agent
+	// 补范围时把对应的具体资产一并登记（与 RegisterTaskAssetScopes 同口径）。
+	var mode string
+	if err := s.db.QueryRow(`SELECT COALESCE(mode,'') FROM tasks WHERE id=$1`, taskID).Scan(&mode); err != nil {
+		return ts, err
+	}
+	if mode == "src" {
+		var aerr error
+		switch ts.Kind {
+		case "root_domain":
+			_, aerr = s.UpsertRootDomain(UpsertRootDomainReq{Domain: ts.Domain, TaskID: taskID})
+		case "subdomain":
+			_, aerr = s.UpsertSubdomain(UpsertSubdomainReq{Domain: ts.Domain, TaskID: taskID})
+		case "ip":
+			host := strings.SplitN(ts.Net, "/", 2)[0]
+			if host != "" {
+				_, aerr = s.UpsertIP(UpsertIPReq{IP: host, TaskID: taskID})
+			}
+		}
+		if aerr != nil {
+			return ts, aerr
+		}
+	}
+	if source == "manual" || expanded {
+		// 授权边界变了：丢掉旧快照，下一次授权检查会按当前 task_scope/Program
+		// 重新冻结。不这样做，后续提交校验仍会拿旧快照把新加的资产判成越界。
+		if _, err := s.db.Exec(`UPDATE tasks SET src_authorization=NULL WHERE id=$1 AND mode='src'`, taskID); err != nil {
+			return ts, err
+		}
 	}
 	return ts, nil
 }
@@ -226,12 +291,23 @@ func (s *AssetStore) AddAgentScope(taskID int64, kind, value, reason, source str
 // DeleteTaskScope removes a single scope row by id, scoped to the given task.
 // Returns whether a row was actually deleted.
 func (s *AssetStore) DeleteTaskScope(taskID, scopeID int64) (bool, error) {
-	res, err := s.db.Exec(`DELETE FROM task_scope WHERE id=$1 AND task_id=$2`, scopeID, taskID)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	res, err := tx.Exec(`DELETE FROM task_scope WHERE id=$1 AND task_id=$2`, scopeID, taskID)
 	if err != nil {
 		return false, err
 	}
 	n, _ := res.RowsAffected()
-	return n > 0, nil
+	if n > 0 {
+		// 人工删除范围同样是重新授权：旧快照里若还留着已删掉的 host，越界判定会失效。
+		if _, err := tx.Exec(`UPDATE tasks SET src_authorization=NULL WHERE id=$1 AND mode='src'`, taskID); err != nil {
+			return false, err
+		}
+	}
+	return n > 0, tx.Commit()
 }
 
 // ListTaskScope returns all scope rows for a task.

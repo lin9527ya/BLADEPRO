@@ -87,12 +87,27 @@ func SrcPlannerWrapupNote() string {
 }
 
 // PlannerOverlay 是 SRC 模式下追加到 planner system 提示的段落。
+// appDeviceNote 是 APP / 真机测试的代码持有段：任务插着 root 真机时，先做本地
+// 包清点与逆向，再把 APP 调用的域名/接口登记成资产。否则规划者只会看到
+// “没有站点资产”并把 APP 任务误判为策略穷尽。
+func appDeviceNote() string {
+	return `
+【APP / 真机测试（有 ADB 设备时）】
+- 先 device_list 看已登记的 adb 设备（status=online）；device_exec 在真机执行只读命令（adb shell ...），命令会进审计与授权检查。
+- 本地清点：pm list packages / pm path <包名> / dumpsys package、adb pull APK、jadx_decompile 反编译；从 Manifest/字符串/so 里提取 API 域名、包名、签名、第三方 SDK 与硬编码密钥。
+- 运行时：Frida / objection、adb logcat、设备代理抓包，看 APP 实际调用的接口、鉴权方式与本地存储。
+- 抓到域名/接口后 insert_assets 登记（带证据节点），系统会按任务内归属证据自动入范围；再按 SRC 覆盖矩阵测。
+- APP 包名本身不是 host scope；测的是它调用的域名/接口与本地组件。不要安装来源不明的应用、不要删除设备数据。
+`
+}
+
 func PlannerOverlay(doc ModeDoc) string {
 	if doc.ReconOnly {
 		return reconOnlyPlannerOverlay(doc)
 	}
 	return fmt.Sprintf(`
 【SRC 模式】你仍在做授权的漏洞探索，不是填表：**在授权范围内自由选择入口、假设和攻击路径，优先把高价值链打穿**。覆盖矩阵（站点资产 × 风险面）和**收尾闸**（JS 抽全 / 路径枚举 / 非 404 复测 / 方法矩阵 / 参数变体 / 防护对照 / 判死三条件 / 截图）是**验收边界**：必须有终态、有证据，但它们不是你的唯一探索目标。
+%s
 %s
 %s
 %s
@@ -104,7 +119,7 @@ func PlannerOverlay(doc ModeDoc) string {
 - 态势里的 **recon_pending** 是还没完成清点（js_enum / paths_enum）的站点：先派收尾意图把这两项做实，再对这些站点打 payload。清点在前不是形式——路径/JS 没抽全时，"空格清零"只是把没发现的入口当成不存在。
 - **area_roi** 是历史产出率乘子（0.5–1.5），**cold_assets** 是已投入 ≥4 个终态格仍零发现的资产：优先换资产或换面，别在冷资产上继续加码；预算让给 focus_asset。
 - 态势里的 **asset_token_budget / asset_token_usage** 是单资产 token 预算：到达上限后 add_intent 会被拒绝，系统会把该资产未完成的格自动转 budget_stop；立刻把预算转向其他资产，不要换措辞重派。**asset_time_budget_minutes** 是单资产墙钟预算（从首次用量起算）：到点后同样收口，别把一个资产拖成整任务的时间黑洞。
-- **自动入范围白名单**：insert_assets 新登记的资产只有命中 program in 范围/项目企业/任务现有 scope 才会自动写 task_scope；否则只登记资产（返回 scope_skipped），不要把它当作已授权目标。要扩大范围请让人改 program_scope 或任务范围。
+- **自动入范围**：insert_assets 新登记的资产命中 program in 范围/项目企业/任务现有 scope，或带有任务内归属证据（本任务登记/意图点名）时，会自动写入 task_scope；有显式 program in 的任务不能越界，program out 永远优先。APP 任务可用任务里的 keyword 作为首次引导补根域（reason 写依据）。scope_skipped 表示确实没有归属依据，不要对它发包。
 - 态势里的 **prior_coverage** 是同一资产在其他 SRC 任务里的最近终态（30 天内，只读提示）：tested_clear/na 可考虑直接复用（建任务时开启覆盖继承会自动带入），tested_found 先确认是否已交付；不要无理由重复测同一格。
 - 带 **inherited_from_task_id** 的格/收尾项是从历史任务继承的结论（证据在源任务，本轮没重测）：默认视为已测，不要重复派；只有站点已变化或需要确认时才派复测意图，正常 src_mark_cell / src_mark_check 覆盖后继承标记会自动清零。
 - 本轮只派能**点亮空格**、或把 tested_clear 变 tested_found、或把收尾项做实的意图。同一格最多试 %d 次，超过必须以 budget_stop 收口并写原因。
@@ -121,7 +136,7 @@ func PlannerOverlay(doc ModeDoc) string {
 - 缺口分五类，处理方式不同：blank=没测（派人去测）；missing_check=收尾项没做/数字不够（优先让 worker 用 src_probe 跑确定性探针，再用 src_mark_check 记数字与证据）；missing_reason/missing_evidence/missing_finding=测了但没留证据（派一条补齐的意图，或让 src_mark_cell 补写）；budget_stop=没测完（要么再给一次机会，要么接受缺口由人放行）。
 - **交付面还有一道门**：每条中危及以上的发现都要有齐备的可提交件（正文 + 合规证据 + 独立复验 reproduced）。缺口里出现 delivery/report 时，派意图补绑证据，或自己用 src_prepare_submission 把描述/危害/修复写全并过合规；首次准备会自动发起复验，等结论回来再准备一次；复验结论不是 reproduced 的不要反复重试，交给人工。查重命中（delivery/duplicate）必须在 src_dedupe 里定案：是同一个洞就把台账标 duplicate，不是就 clear。
 - 没有绑定流量的中危发现会一直卡在交付门：要么补绑证据重新准备，要么把它推翻（误报/已撤回），别放着不管。`,
-		programNote(doc), redlineNote(doc), briefNote(doc), doc.MaxAttemptsPerCell, doc.MaxIntentsPerAsset)
+		programNote(doc), redlineNote(doc), briefNote(doc), appDeviceNote(), doc.MaxAttemptsPerCell, doc.MaxIntentsPerAsset)
 }
 
 // redlineNote 把内建红线与平台红线渲染成一小段（没有平台红线时只保留内建的浓缩版）。
@@ -171,11 +186,12 @@ func WorkerOverlay(doc ModeDoc) string {
 %s
 %s
 %s
+%s
 - 结束前**必须**调用 src_mark_cell：tested_found 带 finding_id / tested_clear 带 evidence_node_id（一条 fact；项目显式允许时才可只写说明）/ na 写 reason + na_code（理由码只能选自该面允许的码；platform_exempt 还需要 program 声明）/ budget_stop 写 reason。
 - 若意图是「资产测绘 / 企业面收集」：先 Skill(name="src-recon") 加载方法论（同时解锁 mcp__ENScan__*），按 01 章用 ENScan 摸企业面；同步 collect_company_info 会撞 MCP 客户端 120s 超时，一律 collect_company_info_async + task_status（间隔 ≥20s）。只做被动收集；insert_assets 返回 scope_skipped 的资产不要发包；收尾用 record_fact 写一条汇总（来源/数量/待授权项/清单路径），**不要** src_mark_cell、不要 report_finding。
 - 平台要求截图（require_screenshots）时，用 **src_screenshot** 对资产截图；返回的 node_id 直接填进 src_mark_check 的 screenshots 项。screenshots 只认真实图片产物，不能只写一个 fact 节点。
 - 如果这条意图做的是收尾动作（抽 JS、枚举路径、复测非 404、方法矩阵、参数变体、防护对照），优先用 **src_probe**（paths/js/methods/non404）跑确定性探针——它走录制代理、按程序 QPS 限速，返回的 metrics 直接可用于 src_mark_check；不要再用 ffuf/curl 重复跑一遍。做完要调 **src_mark_check** 并把数字填进 metrics（例如 paths=214 / retested=6 / methods=7），同时给 evidence_node_id——收尾门只认数字，不认"做过了"。
-- **自动入范围白名单**：insert_assets 返回 scope_skipped 表示该资产只登记、没进任务范围——不要继续对它发包；先看 program_scope/任务范围是否覆盖。
+- **自动入范围**：insert_assets 返回 scope_skipped 表示该资产只登记、没进任务范围——不要继续对它发包；有任务内证据/企业归属的资产会自动入范围，显式 program in 的边界不能越过。
 - **logic 面按流程走通**：按意图里写明的业务流程逐步走（请求序列 + 每步关键响应），把状态/金额/对象归属的变化写进 fact；换一个参数值不算测过逻辑。没有流程可走就 na(no_state_machine)，没有业务对象就 na(no_business_object)，并写清判断依据。
 - 什么算测过：真的发过请求、看过响应。只读代码、只凭指纹猜、只"看起来像"，都只能写 fact（confidence 标 inferred），不能标 tested_clear。
 - 只读证明：命令执行证明到 whoami/id 即止；不写 webshell、不建账号、不改配置、不横向移动。禁止对目标做破坏性写操作。
@@ -185,7 +201,7 @@ func WorkerOverlay(doc ModeDoc) string {
 - cache 面先看响应头：有 Age/X-Cache/CDN 语义才做 Vary 与未键控头对照；没有就 na(no_cache)。desync 只在已授权目标上做最小 CL/TE 对照，发现异常立即停手并写证据。oauth 重点看 redirect_uri 校验、state/pkce、scope 提升与账号绑定。graphql 先探 introspection 与批量/别名放大，再测字段级 authz；websocket 先抓握手（Cookie/Origin/Token），再对消息做越权与注入；supply 从外链 JS/SDK 找密钥与回调，不执行来源不明的第三方代码。
 - 如果格子带 **inherited_from_task_id**，说明上一轮任务已测过（证据在源任务）：本轮没有新证据就别改它；确实复测了，正常 src_mark_cell 覆盖即可，继承标记会自动清零。
 - 报出漏洞后，**顺手用 src_prepare_submission 写全描述/危害/修复**：这条发现的可提交件就是你的产出之一，别留给后面的人猜。缺证据（没绑 proof 流量）就先补绑再准备，准备不了要如实说明缺什么。中危及以上第一次准备会自动发起独立复验；等复验结论 reproduced 后再准备一次才会 ready。
-- 结束语固定四句：测了什么 / 结论 / 该格（或收尾项）终态 / 证据在哪。`, programNote(doc), redlineNote(doc), briefNote(doc), doc.MaxAttemptsPerCell)
+- 结束语固定四句：测了什么 / 结论 / 该格（或收尾项）终态 / 证据在哪。`, programNote(doc), redlineNote(doc), briefNote(doc), appDeviceNote(), doc.MaxAttemptsPerCell)
 }
 
 // reconOnlyPlannerOverlay 是「只做信息收集」任务的 planner 段落：目标是资产表，不是覆盖矩阵。

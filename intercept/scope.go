@@ -69,7 +69,7 @@ func (i *Interceptor) ScopeMode() string {
 // in defaultEnabledTools) alongside the tool itself.
 func shellCommandOf(toolName string, input []byte) string {
 	switch toolName {
-	case "Bash", "shell_open", "run_execution":
+	case "Bash", "shell_open", "run_execution", "device_exec":
 		var in struct {
 			Command string `json:"command"`
 		}

@@ -55,3 +55,46 @@ func TestSrcAuthorizationIntersectsExplicitProgramScope(t *testing.T) {
 		}
 	}
 }
+
+// SRC 任务创建时没解析出目标 → 授权快照为空；此时人工在任务详情补范围必须能成功，
+// 并触发重新冻结。此前人工补范围被当成 "Agent 扩大授权" 直接 400。
+func TestSrcManualScopeReauthorizes(t *testing.T) {
+	d, err := Open(testDSN(t))
+	if err != nil {
+		t.Fatalf("open test database: %v", err)
+	}
+	t.Cleanup(func() { d.Close() })
+	task, err := d.CreateTaskWithOptions("manual-scope", "scope", TaskCreateOptions{Mode: "src"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.DeleteTask(task.ID) })
+	if err := d.SealSrcAuthorization(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	host := "api5.novelfm-test.example"
+	if ok, _, err := d.Src().SrcHostInScope(context.Background(), task.ID, host); err != nil || ok {
+		t.Fatalf("空授权快照不应放行: ok=%v err=%v", ok, err)
+	}
+	if _, err := d.Assets().AddAgentScope(task.ID, "root_domain", "novelfm-test.example", "人工补充授权", "manual"); err != nil {
+		t.Fatalf("人工补范围应成功: %v", err)
+	}
+	rows, err := d.Assets().ListTaskScope(task.ID)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("读取范围失败: rows=%+v err=%v", rows, err)
+	}
+	scope := rows[0]
+	if ok, _, err := d.Src().SrcHostInScope(context.Background(), task.ID, host); err != nil || !ok {
+		t.Fatalf("重新授权后应放行: ok=%v err=%v", ok, err)
+	}
+	if _, err := d.Assets().AddAgentScope(task.ID, "subdomain", "evil.example", "越权", "agent"); err == nil {
+		t.Fatal("agent 仍不能扩大授权范围")
+	}
+	// 人工删除范围必须收紧授权：旧快照不能继续放行已删掉的 host。
+	if deleted, err := d.Assets().DeleteTaskScope(task.ID, scope.ID); err != nil || !deleted {
+		t.Fatalf("删除范围失败: deleted=%v err=%v", deleted, err)
+	}
+	if ok, _, err := d.Src().SrcHostInScope(context.Background(), task.ID, host); err != nil || ok {
+		t.Fatalf("删除范围后不应再放行: ok=%v err=%v", ok, err)
+	}
+}

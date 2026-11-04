@@ -3934,7 +3934,7 @@ func (t *ToolSet) listWorkerTraces() actool.CoreTool {
 
 // PlannerTools is the read + intent-generation + goal-judgement tool set.
 func (t *ToolSet) PlannerTools() []actool.CoreTool {
-	return t.AppendSrcTools([]actool.CoreTool{
+	tools := []actool.CoreTool{
 		t.graphOverview(), t.listFindings(), t.listFacts(), t.nodeDetail(),
 		// cold-digest §6.1: restore folded cold nodes (digest body → members → detail).
 		t.expandDigest(),
@@ -3965,5 +3965,10 @@ func (t *ToolSet) PlannerTools() []actool.CoreTool {
 		// 手动沉淀/回填反馈（自动沉淀由 playbook agent 在 report_foothold 时完成）。
 		t.lookupKnowledge(), t.recordKnowledge(), t.proposeKnowledge(), t.knowledgeFeedback(),
 		t.listRatingRulesTool(), t.getAccountCredentialTool(),
-	}, "planner")
+	}
+	// APP/真机测试：规划层需要先 device_list 判断有没有可用真机，并可用 jadx/ADB
+	// 做 APK 清点；具体执行仍派给 worker。
+	tools = append(tools, t.deviceTools()...)
+	tools = append(tools, t.reverseTools()...)
+	return t.AppendSrcTools(tools, "planner")
 }

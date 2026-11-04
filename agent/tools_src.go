@@ -595,19 +595,24 @@ type srcCellArg struct {
 // srcMarkCell 点亮覆盖格（写工具）。支持单条（兼容旧调用）或 cells 数组批量落账。
 // 终态校验在 srcmode.ValidateCell 里，一条都不能省。
 func (t *ToolSet) srcMarkCell() actool.CoreTool {
-	itemSchema := obj(map[string]any{
-		"asset_id":         intp("要标记的资产 id（来自 src_state / list_assets）"),
-		"area":             str("风险面：" + srcmode.AreaLegend()),
-		"item":             str("细分项，默认 \"*\"（整组）"),
-		"state":            str("终态：tested_found | tested_clear | na | budget_stop"),
-		"reason":           str("结论说明（na/budget_stop 必填；tested_clear 无证据节点时必填）"),
-		"na_code":          str("na 的理由码（只在该面允许的码里选，见 src_state）"),
-		"evidence_node_id": intp("tested_clear 的证据节点 id（一条 fact，可选但推荐）"),
-		"finding_id":       intp("tested_found 对应的 findings.id（必填）"),
-	})
+	// 批量项的 schema 必须单独构造：把 itemSchema 自己塞进 items 会形成
+	// map 自引用，provider 序列化请求时报 "encountered a cycle"（任务 1 实测）。
+	cellItem := func() map[string]any {
+		return obj(map[string]any{
+			"asset_id":         intp("要标记的资产 id（来自 src_state / list_assets）"),
+			"area":             str("风险面：" + srcmode.AreaLegend()),
+			"item":             str("细分项，默认 \"*\"（整组）"),
+			"state":            str("终态：tested_found | tested_clear | na | budget_stop"),
+			"reason":           str("结论说明（na/budget_stop 必填；tested_clear 无证据节点时必填）"),
+			"na_code":          str("na 的理由码（只在该面允许的码里选，见 src_state）"),
+			"evidence_node_id": intp("tested_clear 的证据节点 id（一条 fact，可选但推荐）"),
+			"finding_id":       intp("tested_found 对应的 findings.id（必填）"),
+		})
+	}
+	itemSchema := cellItem()
 	props := itemSchema["properties"].(map[string]any)
 	props["cells"] = map[string]any{
-		"type": "array", "items": itemSchema,
+		"type": "array", "items": cellItem(),
 		"description": "【批量】一次点亮多格；与顶层字段同形状，优先于顶层单条参数。返回 cells/errors 按数组下标对应。",
 	}
 	return writeTool(
@@ -734,19 +739,23 @@ func (t *ToolSet) srcMarkCheck() actool.CoreTool {
 		},
 		"additionalProperties": map[string]any{"type": "integer"},
 	}
-	itemSchema := obj(map[string]any{
-		"asset_id":         intp("资产 id（来自 src_state / list_assets）"),
-		"check_key":        str("收尾项：" + strings.Join(srcmode.CheckKeys(), " / ")),
-		"state":            str("终态：done | na | budget_stop"),
-		"na_code":          str("na 的理由码（工具描述与 src_state 里给出可选值）"),
-		"reason":           str("结论说明（na/budget_stop 必填；降级也要写原因）"),
-		"metrics":          metrics,
-		"probe_run_id":     str("src_probe 返回的可信执行凭据；无凭据的 done 只能登记为待人工核验"),
-		"evidence_node_id": intp("证据节点 id（record_fact 返回；done 必填）"),
-	})
+	// 同 src_mark_cell：批量项必须用独立 schema，不能引用 itemSchema 自身（否则成环）。
+	checkItem := func() map[string]any {
+		return obj(map[string]any{
+			"asset_id":         intp("资产 id（来自 src_state / list_assets）"),
+			"check_key":        str("收尾项：" + strings.Join(srcmode.CheckKeys(), " / ")),
+			"state":            str("终态：done | na | budget_stop"),
+			"na_code":          str("na 的理由码（工具描述与 src_state 里给出可选值）"),
+			"reason":           str("结论说明（na/budget_stop 必填；降级也要写原因）"),
+			"metrics":          metrics,
+			"probe_run_id":     str("src_probe 返回的可信执行凭据；无凭据的 done 只能登记为待人工核验"),
+			"evidence_node_id": intp("证据节点 id（record_fact 返回；done 必填）"),
+		})
+	}
+	itemSchema := checkItem()
 	props := itemSchema["properties"].(map[string]any)
 	props["checks"] = map[string]any{
-		"type": "array", "items": itemSchema,
+		"type": "array", "items": checkItem(),
 		"description": "【批量】一次登记多項收尾项；与顶层字段同形状，优先于顶层单条参数。返回 checks/errors 按数组下标对应。",
 	}
 	return writeTool(

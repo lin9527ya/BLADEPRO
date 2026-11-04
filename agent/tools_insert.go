@@ -126,7 +126,7 @@ func (t *ToolSet) insertAssets() actool.CoreTool {
 			"各类型必填字段：root_domain→domain；ip→ip（须为 IPv4/IPv6，非主机名）；subdomain→domain；app→app_name；service(HTTP)→url；service(非HTTP)→service_name+port（ip/domain 至少填一个）；endpoint→url+method。其余字段含义见各自说明。\n"+
 			"auth/technologies/params 为追加合并(append)，不覆盖原值。\n"+
 			"返回：{results:[{index,id,type,scope_added,scope_skipped}], errors:[{index,error}]}。"+
-			"SRC 模式下 scope_skipped 非空表示资产只登记、没进任务范围（不在 program in/企业/现有 scope 白名单）：不要对它发包。",
+			"SRC 模式下 scope_skipped 非空表示资产只登记、没进任务范围（任务内没有归属证据、企业不匹配，或被 program out 排除）：不要对它发包。",
 		obj(map[string]any{
 			// task_id 不暴露给模型：worker 归属哪个 task 由程序经 SetTaskID 权威赋值(见 handler)。
 			"assets": map[string]any{
@@ -452,6 +452,7 @@ func (t *ToolSet) addTaskScope() actool.CoreTool {
 		"把测试范围加入【本任务】——这是本任务的授权边界，也是资产测试覆盖度的分母。\n"+
 			"kind 支持：company(整个公司名下资产) / root_domain(整个根域，含所有子域) / subdomain(单个精确子域) / ip / cidr / icp / keyword。\n"+
 			"说明：worker 逐个碰到的主机会被系统【自动】加进范围(精确子域)；本工具用于【主动扩大】——把整个根域/整个公司纳入，或补充指定某子域/IP。\n"+
+			"SRC 任务：有 program 时不能越过 program 的 in/out 边界；没有 program 的 APP/开放式任务，可对【本任务已登记或有证据锚定】的资产扩范围（企业归属匹配也可）。\n"+
 			"value：company 传公司名或 id(公司须已存在)；root_domain/subdomain 传域名；ip/cidr 传 IP 或网段；icp/keyword 传备案号或企业关键词。\n"+
 			"务必给 reason 说明依据(可审计)。多条用 entries 数组。",
 		obj(map[string]any{
@@ -682,7 +683,7 @@ func splitLines(s string) []string {
 
 // WorkerTools returns the tool set for a work agent.
 func (t *ToolSet) WorkerTools() []actool.CoreTool {
-	return t.AppendSrcTools([]actool.CoreTool{
+	tools := []actool.CoreTool{
 		// list_findings 保留：报漏洞前先查本任务已确认漏洞，避免重复上报同一漏洞。
 		t.listFindings(),
 		t.addFinding(), t.closeCandidate(), t.recordFact(),
@@ -722,7 +723,12 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 		t.runExecution(), t.waitExecution(), t.getExecution(), t.cancelExecution(),
 		// 以下工具仍【不给】worker，只留给 planner/main（读上下文、跨 work 复盘是规划职责，
 		// worker 只做单条意图的执行与写回）：list_facts / list_companies / list_worker_traces。
-	}, "worker")
+	}
+	// APP/真机测试：ADB 设备与逆向工具下放到 worker——APP 任务需要在真机上拉包、
+	// 反编译、抓日志，只靠 Bash 做不到（device_exec 会走设备注册表与拦截审计）。
+	tools = append(tools, t.deviceTools()...)
+	tools = append(tools, t.reverseTools()...)
+	return t.AppendSrcTools(tools, "worker")
 }
 
 // MainAgentTools returns the human-interface tool set.

@@ -244,6 +244,12 @@ func (s *AssetStore) RegisterTaskAssetScopes(taskID int64, inputs []ScopeInput) 
 			mutation.ScopesExisting++
 		}
 	}
+	if mutation.ScopesAdded > 0 {
+		// 人工新增范围即重新授权：丢弃旧快照，下一次授权检查按当前范围重新冻结。
+		if _, err := tx.Exec(`UPDATE tasks SET src_authorization=NULL WHERE id=$1 AND mode='src'`, taskID); err != nil {
+			return mutation, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return mutation, err
 	}
